@@ -1,5 +1,9 @@
 node_modules/
 downloads/
+skills/use-oracle/runtime/cdk.out/
+skills/use-oracle/runtime/dist/
+skills/use-oracle/runtime/cdk-outputs.json
+skills/use-oracle/runtime/cdk.context.json
 .env
 .env.*
 !.env.example

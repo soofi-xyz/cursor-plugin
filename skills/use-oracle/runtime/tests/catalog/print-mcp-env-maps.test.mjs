@@ -91,13 +91,18 @@ describe("print-mcp-env-maps", () => {
     expect(maps.PERMIT_QUERY_TABLE_MAP).toEqual({
       broward: catalog.counties.find((c) => c.countyKey === "broward")
         .permitQueryTableUrl,
+      duval: catalog.counties.find((c) => c.countyKey === "duval")
+        .permitQueryTableUrl,
       montgomery: catalog.counties.find((c) => c.countyKey === "montgomery")
         .permitQueryTableUrl,
       "rock-island": catalog.counties.find((c) => c.countyKey === "rock-island")
         .permitQueryTableUrl,
     });
     expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).not.toContain("santa-clara");
-    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).not.toContain("duval");
+    expect(maps.PERMIT_QUERY_TABLE_MAP.duval).toBe(
+      catalog.counties.find((c) => c.countyKey === "duval")
+        .permitQueryTableUrl,
+    );
     expect(maps.PROPERTY_QUERY_TABLE_MAP.duval).toBe(
       catalog.counties.find((c) => c.countyKey === "duval").queryTableUrl,
     );

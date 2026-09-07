@@ -1,0 +1,12 @@
+node_modules
+dist
+cdk.out
+.git
+.env
+.env.*
+tests
+fixtures
+docs
+downloads
+*.log
+.DS_Store

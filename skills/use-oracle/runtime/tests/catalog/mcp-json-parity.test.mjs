@@ -113,6 +113,10 @@ describe("syncMcpJson against a synthetic mcp.json fixture", () => {
             PROPERTY_QUERY_TABLE_MAP: '{"stale-county":"https://stale.example/x"}',
             PERMIT_QUERY_TABLE_MAP: "{}",
             DATASET_COVERAGE_MAP: "{}",
+            PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS:
+              '{"duval":"QmImmutablePermitCid"}',
+            DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS:
+              '{"duval":"QmImmutableCoverageCid"}',
             ORACLE_OPEN_DATA_IPNS_MAP: '{"lee":"abc"}',
             ORACLE_OPEN_DATA_DEFAULT_COUNTY: "lee",
             ORACLE_GEO_INDEX_IPNS: "geo-ipns-value",
@@ -129,7 +133,7 @@ describe("syncMcpJson against a synthetic mcp.json fixture", () => {
     });
 
     expect(Object.keys(maps.PROPERTY_QUERY_TABLE_MAP)).toHaveLength(14);
-    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(4);
+    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(5);
     expect(Object.keys(maps.DATASET_COVERAGE_MAP)).toHaveLength(13);
 
     const written = JSON.parse(await readFile(fixturePath, "utf8"));
@@ -137,11 +141,17 @@ describe("syncMcpJson against a synthetic mcp.json fixture", () => {
 
     expect(JSON.parse(env.PROPERTY_QUERY_TABLE_MAP)).not.toHaveProperty("stale-county");
     expect(Object.keys(JSON.parse(env.PROPERTY_QUERY_TABLE_MAP))).toHaveLength(14);
-    expect(Object.keys(JSON.parse(env.PERMIT_QUERY_TABLE_MAP))).toHaveLength(4);
+    expect(Object.keys(JSON.parse(env.PERMIT_QUERY_TABLE_MAP))).toHaveLength(5);
     expect(Object.keys(JSON.parse(env.DATASET_COVERAGE_MAP))).toHaveLength(13);
     expect(env.PUBLISHED_COUNTY_CATALOG_URL).toBe(PUBLISHED_COUNTY_CATALOG_URL);
 
     // Preserved untouched.
+    expect(env.PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).toBe(
+      '{"duval":"QmImmutablePermitCid"}',
+    );
+    expect(env.DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS).toBe(
+      '{"duval":"QmImmutableCoverageCid"}',
+    );
     expect(env.ORACLE_OPEN_DATA_IPNS_MAP).toBe('{"lee":"abc"}');
     expect(env.ORACLE_OPEN_DATA_DEFAULT_COUNTY).toBe("lee");
     expect(env.ORACLE_GEO_INDEX_IPNS).toBe("geo-ipns-value");
@@ -268,22 +278,23 @@ describe("merge-mcp-env-maps", () => {
     const maps = await buildMergedMcpEnvMaps({ catalogPath, overlayPath });
 
     expect(Object.keys(maps.PROPERTY_QUERY_TABLE_MAP)).toHaveLength(14);
-    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(4);
+    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(5);
     expect(Object.keys(maps.DATASET_COVERAGE_MAP)).toHaveLength(13);
     expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP).sort()).toEqual([
       "broward",
+      "duval",
       "montgomery",
       "rock-island",
       "santa-clara",
     ]);
     expect(maps.PROPERTY_QUERY_TABLE_MAP.duval).toBeDefined();
     expect(maps.DATASET_COVERAGE_MAP.duval).toBeDefined();
-    expect(maps.PERMIT_QUERY_TABLE_MAP).not.toHaveProperty("duval");
+    expect(maps.PERMIT_QUERY_TABLE_MAP.duval).toBeDefined();
   });
 });
 
 describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
-  it("produces the locked 14/4/13 key counts and preserves the real launcher untouched", async () => {
+  it("produces the locked 14/5/13 key counts and preserves the real launcher untouched", async () => {
     const fixturePath = join(tmpDir, "mcp.json");
     const original = await readFile(repoRootMcpJsonPath, "utf8");
     await writeFile(fixturePath, original, "utf8");
@@ -296,14 +307,14 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
     });
 
     expect(Object.keys(maps.PROPERTY_QUERY_TABLE_MAP)).toHaveLength(14);
-    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(4);
+    expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).toHaveLength(5);
     expect(Object.keys(maps.DATASET_COVERAGE_MAP)).toHaveLength(13);
     expect(maps.PROPERTY_QUERY_TABLE_MAP["santa-clara"]).toBeDefined();
     expect(maps.PERMIT_QUERY_TABLE_MAP["santa-clara"]).toBeDefined();
     expect(maps.DATASET_COVERAGE_MAP).not.toHaveProperty("santa-clara");
     expect(maps.PROPERTY_QUERY_TABLE_MAP.duval).toBeDefined();
     expect(maps.DATASET_COVERAGE_MAP.duval).toBeDefined();
-    expect(maps.PERMIT_QUERY_TABLE_MAP).not.toHaveProperty("duval");
+    expect(maps.PERMIT_QUERY_TABLE_MAP.duval).toBeDefined();
 
     const written = JSON.parse(await readFile(fixturePath, "utf8"));
     expect(written.mcpServers.elephant.command).toBe(
@@ -321,5 +332,25 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
     expect(written.mcpServers.elephant.env.ORACLE_GEO_INDEX_IPNS).toBe(
       originalParsed.mcpServers.elephant.env.ORACLE_GEO_INDEX_IPNS,
     );
+    expect(
+      written.mcpServers.elephant.env
+        .PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS,
+    ).toBe(
+      originalParsed.mcpServers.elephant.env
+        .PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS,
+    );
+    expect(
+      written.mcpServers.elephant.env
+        .DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS,
+    ).toBe(
+      originalParsed.mcpServers.elephant.env
+        .DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS,
+    );
+    expect(
+      JSON.parse(
+        written.mcpServers.elephant.env
+          .DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS,
+      ).duval,
+    ).toBe("QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm");
   });
 });
