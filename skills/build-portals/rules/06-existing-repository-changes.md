@@ -89,6 +89,11 @@ For backend management:
   the workflow unwired is a delivery miss even when local AWS is absent
 - when frontend is in scope, match Figma control types. A dropdown in the
   design is a select, not a static label
+- copy sibling CORS. A deploy fallback of `*` is not a literal Origin
+  string. Express `origins.includes(origin)` will never match a portal or
+  preview host against `*`. If siblings allow trusted host suffixes
+  (custom domains, preview hosts, localhost), reuse that helper instead of
+  exact-list matching
 
 ## 3d. Shared `/api/v2` authorization
 
@@ -97,22 +102,25 @@ route `authorizationType`. If siblings use `NONE` and authorize in Lambda,
 do not add a JWT authorizer on the shared API.
 
 A gateway JWT authorizer returns `{"message":"Unauthorized"}` before Lambda
-runs. That rejects:
-
-- browser address-bar GETs (no `Authorization` header)
-- callers that send a legacy session token instead of a Cognito ID token
+runs. Opening the API URL in the address bar sends no `Authorization`
+header and is not an auth test.
 
 Authorize in the handler instead:
 
 1. Prefer API Gateway JWT claims when they are present.
-2. Otherwise verify `Authorization: Bearer` as a Cognito ID token in-process.
-3. Then enforce the account allow-list claim.
+2. Otherwise verify `Authorization: Bearer` in-process (Cognito ID token
+   first).
+3. Then enforce the account allow-list claim. Portal auth tokens may have
+   account ids without a Cognito `sub`.
 
-Frontend clients must send the Cognito ID token. Do not send a legacy session
-token to a Cognito-verified route.
+Frontend clients must send `Authorization: Bearer`. Prefer the Cognito ID
+token when the session has one. If a supported legacy login left only a
+legacy session token, send that token; do not reject the request before
+fetch. Requiring an ID token alone hides recovery UI for those sessions.
 
-Confirm authenticated calls from the logged-in app with a fetch that includes
-the ID token. Opening the API URL in the address bar is not an auth test.
+Confirm authenticated calls from the logged-in app with a fetch that
+includes the session Bearer token. Do not treat an address-bar GET as
+proof of auth.
 
 ## 3b. Persist / Gremlin queries
 

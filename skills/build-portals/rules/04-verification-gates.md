@@ -97,11 +97,13 @@ deployed backend. Do not use fixtures that bypass Lambda, API Gateway,
 authorization, secrets retrieval, or required upstream calls.
 
 Confirm authenticated GETs with a fetch that sends
-`Authorization: Bearer <Cognito ID token>` from the logged-in session.
-Opening the API URL in the address bar sends no Authorization header and is
-not an auth test. A gateway body of `{"message":"Unauthorized"}` means the
-request never reached Lambda; that usually means a JWT authorizer was added
-to a shared `/api/v2` route whose siblings use `NONE`.
+`Authorization: Bearer` from the logged-in session (Cognito ID token when
+present, otherwise the legacy session token). Opening the API URL in the
+address bar sends no Authorization header and is not an auth test. A
+gateway body of `{"message":"Unauthorized"}` means the request never
+reached Lambda; that usually means a JWT authorizer was added to a shared
+`/api/v2` route whose siblings use `NONE`. A CORS miss against a literal
+`*` origin is also not an auth failure.
 
 Redact credentials and customer records from logs and evidence.
 
