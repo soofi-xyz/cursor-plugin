@@ -90,6 +90,30 @@ For backend management:
 - when frontend is in scope, match Figma control types. A dropdown in the
   design is a select, not a static label
 
+## 3d. Shared `/api/v2` authorization
+
+When attaching a new route to a shared `/api/v2` HTTP API, copy sibling
+route `authorizationType`. If siblings use `NONE` and authorize in Lambda,
+do not add a JWT authorizer on the shared API.
+
+A gateway JWT authorizer returns `{"message":"Unauthorized"}` before Lambda
+runs. That rejects:
+
+- browser address-bar GETs (no `Authorization` header)
+- callers that send a legacy session token instead of a Cognito ID token
+
+Authorize in the handler instead:
+
+1. Prefer API Gateway JWT claims when they are present.
+2. Otherwise verify `Authorization: Bearer` as a Cognito ID token in-process.
+3. Then enforce the account allow-list claim.
+
+Frontend clients must send the Cognito ID token. Do not send a legacy session
+token to a Cognito-verified route.
+
+Confirm authenticated calls from the logged-in app with a fetch that includes
+the ID token. Opening the API URL in the address bar is not an auth test.
+
 ## 3b. Persist / Gremlin queries
 
 When the change reads Persist (or the story names Hoothoot / a Gremlin

@@ -108,7 +108,7 @@ Run these nine stages in order. Each stage has a stop condition. Do not advance 
 3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree from the repository's **integration branch** (often `development`, not `main`).
 4. **Plan or scaffold.** Scaffold a new portal, or inspect the existing architecture and plan the minimum necessary change.
 5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant. Match Figma control types (a select is not a static label).
-6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do.
+6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do. Copy sibling `authorizationType` on that shared API; do not add a JWT authorizer there unless siblings already use one. Authorize in Lambda with a Cognito ID token from `Authorization: Bearer`. Opening an API URL in the address bar is not an auth test.
 7. **Integrate or deploy.** Wire and deploy only requested surfaces with explicit environment authorization.
 8. **Verify.** Run repository gates plus scope-appropriate design, integration, BrowserStack, latency, and IaC checks.
 9. **Pull request and handoff.** Push the feature branch, open or update the PR, and return evidence and blockers. Never merge without explicit approval.
@@ -193,6 +193,7 @@ Before returning, confirm:
 - [ ] Unavailable required gates are blocked with exact reasons; unrelated gates are not applicable
 - [ ] Feature branch was pushed and a PR was opened or updated
 - [ ] Shared `/api/v2` routes were attached in the existing deploy workflow when required
+- [ ] Shared `/api/v2` authorization matches siblings (no extra JWT authorizer; Cognito ID token verified in Lambda)
 - [ ] Persist/Gremlin queries were delegated or copied from sibling clients and locked by efficiency tests
 - [ ] No tenant-specific names, URLs, account IDs, or credentials in generic kit files
 

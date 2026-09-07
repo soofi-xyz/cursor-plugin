@@ -168,6 +168,10 @@ EXISTING_REPOSITORY_TOKENS = (
     "conkeldurr",
     "hoothoot",
     "sibling-style",
+    "JWT authorizer",
+    "Cognito ID token",
+    "address bar",
+    "legacy session token",
 )
 
 
@@ -559,6 +563,8 @@ def assert_hoopa_agent_contract() -> None:
         "api_v2_http_api_id",
         "conkeldurr",
         "hoothoot",
+        "jwt authorizer",
+        "cognito id token",
     )
     for token in required:
         if token not in lowered:
