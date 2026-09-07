@@ -141,6 +141,8 @@ VERIFICATION_TOKENS = (
     "< 200",
     "coverage",
     "latency JSON",
+    "signing method HS256",
+    "workflow_dispatch",
 )
 LATENCY_SCRIPT_TOKENS = (
     "API_URL",
@@ -174,6 +176,11 @@ EXISTING_REPOSITORY_TOKENS = (
     "legacy session token",
     "literal origin",
     "trusted host",
+    "workflow_dispatch",
+    "alias already exists",
+    "upsert",
+    "signing method HS256",
+    "fold().coalesce",
 )
 
 
@@ -569,6 +576,10 @@ def assert_hoopa_agent_contract() -> None:
         "cognito id token",
         "legacy session token",
         "literal origin",
+        "workflow_dispatch",
+        "alias already exists",
+        "upsert",
+        "signing method hs256",
     )
     for token in required:
         if token not in lowered:

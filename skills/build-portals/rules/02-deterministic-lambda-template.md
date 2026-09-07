@@ -61,9 +61,15 @@ Do not attach managed administrator policies.
 ## Provisioned concurrency
 
 `provisionedConcurrency: 0` is the safe default and means no alias is
-created. A positive value creates alias `live` and points API Gateway at that
-alias. The feature environment must use the configured value from the portal
-spec; production sizing is not guessed.
+created. A positive value on a **new** function creates alias `live` and
+points API Gateway at that alias. The feature environment must use the
+configured value from the portal spec; production sizing is not guessed.
+
+On an **existing** function, do not create alias `live` if that alias
+already exists outside this stack. CloudFormation `Alias already exists`
+(409) rolls the deploy back. Use a new alias name (for example
+`provisioned`) and point API Gateway at it. Do not delete `:live` without
+explicit AWS ownership.
 
 ## Secrets
 

@@ -85,6 +85,11 @@ Record:
 
 All required flows must pass.
 
+If a real-device landing-page design spec fails on React minified
+`#418` / `#423` / `#425` and this change did not touch that landing app,
+ignore those iOS Safari hydration console codes. That is not a payments
+or overlay regression and must not block the feature PR.
+
 ## Gate 4: Backend integration
 
 For `new_repository`, apply this gate. For `existing_repository`, apply only
@@ -100,10 +105,16 @@ Confirm authenticated GETs with a fetch that sends
 `Authorization: Bearer` from the logged-in session (Cognito ID token when
 present, otherwise the legacy session token). Opening the API URL in the
 address bar sends no Authorization header and is not an auth test. A
-gateway body of `{"message":"Unauthorized"}` means the request never
-reached Lambda; that usually means a JWT authorizer was added to a shared
-`/api/v2` route whose siblings use `NONE`. A CORS miss against a literal
-`*` origin is also not an auth failure.
+gateway body of `{"message":"Unauthorized"}` or
+`WWW-Authenticate: ... signing method HS256 is invalid` means the request
+never reached Lambda; that usually means a JWT authorizer is still in
+front of a shared `/api/v2` GET whose siblings use `NONE`, or the
+feature Lambda was never dispatched (`workflow_dispatch` on the feature
+branch). API Gateway `{"message":"Not Found"}` when the live test
+expected 401 means the physical GET route is missing — often because
+CloudFormation deleted an old `CfnRoute`. Missing Persist debt must be
+**404**, not **502**. A CORS miss against a literal `*` origin is also
+not an auth failure.
 
 Redact credentials and customer records from logs and evidence.
 
@@ -118,9 +129,14 @@ When the criterion applies, implement a sibling-style soak or
 or preview workflow. Do not leave a local script unwired. If the story
 allows it, CI may skip the live run when secrets are unset; the skip must
 log the missing names. If the story requires live DEV proof or a timed
-soak with no skipped tests, fail the deploy job when secrets are unset
-and count only HTTP 200 responses for p95. The soak must actually run for
-the named duration (five minutes when that is the criterion).
+soak with no skipped tests, fail the **live/soak steps** when they cannot
+authenticate, and count only HTTP 200 responses for p95. Do not fail
+**preflight/deploy** because a GitHub bearer secret the repo never had is
+unset, and do not invent `DEV_*_BEARER_TOKEN` secrets. After deploy, mint
+an HS256 token from the secret already on the Lambda (or the Secrets
+Manager id the stack already injects) and default the soak account to a
+named DEV fixture. The soak must actually run for the named duration
+(five minutes when that is the criterion).
 
 Measure deployed API responses with representative data from `datasetRef`.
 This gate measures the complete API response, not page load, local handlers, or

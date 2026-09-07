@@ -94,6 +94,12 @@ For backend management:
   preview host against `*`. If siblings allow trusted host suffixes
   (custom domains, preview hosts, localhost), reuse that helper instead of
   exact-list matching
+- when adding provisioned concurrency to an **existing** Lambda, do not
+  create alias `live` if that alias already exists on the function.
+  CloudFormation `Alias already exists` (409) rolls the deploy back.
+  Use a **new** alias name (for example `provisioned`). Do not delete
+  `:live` without explicit AWS ownership. Do not merge to the integration
+  branch just to dodge the 409
 
 ## 3d. Shared `/api/v2` authorization
 
@@ -102,8 +108,23 @@ route `authorizationType`. If siblings use `NONE` and authorize in Lambda,
 do not add a JWT authorizer on the shared API.
 
 A gateway JWT authorizer returns `{"message":"Unauthorized"}` before Lambda
-runs. Opening the API URL in the address bar sends no `Authorization`
-header and is not an auth test.
+runs. `WWW-Authenticate: ... signing method HS256 is invalid` means the
+shared API still has a JWT authorizer (RS256 only) in front of the
+handler — the feature Lambda never ran. Opening the API URL in the
+address bar sends no `Authorization` header and is not an auth test.
+
+When the shared route key **already exists**, do not `new CfnRoute` for
+the same `GET`/`OPTIONS` key. That 409s (`Route with key ... already
+exists`). **Upsert**: find the route, set `target` to this stack's
+integration, set `authorizationType` to `NONE`.
+
+Do not remove an old `AWS::ApiGatewayV2::Route` logical ID from the
+template until you know CloudFormation will not **delete the physical
+shared route**. That delete shows up as API Gateway `{"message":"Not
+Found"}` and live tests like `invalid token expected 401, received 404`.
+If you replace `CfnRoute` with an upsert custom resource, force the upsert
+to run again after that delete (change a property so CloudFormation
+updates it) so the GET route is recreated.
 
 Authorize in the handler instead:
 
@@ -119,8 +140,8 @@ legacy session token, send that token; do not reject the request before
 fetch. Requiring an ID token alone hides recovery UI for those sessions.
 
 Confirm authenticated calls from the logged-in app with a fetch that
-includes the session Bearer token. Do not treat an address-bar GET as
-proof of auth.
+includes the session Bearer token. Opening the API URL in the address bar
+is not an auth test.
 
 ## 3e. Failed-installment overlay / payment-plan-summary
 
@@ -150,16 +171,42 @@ When a story asks for a post-login overlay driven by
    plan and next payment.
 6. Live tests must call the **deployed feature API and DEV Persist**,
    with no mocks and no skipped tests. Performance soaks count **HTTP 200
-   only** and must actually run for five minutes. Do not skip those
-   jobs when secrets are unset; fail the deploy workflow. Amplify
-   preview is the frontend, not the API. Payments APIs that attach to
-   shared `/api/v2` deploy from their existing API workflow
-   (`workflow_dispatch` or merge to the integration branch), never from
-   the portal Amplify preview.
+   only** and must actually run for five minutes. Amplify preview is the
+   frontend, not the API. Payments APIs that attach to shared `/api/v2`
+   deploy from their existing API workflow (`workflow_dispatch` on the
+   **feature branch**, or merge to the integration branch). Do **not**
+   merge to the integration branch just to test. Do **not** fail
+   preflight/deploy because a new GitHub bearer secret is missing; after
+   deploy, mint an HS256 token from the secret already on the Lambda (or
+   the Secrets Manager id the stack already injects) and default the soak
+   account to a named DEV fixture. Live/soak steps still fail if they
+   cannot authenticate — they just must not invent `DEV_*_BEARER_TOKEN`
+   secrets. Persist missing-debt must return **404**, not **502**: empty
+   Gremlin uses `fold().coalesce(unfold().project(...), constant(null))`,
+   and Persist HTTP 404 maps to `ACCOUNT_NOT_FOUND`. Do not use
+   `000000000` as a missing debt id.
 7. When the story names DEV Persist fixture accounts, encode those
    expected summary shapes in contract tests and hit the same accounts
    on the deployed API. Do not treat a money-event `FAILURE` as the
    overlay signal.
+
+## 3f. Feature-API deploy pipe (do not repeat these)
+
+These failed when attaching a feature GET to a shared DEV HTTP API.
+Treat them as hard increment rules, not one-off ops.
+
+| Symptom | Cause | Do this instead |
+| --- | --- | --- |
+| `Alias already exists` `...:live` (409) | CDK `new lambda.Alias({ aliasName: 'live' })` on a function that already has `:live` outside this stack | New alias name (`provisioned`). Concurrency 1 still satisfies the AC. Do not delete `:live`. Do not merge to test |
+| Preflight missing `DEV_*_BEARER_TOKEN` / `DEV_*_PERF_ACCOUNT_ID` | Invented GitHub secrets that were never configured | Do not block **deploy** on them. After deploy, mint HS256 from `PORTAL_JWT_SECRET` already on the Lambda. Default soak account to a named DEV fixture |
+| `Route with key GET /accounts/{id}/... already exists` (409) | `CfnRoute` CREATE on the shared HTTP API | **Upsert** the existing route (target + `authorizationType: NONE`) |
+| Live `invalid token expected 401, received 404` plus `{"message":"Not Found"}` | CloudFormation deleted the old `CfnRoute` logical ID **after** the upsert, taking the physical GET route with it | Do not drop a shared-API `CfnRoute` from the template without recreating the route. Force the upsert to run again after that delete |
+| `WWW-Authenticate: signing method HS256 is invalid` | Shared API JWT authorizer still in front; Amplify preview did not deploy the Lambda | `workflow_dispatch` the API workflow on the **feature branch**. `authorizationType: NONE`. Confirm 200/401 from Lambda, not Gateway |
+| Missing account expected 404, received 502 | Empty Gremlin or Persist HTTP 404 remapped to `PERSIST_FAILURE` | `fold().coalesce(..., constant(null))`; map Persist 404 to `ACCOUNT_NOT_FOUND`. Use a 9-digit missing id, not `000000000` |
+| Preview BrowserStack landing design fail on React `#418`/`#423`/`#425` | iOS Safari hydration console; this change did not touch landing | Ignore those minified hydration codes in the real-device design spec. Do not treat it as a payments/overlay regression |
+
+Green PR checks are frontend/unit only. They do not put a sibling API
+Lambda on the shared DEV HTTP API.
 
 ## 3b. Persist / Gremlin queries
 
@@ -173,7 +220,9 @@ query):
    sibling Gremlin from the same repo and lock efficiency in unit tests:
    indexed identifier start, immediate `limit(1)`, filter before order,
    `project()` of API fields only (no `valueMap(true)` dumps), one Persist
-   round-trip.
+   round-trip. Missing vertices must `fold().coalesce(..., constant(null))`
+   so Persist does not 5xx an empty traversal; map that null/empty row and
+   Persist HTTP 404 to **404** `ACCOUNT_NOT_FOUND`, never **502**.
 3. Do not treat a hand-written query as done solely because increment mode
    skipped a live specialist pass. Encode the constraints in tests and add
    an optional live Persist validation step to CI when the repo already
@@ -187,9 +236,9 @@ CI-owned. It is also **not** a waiver of acceptance criteria.
 
 | Story asks for | Increment still requires |
 | --- | --- |
-| Live integration or feature-branch API tests | Contract tests on the real Express/Lambda handler **and** a post-deploy CI step against the deployed DEV API. If the story forbids skipped live tests, the deploy job must fail when secrets are unset — do not `skipIf` or `exit 0`. Optional `skipIf` is only for stories that do not require live DEV proof |
-| p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Count **HTTP 200 only**. The soak must actually run for the named duration. If the story forbids skipping, fail when secrets are unset; do not log-and-skip |
-| Real feature-branch API | Follow this repo. If APIs deploy only after merge to the integration branch or `workflow_dispatch`, say so in the handoff. Do not pretend a portal Amplify preview deployed the API |
+| Live integration or feature-branch API tests | Contract tests on the real Express/Lambda handler **and** a post-deploy CI step against the deployed DEV API. If the story forbids skipped live tests, the **live/soak steps** must fail when they cannot authenticate. Do not fail **preflight** on GitHub secrets the repo does not already have — mint a token from the deployed Lambda secret instead of inventing `DEV_*_BEARER_TOKEN`. Optional `skipIf` is only for stories that do not require live DEV proof |
+| p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Count **HTTP 200 only**. The soak must actually run for the named duration. Default the soak account to a named DEV fixture when `DEV_*_PERF_ACCOUNT_ID` is unset. If the story forbids skipping, fail the soak step when it cannot mint or send a Bearer token; do not log-and-skip |
+| Real feature-branch API | Follow this repo. Dispatch the existing API workflow on the **feature branch** (`workflow_dispatch`). Do not merge to the integration branch to test. Do not pretend a portal Amplify preview deployed the API |
 
 If the story names a specialist Hoopa cannot call, still complete the
 in-repo substitute above and record the missing specialist in the handoff.
