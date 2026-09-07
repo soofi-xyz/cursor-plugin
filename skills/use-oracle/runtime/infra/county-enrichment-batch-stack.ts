@@ -56,7 +56,9 @@ export class CountyEnrichmentBatchStack extends Stack {
       );
     }
 
-    Tags.of(this).add("project_name", "county-enrichment");
+    const projectName =
+      this.node.tryGetContext("projectName") ?? "county-enrichment";
+    Tags.of(this).add("project_name", projectName);
 
     const artifactBucket = new s3.Bucket(this, "ArtifactBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -146,6 +148,7 @@ export class CountyEnrichmentBatchStack extends Stack {
 
     const sunbizRole = this.jobRole("SunbizJobRole");
     const bbbRole = this.jobRole("BbbJobRole");
+    const permitRole = this.jobRole("PermitJobRole");
     const reconciliationRole = this.jobRole("ReconciliationJobRole");
 
     this.grantObjects(sunbizRole, artifactBucket, "s3:GetObject", [
@@ -176,6 +179,20 @@ export class CountyEnrichmentBatchStack extends Stack {
     this.grantList(bbbRole, artifactBucket, [
       "runs/*/checkpoints/bbb/*",
       "runs/*/handoffs/bbb-*.json",
+    ]);
+
+    this.grantObjects(permitRole, artifactBucket, "s3:GetObject", [
+      "inputs/*",
+      "runs/*/artifacts/reconciliation/*",
+      "runs/*/artifacts/permit/*",
+      "runs/*/handoffs/permit.json",
+    ]);
+    this.grantObjects(permitRole, artifactBucket, "s3:PutObject", [
+      "runs/*/artifacts/permit/*",
+      "runs/*/handoffs/permit.json",
+    ]);
+    this.grantList(permitRole, artifactBucket, [
+      "runs/*/handoffs/permit.json",
     ]);
 
     this.grantObjects(reconciliationRole, artifactBucket, "s3:GetObject", [
@@ -260,6 +277,16 @@ export class CountyEnrichmentBatchStack extends Stack {
       timeout: Duration.minutes(20),
       jobRole: reconciliationRole,
     });
+    const permitJob = createJobDefinition({
+      id: "PermitJobDefinition",
+      name: "county-enrichment-permit",
+      command: ["node", "/app/dist/src/batch/permit-worker.js"],
+      cpu: 4,
+      memoryMib: 16_384,
+      ephemeralStorageGib: 80,
+      timeout: Duration.hours(4),
+      jobRole: permitRole,
+    });
 
     const operatorPolicy = new iam.ManagedPolicy(
       this,
@@ -283,6 +310,7 @@ export class CountyEnrichmentBatchStack extends Stack {
               sunbizJob.jobDefinitionArn,
               bbbJob.jobDefinitionArn,
               reconciliationJob.jobDefinitionArn,
+              permitJob.jobDefinitionArn,
             ],
           }),
           new iam.PolicyStatement({
@@ -333,6 +361,9 @@ export class CountyEnrichmentBatchStack extends Stack {
     });
     new CfnOutput(this, "ReconciliationJobDefinitionArn", {
       value: reconciliationJob.jobDefinitionArn,
+    });
+    new CfnOutput(this, "PermitJobDefinitionArn", {
+      value: permitJob.jobDefinitionArn,
     });
     new CfnOutput(this, "BatchLogGroupName", {
       value: logGroup.logGroupName,

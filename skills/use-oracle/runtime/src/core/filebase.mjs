@@ -13,7 +13,14 @@
  */
 
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import {
+  access,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { z } from "zod";
 
@@ -42,6 +49,37 @@ const filebaseApprovalSchema = z
       .object({
         queryTable: approvalArtifactSchema,
         coverage: approvalArtifactSchema,
+      })
+      .strict(),
+    approved: z.literal(true),
+    approvedBy: z.string().min(1),
+    approvedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+const permitFilebaseApprovalSchema = z
+  .object({
+    schemaVersion: z.literal(
+      "elephant.filebase-permit-publish-approval.v1",
+    ),
+    action: z.literal(
+      "publish-permit-property-and-coverage",
+    ),
+    county: z.string().min(1),
+    bucket: z.string().min(1),
+    labels: z
+      .object({
+        permitTable: z.string().min(1),
+        queryTable: z.string().min(1),
+        coverage: z.string().min(1),
+      })
+      .strict(),
+    artifacts: z
+      .object({
+        permitTable: approvalArtifactSchema,
+        queryTable: approvalArtifactSchema,
+        coverage: approvalArtifactSchema,
+        permitCoverage: approvalArtifactSchema,
       })
       .strict(),
     approved: z.literal(true),
@@ -231,6 +269,214 @@ async function uploadFilebaseObject({ client, bucket, key, body, contentType }) 
     throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
   }
   return cid;
+}
+
+async function uploadFilebaseFile({
+  client,
+  bucket,
+  key,
+  filePath,
+  contentType,
+}) {
+  const fileStat = await stat(filePath);
+  const command = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: createReadStream(filePath),
+    ContentLength: fileStat.size,
+    ContentType: contentType,
+  });
+  let headerCid;
+  command.middlewareStack.add(
+    (next) => async (args) => {
+      const result = await next(args);
+      const response = result.response;
+      if (
+        typeof response === "object" &&
+        response !== null &&
+        "headers" in response &&
+        typeof response.headers === "object" &&
+        response.headers !== null
+      ) {
+        headerCid = response.headers["x-amz-meta-cid"];
+      }
+      return result;
+    },
+    {
+      step: "deserialize",
+      name: `captureFilebaseStreamCid-${key}`,
+      priority: "low",
+    },
+  );
+  await client.send(command);
+  const cid = headerCid?.trim();
+  if (typeof cid !== "string" || cid.length === 0) {
+    throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
+  }
+  return cid;
+}
+
+async function fileIntegrity(filePath) {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  let bytes = 0;
+  for await (const chunk of stream) {
+    hash.update(chunk);
+    bytes += chunk.length;
+  }
+  return { bytes, sha256: hash.digest("hex") };
+}
+
+async function writePublicationReceipt(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}`;
+  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporaryPath, filePath);
+}
+
+export async function publishPermitFilebase(artifacts, config) {
+  const env = config.env ?? process.env;
+  fillDerivedFilebaseToken(env);
+  if (!hasFilebaseCredentials(env)) {
+    throw new Error(
+      `Filebase credentials are missing for ${artifacts.county}`,
+    );
+  }
+  if (
+    typeof config.approvalManifestPath !== "string" ||
+    !(await fileExists(config.approvalManifestPath))
+  ) {
+    throw new Error(
+      `Live Filebase permit publish for ${artifacts.county} requires an approval manifest`,
+    );
+  }
+  const paths = {
+    permitTable: artifacts.permitTablePath,
+    queryTable: artifacts.queryTablePath,
+    coverage: artifacts.coveragePath,
+    permitCoverage: artifacts.permitCoveragePath,
+  };
+  const integrity = Object.fromEntries(
+    await Promise.all(
+      Object.entries(paths).map(async ([name, filePath]) => [
+        name,
+        await fileIntegrity(filePath),
+      ]),
+    ),
+  );
+  const approval = permitFilebaseApprovalSchema.parse(
+    JSON.parse(await readFile(config.approvalManifestPath, "utf8")),
+  );
+  const expected = {
+    county: artifacts.county,
+    bucket: artifacts.bucket,
+    labels: {
+      permitTable: artifacts.permitTableIpnsLabel,
+      queryTable: artifacts.queryTableIpnsLabel,
+      coverage: artifacts.coverageIpnsLabel,
+    },
+  };
+  for (const key of ["county", "bucket"]) {
+    if (approval[key] !== expected[key]) {
+      throw new Error(`Permit approval ${key} does not match`);
+    }
+  }
+  for (const [name, label] of Object.entries(expected.labels)) {
+    if (approval.labels[name] !== label) {
+      throw new Error(`Permit approval label ${name} does not match`);
+    }
+  }
+  for (const [name, actual] of Object.entries(integrity)) {
+    if (
+      approval.artifacts[name].bytes !== actual.bytes ||
+      approval.artifacts[name].sha256 !== actual.sha256
+    ) {
+      throw new Error(
+        `Permit approval ${name} integrity does not match`,
+      );
+    }
+  }
+  const receiptPath = config.receiptPath;
+  if (typeof receiptPath !== "string" || receiptPath.trim().length === 0) {
+    throw new Error("Permit publication requires a resumable receipt path");
+  }
+  let receipt = {
+    schemaVersion: "elephant.filebase-permit-publication-receipt.v1",
+    county: artifacts.county,
+    bucket: artifacts.bucket,
+    approvedBy: approval.approvedBy,
+    approvedAt: approval.approvedAt,
+    artifacts: integrity,
+    uploads: {},
+    names: {},
+    status: "publishing",
+  };
+  if (await fileExists(receiptPath)) {
+    const existing = JSON.parse(await readFile(receiptPath, "utf8"));
+    if (
+      existing.county !== receipt.county ||
+      existing.bucket !== receipt.bucket ||
+      JSON.stringify(existing.artifacts) !== JSON.stringify(integrity)
+    ) {
+      throw new Error("Existing permit publication receipt is incompatible");
+    }
+    receipt = existing;
+  }
+  const client = new S3Client({
+    region: "us-east-1",
+    endpoint: config.endpoint ?? FILEBASE_S3_ENDPOINT,
+    credentials: {
+      accessKeyId: env.S3_ACCESS_KEY_ID.trim(),
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY.trim(),
+    },
+    forcePathStyle: true,
+  });
+  const contentTypes = {
+    permitTable: "application/vnd.apache.parquet",
+    queryTable: "application/vnd.apache.parquet",
+    coverage: "application/json",
+    permitCoverage: "application/json",
+  };
+  const objectKeys = {
+    permitTable: `${artifacts.county}/permit-table.parquet`,
+    queryTable: `${artifacts.county}/query-table.parquet`,
+    coverage: `${artifacts.county}/dataset-coverage.json`,
+    permitCoverage: `${artifacts.county}/permit-coverage.json`,
+  };
+  for (const name of Object.keys(paths)) {
+    if (!receipt.uploads[name]) {
+      receipt.uploads[name] = {
+        key: objectKeys[name],
+        cid: await uploadFilebaseFile({
+          client,
+          bucket: artifacts.bucket,
+          key: objectKeys[name],
+          filePath: paths[name],
+          contentType: contentTypes[name],
+        }),
+      };
+      await writePublicationReceipt(receiptPath, receipt);
+    }
+  }
+  const token = env.FILEBASE_API_TOKEN.trim();
+  const labels = {
+    permitTable: artifacts.permitTableIpnsLabel,
+    queryTable: artifacts.queryTableIpnsLabel,
+    coverage: artifacts.coverageIpnsLabel,
+  };
+  for (const [name, label] of Object.entries(labels)) {
+    if (!receipt.names[name]) {
+      receipt.names[name] = await upsertFilebaseName(
+        token,
+        label,
+        receipt.uploads[name].cid,
+      );
+      await writePublicationReceipt(receiptPath, receipt);
+    }
+  }
+  receipt.status = "complete";
+  receipt.completedAt = new Date().toISOString();
+  await writePublicationReceipt(receiptPath, receipt);
+  return receipt;
 }
 
 /**

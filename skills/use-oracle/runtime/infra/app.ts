@@ -11,6 +11,9 @@ const region =
   "us-east-1";
 
 new CountyEnrichmentBatchStack(app, "CountyEnrichmentBatchStack", {
+  stackName:
+    app.node.tryGetContext("stackName") ??
+    "CountyEnrichmentBatchStack",
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region,

@@ -1,0 +1,24 @@
+{
+  "fixtureKind": "official_public_document_extract",
+  "capturedAt": "2026-09-06T05:00:00.000Z",
+  "sourceUrl": "http://weblink.coab.us/WebLink/DocView.aspx?dbid=0&id=1020978&repo=CityofAtlanticBeach",
+  "permitNumber": "EL-RP-22-0013",
+  "parcelIdentifier": "171177-0000",
+  "permitIssueDate": "2022-02-09",
+  "improvementType": "Residential roof",
+  "description": "Install architectural shingles to detached garage",
+  "estimatedJobValue": 4800,
+  "contractors": [
+    {
+      "name": "American Roofing of Jacksonville, LLC",
+      "license": "RC29027546",
+      "role": "roofing contractor"
+    }
+  ],
+  "omissions": [
+    "property owner name",
+    "email addresses",
+    "phone numbers",
+    "insurance identifiers"
+  ]
+}
