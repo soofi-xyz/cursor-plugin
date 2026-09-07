@@ -92,7 +92,7 @@ Run these stages in order. Do not advance past a failed or blocked stage.
 3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree.
 4. **Plan or scaffold.** Scaffold the new portal, or inspect the existing architecture and plan the minimum necessary change.
 5. **Frontend.** Implement only when frontend is in scope; use Figma/design tests when supplied or required.
-6. **Backend.** Implement only when backend is in scope; follow the repository's existing API/IaC patterns before applying new-portal defaults. On a shared `/api/v2` HTTP API, copy sibling `authorizationType` and do not add a JWT authorizer unless siblings already use one. Copy sibling CORS; a configured `*` is not a literal origin.
+6. **Backend.** Implement only when backend is in scope; follow the repository's existing API/IaC patterns before applying new-portal defaults. On a shared `/api/v2` HTTP API, copy sibling `authorizationType` and do not add a JWT authorizer unless siblings already use one. Copy sibling CORS; a configured `*` is not a literal origin. Accept Cognito ID tokens and HS256 portal `authToken` (401/403/404 as specified). Failed-payment overlays use installment status events, not money events; see `rules/06-existing-repository-changes.md` §3e.
 7. **Integrate or deploy.** Wire and deploy only the requested surfaces and only with explicit environment authorization.
 8. **Verify.** Run gates that apply to the changed scopes and the repository's required CI suite.
 9. **Pull request and handoff.** Push the feature branch, open or update a PR, and return evidence plus blockers. Never merge without approval.

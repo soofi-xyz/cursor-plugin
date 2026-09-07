@@ -122,6 +122,45 @@ Confirm authenticated calls from the logged-in app with a fetch that
 includes the session Bearer token. Do not treat an address-bar GET as
 proof of auth.
 
+## 3e. Failed-installment overlay / payment-plan-summary
+
+When a story asks for a post-login overlay driven by
+`GET /accounts/{accountId}/payment-plan-summary` (or the same contract on
+`/api/v2`):
+
+1. Accept the existing portal HS256 `authToken` as well as Cognito ID
+   tokens. Return **401** for invalid or missing tokens and **403** when
+   the account is not on the token allow-list. Return **404** when the
+   Persist debt does not exist.
+2. Determine failure from the **latest scheduled-installment status
+   event across all plans**. Do not use money `payment` vertices,
+   `debt_has_payment`, Rootstrap payment history, or other money events.
+   Overlay `lastPaymentFailed` is true only for installment status
+   `FAILED`.
+3. Remaining installments are an allow-list: missing, `SCHEDULED`, or
+   `RESCHEDULED`. Exclude failed, paid/completed, and cancelled
+   installments.
+4. **Update Plan** opens the existing payment-plan builder without
+   immediately modifying the current plan. Confirming uses the existing
+   plan-creation backend, creates a **new plan ID**, retires the previous
+   plan, and leaves exactly one active plan. Cancelled or failed updates
+   leave the existing plan unchanged. Guard in-flight retries so they
+   cannot create duplicate plans.
+5. After success, refetch the summary and active plans and show the new
+   plan and next payment.
+6. Live tests must call the **deployed feature API and DEV Persist**,
+   with no mocks and no skipped tests. Performance soaks count **HTTP 200
+   only** and must actually run for five minutes. Do not skip those
+   jobs when secrets are unset; fail the deploy workflow. Amplify
+   preview is the frontend, not the API. Payments APIs that attach to
+   shared `/api/v2` deploy from their existing API workflow
+   (`workflow_dispatch` or merge to the integration branch), never from
+   the portal Amplify preview.
+7. When the story names DEV Persist fixture accounts, encode those
+   expected summary shapes in contract tests and hit the same accounts
+   on the deployed API. Do not treat a money-event `FAILURE` as the
+   overlay signal.
+
 ## 3b. Persist / Gremlin queries
 
 When the change reads Persist (or the story names Hoothoot / a Gremlin
@@ -148,9 +187,9 @@ CI-owned. It is also **not** a waiver of acceptance criteria.
 
 | Story asks for | Increment still requires |
 | --- | --- |
-| Live integration or feature-branch API tests | Contract tests on the real Express/Lambda handler; optional `skipIf` live host call with a named reason; post-deploy CI step when the repo deploys API on the integration branch |
-| p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Skip in CI only when secrets are unset, with an explicit log. Do not leave the script unwired |
-| Real feature-branch API | Follow this repo. If APIs deploy only after merge to the integration branch, say so in the handoff. Do not pretend a portal Amplify preview deployed the API |
+| Live integration or feature-branch API tests | Contract tests on the real Express/Lambda handler **and** a post-deploy CI step against the deployed DEV API. If the story forbids skipped live tests, the deploy job must fail when secrets are unset — do not `skipIf` or `exit 0`. Optional `skipIf` is only for stories that do not require live DEV proof |
+| p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Count **HTTP 200 only**. The soak must actually run for the named duration. If the story forbids skipping, fail when secrets are unset; do not log-and-skip |
+| Real feature-branch API | Follow this repo. If APIs deploy only after merge to the integration branch or `workflow_dispatch`, say so in the handoff. Do not pretend a portal Amplify preview deployed the API |
 
 If the story names a specialist Hoopa cannot call, still complete the
 in-repo substitute above and record the missing specialist in the handoff.

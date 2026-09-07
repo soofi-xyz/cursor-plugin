@@ -115,8 +115,12 @@ or an acceptance criterion explicitly requires latency evidence.
 
 When the criterion applies, implement a sibling-style soak or
 `reference/measure-latency.mjs` runner **and** add it to the existing deploy
-or preview workflow. Do not leave a local script unwired. CI may skip the
-live run when secrets are unset; the skip must log the missing names.
+or preview workflow. Do not leave a local script unwired. If the story
+allows it, CI may skip the live run when secrets are unset; the skip must
+log the missing names. If the story requires live DEV proof or a timed
+soak with no skipped tests, fail the deploy job when secrets are unset
+and count only HTTP 200 responses for p95. The soak must actually run for
+the named duration (five minutes when that is the criterion).
 
 Measure deployed API responses with representative data from `datasetRef`.
 This gate measures the complete API response, not page load, local handlers, or
