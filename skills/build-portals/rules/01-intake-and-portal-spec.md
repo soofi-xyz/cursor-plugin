@@ -22,11 +22,14 @@ Set exactly one `deliveryMode`:
 | `new_repository` | The user wants a new portal or explicitly asks for a new repository | One primary `designSource` plus new-repository delivery context |
 | `existing_repository` | The user wants to add, change, fix, or manage code in a current project | Accessible repository, change request, base branch, feature branch, and PR authorization |
 
-If intent is unclear, ask: **“Should I create a new repository or modify the
-existing project and open a PR?”** If the request explicitly says “in this
-repo,” “update the portal backend,” or names an existing project to change,
-select `existing_repository` without forcing a redundant question. State the
-selected mode before making changes.
+If the workspace is already a portal repository (frontend plus API apps and
+existing CI), select `existing_repository` without forcing a question. If the
+request explicitly says “in this repo,” “update the portal backend,” or names
+an existing project to change, also select `existing_repository`. State the
+selected mode before making changes. Create a new GitHub repository only when
+the user explicitly confirms that. If intent is still unclear after that, ask:
+**“Should I create a new repository or modify the existing project and open a
+PR?”**
 
 Every run also requires a `changeRequest` with a concise summary, affected
 scopes (`frontend`, `backend`, `infrastructure`, `testing`, or `deployment`),
@@ -90,7 +93,9 @@ For existing-project work, `openQuestions` contains only decisions required
 before code can be changed safely. Missing credentials for a later, explicitly
 requested deployment or live verification step do not block local
 implementation; record those as gate blockers and stop before that external
-step.
+step. Named acceptance criteria (shared `/api/v2` attach, Persist query,
+soak, live integration) remain required in-repo work: wire the existing
+workflows and sibling-style scripts even when the agent cannot execute them.
 
 ## Normalize to `portal-spec.json`
 

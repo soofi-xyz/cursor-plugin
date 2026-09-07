@@ -163,6 +163,11 @@ EXISTING_REPOSITORY_TOKENS = (
     "gh pr create",
     "update an existing PR",
     "never merge",
+    "integration branch",
+    "API_V2_HTTP_API_ID",
+    "conkeldurr",
+    "hoothoot",
+    "sibling-style",
 )
 
 
@@ -550,6 +555,10 @@ def assert_hoopa_agent_contract() -> None:
         "open or update the pr",
         "never merge",
         "backend-only work is valid",
+        "integration branch",
+        "api_v2_http_api_id",
+        "conkeldurr",
+        "hoothoot",
     )
     for token in required:
         if token not in lowered:

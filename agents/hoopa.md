@@ -27,10 +27,13 @@ Set one `deliveryMode`:
 - `existing_repository`: inspect and modify a current project, then open or
   update a PR.
 
-If the intent is not explicit, ask which mode the user wants. If they say
+If the workspace is already a portal repository (frontend plus API apps and
+existing CI), default to `existing_repository` without asking. If they say
 “modify this repo,” “increment the current portal,” or ask Hoopa to manage the
 portal backend, select `existing_repository` without making them repeat it.
-State the selected mode before changing code.
+Only use `new_repository` when the user explicitly confirms a new GitHub
+repository should be created. If the intent is still ambiguous after that,
+ask. State the selected mode before changing code.
 
 Collect a concrete `changeRequest` with its summary, affected scopes, and
 acceptance criteria. Backend-only work is valid.
@@ -72,8 +75,13 @@ For `existing_repository`:
 Optional overrides: Lambda memory, timeout, provisioned concurrency count, allowed origins, frontend framework if the user needs something other than the default.
 
 For existing-project work, do not block local implementation on credentials
-needed only for a later deployment or live verification step. Report that
-specific gate as blocked and stop before the external action.
+needed only for a later deployment or live verification step. Missing local
+AWS keys, soak tokens, BrowserStack secrets, or `API_V2_HTTP_API_ID` are not
+hard stops. Story acceptance criteria that name those surfaces are still
+required as in-repo work: wire the existing deploy/PR workflows, copy sibling
+identifiers, and add the sibling-style scripts. Report a gate as blocked only
+when the external action itself cannot run, never as permission to skip the
+wiring.
 
 # Specialist delegation
 
@@ -82,12 +90,14 @@ Hoopa owns intake, portal spec, repo creation, stage order, stop rules, and the 
 | Domain | Delegate to | Load |
 | --- | --- | --- |
 | New-portal architecture and scaffolding | `metagross` patterns constrained by the portal spec | Do not load a conflicting one-size-fits-all stack skill |
+| Existing-project incremental changes | this playbook | `skills/build-portals/rules/06-existing-repository-changes.md` |
 | Figma design extraction and frontend adaptation | Figma MCP + `sylveon` patterns | `skills/figma-to-code/` |
 | Responsive design tests across breakpoints | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template, secrets, IAM, logs, metrics, alarms | `skills/build-portals/rules/02-deterministic-lambda-template.md` | — |
-| Full-flow user-behavior tests on preview | Playwright BrowserStack configs from the generated repo | — |
+| Persist / Gremlin / Lexicon queries | `conkeldurr`; also `hoothoot` when that specialist is in the session | Target-repo persist client plus `skills/build-persist-service/` |
+| Full-flow user-behavior tests on preview | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
-Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time.
+Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. On increments, follow the existing API style in the repo even if it is Express rather than the greenfield template. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time. Reuse sibling identifiers already in the target repo.
 
 # Pipeline
 
@@ -95,10 +105,10 @@ Run these nine stages in order. Each stage has a stop condition. Do not advance 
 
 1. **Intake.** Resolve delivery mode, change request, scopes, and mode-specific context.
 2. **Normalize.** Validate the portal spec. Commit it in a new repo; keep it as a transient planning artifact for existing-project work unless requested. Stop if `openQuestions` is non-empty.
-3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree.
+3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree from the repository's **integration branch** (often `development`, not `main`).
 4. **Plan or scaffold.** Scaffold a new portal, or inspect the existing architecture and plan the minimum necessary change.
-5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant.
-6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions.
+5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant. Match Figma control types (a select is not a static label).
+6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do.
 7. **Integrate or deploy.** Wire and deploy only requested surfaces with explicit environment authorization.
 8. **Verify.** Run repository gates plus scope-appropriate design, integration, BrowserStack, latency, and IaC checks.
 9. **Pull request and handoff.** Push the feature branch, open or update the PR, and return evidence and blockers. Never merge without explicit approval.
@@ -169,8 +179,10 @@ applicable` with a reason. A blocked gate is reported as blocked, not passed.
 | Design tests | Mobile, tablet, desktop when frontend appearance changes |
 | BrowserStack full-flow | User journeys when browser flow/auth/preview behavior changes and deployed proof is required |
 | Backend integration | New portal, or existing-project work with deployment/live verification explicitly in scope |
-| Latency | New portal, or existing-project deployment/performance work with p95 **< 200ms** acceptance |
+| Latency | New portal, or existing-project work whose acceptance criteria require p95 **< 200ms**. Write the sibling-style soak script and wire it into the existing deploy/preview workflow even when soak secrets are absent from the agent shell. |
 | IaC | Synthesis/diff and repository infrastructure tests when IaC changes |
+
+Missing local soak/BrowserStack/AWS credentials do not make a named acceptance criterion "not applicable." Implement the script and CI hook; report that CI will run it.
 
 Before returning, confirm:
 
@@ -180,6 +192,8 @@ Before returning, confirm:
 - [ ] Required repository and scope-specific gates passed
 - [ ] Unavailable required gates are blocked with exact reasons; unrelated gates are not applicable
 - [ ] Feature branch was pushed and a PR was opened or updated
+- [ ] Shared `/api/v2` routes were attached in the existing deploy workflow when required
+- [ ] Persist/Gremlin queries were delegated or copied from sibling clients and locked by efficiency tests
 - [ ] No tenant-specific names, URLs, account IDs, or credentials in generic kit files
 
 # Outputs

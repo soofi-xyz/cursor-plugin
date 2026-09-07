@@ -17,6 +17,12 @@ a one-line reason; do not call them blocked or passed. A required gate must pass
 and retain evidence before handoff. Do not replace failures with waivers or
 mock results.
 
+A named acceptance criterion is still required implementation work when the
+agent cannot execute it locally. Missing soak tokens, BrowserStack secrets, or
+AWS keys do not make that criterion not applicable. Write the sibling-style
+script, attach it to the existing deploy or preview workflow, and report that
+CI will run it.
+
 | Changed scope | Additional required gates |
 | --- | --- |
 | Backend behavior | API unit/contract tests; live integration and latency only when deployment/live verification is explicitly in scope |
@@ -97,6 +103,11 @@ Redact credentials and customer records from logs and evidence.
 For `new_repository`, apply this gate. For `existing_repository`, apply only
 when `deployment` is in `changeRequest.scopes` and API performance is affected,
 or an acceptance criterion explicitly requires latency evidence.
+
+When the criterion applies, implement a sibling-style soak or
+`reference/measure-latency.mjs` runner **and** add it to the existing deploy
+or preview workflow. Do not leave a local script unwired. CI may skip the
+live run when secrets are unset; the skip must log the missing names.
 
 Measure deployed API responses with representative data from `datasetRef`.
 This gate measures the complete API response, not page load, local handlers, or

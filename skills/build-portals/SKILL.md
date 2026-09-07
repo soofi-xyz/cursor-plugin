@@ -38,9 +38,12 @@ At the start, determine or ask whether the user wants:
 2. `existing_repository` — inspect the current project, increment its code, and
    open or update a pull request.
 
-Do not default to new-repository creation. An explicit request to update the
-current portal or manage its backend selects `existing_repository`. Backend-only
-changes are supported and do not require design input.
+Do not default to new-repository creation. If the workspace is already a
+portal repository (frontend plus API apps and existing CI), select
+`existing_repository` without asking. An explicit request to update the
+current portal or manage its backend also selects `existing_repository`.
+Backend-only changes are supported and do not require design input. Create a
+new GitHub repository only when the user explicitly confirms that.
 
 ## Primary design sources for new repositories
 
@@ -76,7 +79,9 @@ Record unresolved items in `openQuestions`. Stop and ask the user. **Do not
 scaffold or modify code** while `openQuestions` is non-empty.
 For existing-project work, keep later deployment/verification credential gaps
 out of `openQuestions` when local implementation can proceed; report them as
-gate blockers before the external step.
+gate blockers before the external step. Still implement the in-repo substitute:
+wire `API_V2_HTTP_API_ID` into the existing API deploy workflow, add sibling-style
+soak/live scripts to that workflow, and reuse sibling identifiers.
 
 ## Nine-stage workflow
 
@@ -119,7 +124,8 @@ On stop, list exact missing fields. Do not scaffold past the last successful sta
 | Responsive design tests | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template | this skill | `rules/02-deterministic-lambda-template.md` |
 | Existing-project incremental changes | this skill | `rules/06-existing-repository-changes.md` |
-| Full-flow preview tests | generated repo Playwright BrowserStack configs | — |
+| Persist / Gremlin / Lexicon queries | `conkeldurr`; also `hoothoot` when that specialist is in the session | Target-repo persist client plus `skills/build-persist-service/` |
+| Full-flow preview tests | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
 Default backend style is HTTP API Gateway + Lambda. Use tRPC only when the user explicitly requests it.
 

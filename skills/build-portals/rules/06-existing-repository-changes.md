@@ -28,13 +28,21 @@ Follow the existing architecture unless the change explicitly requires a
 reviewed migration. Do not replace an established backend framework merely
 because Hoopa's new-portal default is Lambda plus HTTP API Gateway.
 
+Inspect `.github/workflows/` before asking for secrets. Copy sibling API
+deploy jobs, preview apps, Express/Lambda/CDK/persist clients, and frontend
+test scripts (`unit-test`, `test:design:mocked`, `test:browser:*:mocked`).
+Do not scaffold a second Turborepo, a second auth model, or tRPC unless the
+user asked for it.
+
 ## 2. Preserve user changes
 
 Preserve user changes exactly. Never run `git reset --hard`, `git clean`,
 `git checkout --`, or silently stash another person's work.
 
 If the checkout is dirty or another task is active, create an isolated worktree
-from the approved base branch:
+from the approved base branch. The base is the repository's **integration
+branch** (often `development`), not `main`, unless the repo documents a
+different promotion path:
 
 ```bash
 git fetch origin "$BASE_BRANCH"
@@ -72,6 +80,48 @@ For backend management:
 - add structured logs, metrics, and alarms only where the repository's
   observability pattern or the requested behavior requires them
 - keep production values out of code and test fixtures
+- reuse sibling identifiers already in the repo (shared HTTP API id, Persist
+  SSM parameter, JWT issuer/audience/claim, reader target, test fixtures).
+  Do not invent a parallel Cognito pool, Persist URL, or HTTP API
+- if a new route must attach to a shared `/api/v2` HTTP API, add
+  `API_V2_HTTP_API_ID` to **that API's existing deploy workflow** with the
+  same GitHub var plus fallback pattern sibling APIs already use. Leaving
+  the workflow unwired is a delivery miss even when local AWS is absent
+- when frontend is in scope, match Figma control types. A dropdown in the
+  design is a select, not a static label
+
+## 3b. Persist / Gremlin queries
+
+When the change reads Persist (or the story names Hoothoot / a Gremlin
+query):
+
+1. Delegate to `conkeldurr` and the target repo's existing persist client.
+   If a Persist query specialist such as `hoothoot` is available in the
+   session, call it to produce or validate the query.
+2. Absence of that specialist is not permission to skip the query. Copy
+   sibling Gremlin from the same repo and lock efficiency in unit tests:
+   indexed identifier start, immediate `limit(1)`, filter before order,
+   `project()` of API fields only (no `valueMap(true)` dumps), one Persist
+   round-trip.
+3. Do not treat a hand-written query as done solely because increment mode
+   skipped a live specialist pass. Encode the constraints in tests and add
+   an optional live Persist validation step to CI when the repo already
+   uses OIDC to call Persist.
+
+## 3c. Story acceptance criteria vs local hard-stops
+
+Missing local `AWS_ACCESS_KEY_ID`, soak bearer tokens, BrowserStack
+secrets, or `API_V2_HTTP_API_ID` is **not** an agent hard stop. Those are
+CI-owned. It is also **not** a waiver of acceptance criteria.
+
+| Story asks for | Increment still requires |
+| --- | --- |
+| Live integration or feature-branch API tests | Contract tests on the real Express/Lambda handler; optional `skipIf` live host call with a named reason; post-deploy CI step when the repo deploys API on the integration branch |
+| p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Skip in CI only when secrets are unset, with an explicit log. Do not leave the script unwired |
+| Real feature-branch API | Follow this repo. If APIs deploy only after merge to the integration branch, say so in the handoff. Do not pretend a portal Amplify preview deployed the API |
+
+If the story names a specialist Hoopa cannot call, still complete the
+in-repo substitute above and record the missing specialist in the handoff.
 
 ## 4. Test before and after implementation
 
@@ -102,7 +152,8 @@ gh pr create \
 
 The pull-request body must describe the requested behavior, implementation,
 tests, deployment impact, unresolved placeholders, and evidence. Link the PR in
-the handoff.
+the handoff. Prefer a **draft PR into the integration branch** so preview and
+test-before-review can start.
 
 If `repositoryContext.pullRequestUrl` names an active PR, update an existing PR
 on its head branch instead of opening a duplicate, but only after confirming
@@ -110,7 +161,7 @@ that its scope matches the request.
 
 Never merge, close, or deploy the pull request without explicit authorization.
 Repository write permission authorizes branch and PR delivery, not production
-mutation.
+mutation. Do not push to `main`. Do not create a new GitHub repo.
 
 ## Stop rules
 
