@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "elephant.permit-soak.v1",
+  "observedAt": "2026-09-06T05:27:44.312Z",
+  "awsBatchJobId": "163cd9ce-2e51-4b8e-9021-1d9446253740",
+  "executionBoundary": "aws-batch-us-east-1",
+  "sample": {
+    "parcels": 100,
+    "positive": 93,
+    "permitless": 7,
+    "totalReferences": 655,
+    "maxReferences": 10,
+    "detailSample": 50
+  },
+  "latencyMs": {
+    "searchP50": 540,
+    "searchP95": 885,
+    "detailP50": 662,
+    "detailP95": 1366
+  },
+  "bytes": {
+    "search": 333337,
+    "detail": 2239086
+  },
+  "evidence": {
+    "parcelMatches": 50,
+    "contractorDetails": 48,
+    "inspectionDetails": 46,
+    "relatedDetails": 0,
+    "roofDetails": 5
+  },
+  "errors": [],
+  "bulkGate": {
+    "awsBatchCountProbeJobId": "fe943d68-c6e5-4b2a-8832-b1530dcd65d4",
+    "sourceRecordCount": 3624986,
+    "pageSize": 2000,
+    "projectedRequestCount": 1815,
+    "minimumDelayMs": 1000,
+    "projectedNetworkDurationMinutes": 31,
+    "approvedExecution": "single streaming AWS Batch job",
+    "gate": "pass_under_48_hours"
+  }
+}

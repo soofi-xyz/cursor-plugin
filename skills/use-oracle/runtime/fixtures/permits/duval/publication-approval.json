@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "elephant.filebase-permit-publish-approval.v1",
+  "action": "publish-permit-property-and-coverage",
+  "county": "duval",
+  "bucket": "elephant-oracle-query-table",
+  "labels": {
+    "permitTable": "oracle-permit-table-duval",
+    "queryTable": "oracle-query-table-duval",
+    "coverage": "oracle-dataset-coverage-duval"
+  },
+  "artifacts": {
+    "permitTable": {
+      "bytes": 1108488548,
+      "sha256": "6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e"
+    },
+    "queryTable": {
+      "bytes": 167302003,
+      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb"
+    },
+    "coverage": {
+      "bytes": 3171,
+      "sha256": "4bef885a67cb22d2520873039f6c5eaa8d7b9134594e750921d39ba38feb75a3"
+    },
+    "permitCoverage": {
+      "bytes": 2186,
+      "sha256": "70d6cd1f4bfc0d585f828515c53e81176a3feaca45f60feb8fa6eb3804e526b2"
+    }
+  },
+  "approved": true,
+  "approvedBy": "Nelson Boralli",
+  "approvedAt": "2026-09-06T11:45:00.000Z"
+}

@@ -1,0 +1,246 @@
+county: Duval
+state: FL
+slug: duval
+fips: "12031"
+snapshot_time: "2026-09-06T04:56:00Z"
+
+parcel:
+  canonical_source: Florida DOR 2026 preliminary NAL
+  assessed_parcel_count: 404023
+  published_query_table_count: 403885
+  count_difference: 138
+  count_difference_pct: 0.0342
+  gis_feature_count: 405716
+  discrepancy_threshold_pct: 2.0
+  discrepancy_explanation: DOR PIN geometry contains more features than the assessed NAL population; the NAL remains the canonical parcel denominator
+  separately_assessed_without_geometry: none
+  identifier_proven: true
+  identifier_name: RE Number
+  identifier_format: "######-####"
+  join_rule: Preserve as text; remove only a terminal R from DOR identifiers and add the display dash after six digits
+
+permits:
+  expected_jurisdiction_count: 5
+  assumes_unified_countywide_history: false
+  routed_property_counts:
+    jacksonville: 381127
+    jacksonville-beach: 12670
+    atlantic-beach: 6191
+    neptune-beach: 2967
+    baldwin: 930
+  supported_property_count: 381127
+  documented_gap_property_count: 22758
+  supported_property_pct: 94.3652
+  accepted_publication_sources:
+    - jurisdiction_key: jacksonville
+      adapter: jaxepics
+      source_system: duval_jaxepics_bid_map
+      execution_boundary: aws-batch-us-east-1
+      status: accepted
+  excluded_publication_sources:
+    - jurisdiction_key: jacksonville-beach
+      status: blocked-session-contract
+    - jurisdiction_key: atlantic-beach
+      status: automation-prohibited-records-request
+    - jurisdiction_key: neptune-beach
+      status: no-public-historical-search
+    - jurisdiction_key: baldwin
+      status: no-public-historical-search
+  publication_scope:
+    destination_bucket: elephant-oracle-query-table
+    permit_ipns_label: oracle-permit-table-duval
+    property_ipns_label: oracle-query-table-duval
+    coverage_ipns_label: oracle-dataset-coverage-duval
+    public_artifacts:
+      - canonical 20-column normalized permit Parquet
+      - property query table with exact permit flags and counts
+      - dataset coverage and integrity manifests
+    private_artifacts:
+      - raw portal payloads
+      - contractor and license evidence
+      - inspection and related-record evidence
+  public_schema:
+    schema_version: elephant.permit-table.v1
+    column_count: 20
+    columns:
+      - property_improvement_id
+      - property_id
+      - parcel_identifier
+      - permit_number
+      - improvement_type
+      - improvement_status
+      - improvement_action
+      - permit_issue_date
+      - application_received_date
+      - final_inspection_date
+      - permit_close_date
+      - completion_date
+      - expiration_date
+      - opened_date
+      - source_system
+      - county_name
+      - project_description
+      - description
+      - estimated_job_value
+      - fee
+  published_result:
+    source_record_count: 3624986
+    normalized_permit_count: 3415527
+    linked_permit_count: 3353717
+    valid_unlinked_permit_count: 61810
+    excluded_invalid_parcel_count: 208381
+    excluded_independent_municipality_count: 1078
+    properties_with_permits: 336451
+    typed_roof_permit_count: 375267
+    source_date_range:
+      first: "1954-11-13"
+      last: "2026-09-05"
+    completion_date_range:
+      first: "1985-01-14"
+      last: "2026-09-05"
+  jurisdictions:
+    - jurisdiction: Jacksonville consolidated city/county
+      key: jacksonville
+      status: supported
+      vendor: custom JaxEPICS Angular
+      portal_kind: historical-search
+      portal: https://jaxepics.coj.net/Search/AdvancedSearch
+      bulk_portal: https://maps.coj.net/bid/default.aspx
+      historical_records: true
+      anonymous_access: true
+      adapter: jaxepics
+      implementation_status: certified
+      parcel_search: POST /api/Searches/Permits/RENumberSearch?searchTerm={RE}, followed by GET /api/Permits/{PermitId}
+      bulk_export: Official BID ArcGIS All Permits layer, accessed through the public city map proxy in 2,000-row pages
+      enumeration_status: certified-bulk-from-aws-batch
+      source_record_count_at_certification: 3624986
+      known_exclusions: The JaxEPICS API denies local implementation egress; the official BID bulk layer and JaxEPICS parcel/detail responses are available from approved AWS Batch egress
+      publication_rights: Florida public building-permit records; publish privacy-limited normalized facts only
+      records_request:
+        recipient_office: City of Jacksonville Building Inspection Division
+        request_portal_url: https://jacksonville.gov/public-records
+        system_scope: Complete issued building-permit and inspection history with RE parcel identifiers
+        route: api-first
+    - jurisdiction: Jacksonville Beach
+      key: jacksonville-beach
+      status: blocked
+      vendor: CentralSquare Click2Gov
+      portal_kind: historical-search
+      portal: https://jakb-egov.aspgov.com/Click2GovBP/index.html
+      historical_records: true
+      anonymous_access: false
+      adapter: click2gov
+      implementation_status: fail-closed
+      parcel_search: Public parcel and RE Number UI documented by the city; current execution egress receives a CentralSquare support-ID error
+      enumeration_status: blocked-session-contract
+      known_exclusions: A normal anonymous Jacksonville Beach session could not be established from the execution egress
+      publication_rights: Florida public building-permit records; publish privacy-limited normalized facts only
+      records_request:
+        recipient_office: City of Jacksonville Beach Planning and Development
+        request_portal_url: https://jacksonvillebeach.justfoia.com/publicportal/home/newrequest
+        system_scope: Complete COAST building-permit and inspection history with parcel RE identifiers
+        route: api-first
+    - jurisdiction: Atlantic Beach
+      key: atlantic-beach
+      status: manual-only
+      vendor: BS&A Online with CentralSquare eTRAKiT predecessor history
+      portal_kind: historical-search
+      portal: https://bsaonline.com/?uid=3261
+      predecessor_portal: https://atlb-trk.aspgov.com/eTRAKiT/Search/permit.aspx
+      historical_records: true
+      anonymous_access: true
+      adapter: none
+      parser_fixture: bsa
+      implementation_status: parser-fixture-only
+      parcel_search: Manual BS&A search can locate records, but automated access is prohibited by the vendor terms
+      enumeration_status: automation-prohibited
+      known_exclusions: BS&A terms expressly prohibit scripts, bots, scraping, and automated processes; predecessor eTRAKiT is unavailable, so ingestion requires a municipal records export
+      publication_rights: Florida public building-permit records; publish privacy-limited normalized facts only
+      records_request:
+        recipient_office: City of Atlantic Beach Building Division
+        request_portal_url: https://atlanticbeachfl.justfoia.com/publicportal/home/newrequest
+        system_scope: Complete permit and inspection export including parcel identifiers and predecessor eTRAKiT records
+        route: records-first
+    - jurisdiction: Neptune Beach
+      key: neptune-beach
+      status: unavailable
+      vendor: unknown
+      portal_kind: records-information
+      portal: https://www.nbfl.gov/planning-community-development
+      historical_records: false
+      anonymous_access: false
+      adapter: none
+      implementation_status: documented-gap
+      enumeration_status: no-public-historical-search
+      known_exclusions: No public historical permit-search endpoint was confirmed
+      records_request:
+        recipient_office: City of Neptune Beach Planning and Community Development
+        request_portal_url: https://www.nbfl.gov/public-records
+        system_scope: Complete issued building-permit and inspection history including parcel identifiers and predecessor records
+        route: records-first
+    - jurisdiction: Baldwin
+      key: baldwin
+      status: unavailable
+      vendor: staff and form intake
+      portal_kind: records-information
+      portal: https://baldwinfl.govoffice2.com/?SEC=989BD37A-6DA4-49F8-A566-4D52BFF1E945
+      historical_records: false
+      anonymous_access: false
+      adapter: none
+      implementation_status: documented-gap
+      enumeration_status: no-public-historical-search
+      known_exclusions: The town publishes permit forms but no public historical-search endpoint
+      records_request:
+        recipient_office: Town of Baldwin
+        request_portal_url: https://baldwinfl.govoffice2.com/
+        system_scope: Complete issued building-permit and inspection ledger including parcel identifiers and historical records
+        route: records-first
+
+source_inventory:
+  property_appraisal: https://paopropertysearch.coj.net/
+  property_bulk: https://floridarevenue.com/property/Pages/DataPortal_RequestAssessmentRollGISData.aspx
+  sunbiz: https://dos.fl.gov/sunbiz/
+  bbb: https://www.bbb.org/
+  permit_authority_boundary: Jacksonville consolidated government plus Jacksonville Beach, Atlantic Beach, Neptune Beach, and Baldwin
+
+destination:
+  writes_in_scope: true
+  proven: true
+  mode: Filebase S3 publication with stable IPNS routes and immutable CID fallbacks
+  bucket: elephant-oracle-query-table
+  public_prefix: duval/
+  private_harvest_boundary: AWS S3 run artifacts; not published to Filebase
+
+publication:
+  status: published-and-donphan-verified
+  completed_at: "2026-09-06T11:46:55.444Z"
+  bucket: elephant-oracle-query-table
+  property_query_table_ipns_label: oracle-query-table-duval
+  property_query_table_ipns_name: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
+  property_query_table_cid: QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ
+  permit_table_ipns_label: oracle-permit-table-duval
+  permit_table_ipns_name: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
+  permit_table_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
+  coverage_ipns_label: oracle-dataset-coverage-duval
+  coverage_ipns_name: k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w
+  coverage_cid: QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm
+  permit_coverage_cid: Qme3r6LCKSZZc5aCdEqW7RNcnsg5BntFLvP6wDGse38NxG
+  privacy_approval_required: true
+  exact_byte_approval_recorded: true
+  donphan_verification:
+    publication_scope: full
+    denominator_basis: county_total
+    permit_schema_column_count: 20
+    permit_count: 3415527
+    linked_permit_count: 3353717
+    valid_unlinked_permit_count: 61810
+    representative_parcel: "164634-0000"
+    representative_property_id: 146108fcb20391c44b2d9583462eb3a4
+    representative_property_permit_count: 12
+
+enrichment:
+  bbb:
+    status: deferred
+    reason: Permit contractor artifacts are retained privately for later linkage; BBB access is not a permit-ingestion dependency
+
+approved_exceptions: []
