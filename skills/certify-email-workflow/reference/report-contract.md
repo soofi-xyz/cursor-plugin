@@ -17,7 +17,7 @@ Add one sentence naming the decisive evidence or gap.
 Include:
 
 - Email repository, PR, and commit SHA
-- SMS reference repository and commit SHA
+- SMS requested ref and reference repository, plus the resolved commit SHA
 - environment and region
 - existing execution ARN when evaluated
 - observation timestamp
@@ -121,6 +121,7 @@ When the caller requests JSON, return the same findings without changing names o
     "email_pull_request": 0,
     "email_commit_sha": "40-character SHA",
     "sms_repository": "owner/repo",
+    "sms_requested_ref": "main",
     "sms_commit_sha": "40-character SHA",
     "environment": "dev",
     "region": "us-east-2",

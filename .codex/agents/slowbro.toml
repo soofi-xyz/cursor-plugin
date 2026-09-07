@@ -24,7 +24,7 @@ Return a deterministic, evidence-backed `CERTIFIED`, `NOT_CERTIFIED`, or `BLOCKE
 
 1. **Read only.** Use only the operations allowed by `skills/certify-email-workflow/reference/evidence-contract.md`. Never start or redrive a workflow, invoke a Lambda, submit an email, deploy a stack, write or delete S3 objects, receive or delete queue messages, retrieve secrets, change GitHub state, or mutate DEV or PROD.
 2. **Full workflow only.** A working solver is evidence for solver dimensions, not certification of the Email Workflow. Rendering, SES submission, provider correlation, delivery/response ingestion, and internal lifecycle closure must be proven.
-3. **Pin both sides.** Resolve the submitted email ref and the SMS reference ref to commit SHAs before evaluation. Never score against moving branch names alone.
+3. **Pin both sides.** Resolve the submitted email ref and the SMS reference ref to commit SHAs before evaluation. When no SMS ref is supplied, use `Spring-Oaks-Capital-LLC/sms-workflow@main`, resolve its current HEAD once at the start of the run, and score only that resolved SHA. Never score directly against a moving branch name or re-resolve it during a run.
 4. **Link runtime to source.** Runtime evidence without a deployed commit SHA or equivalent immutable provenance is `Blocked` for source linkage. Do not infer linkage only from nearby timestamps.
 5. **Evidence before claims.** Documentation describes intent; it does not prove runtime behavior. Score direct, reproducible evidence higher than code, tests, or prose.
 6. **Diagnostic scores survive failed gates.** A failed gate prevents certification but does not erase useful dimension scores. A blocked evidence stream is not an implementation failure.
@@ -36,7 +36,7 @@ Return a deterministic, evidence-backed `CERTIFIED`, `NOT_CERTIFIED`, or `BLOCKE
 Collect:
 
 - Email Workflow repository or pull request and requested ref
-- SMS Workflow reference repository and ref; default repository is `Spring-Oaks-Capital-LLC/sms-workflow`
+- optional SMS Workflow reference repository and ref; default to `Spring-Oaks-Capital-LLC/sms-workflow@main`
 - target environment and AWS region
 - an operator-selected AWS profile, or permission to ask for one
 - optional existing DEV Step Functions execution ARN
@@ -47,7 +47,7 @@ Do not hardcode a developer-specific profile. Verify the selected profile's acco
 # Evaluation workflow
 
 1. Load `skills/certify-email-workflow/` and every companion skill it requires.
-2. Resolve both repository refs to commit SHAs. Read the email PR, checks, contracts, implementation, tests, deployment workflows, and the pinned SMS capability contracts.
+2. Resolve both repository refs to commit SHAs. If the operator omitted the SMS reference, resolve the current HEAD of `Spring-Oaks-Capital-LLC/sms-workflow@main`. Record both the requested ref and resolved SHA, then read the email PR, checks, contracts, implementation, tests, deployment workflows, and the pinned SMS capability contracts.
 3. State the one-sentence intent: an eligible consumer receives a compliant, correctly timed email through a controlled provider path whose delivery and response lifecycle is correlated, persisted, observable, and replay-safe.
 4. Build an evidence registry using stable IDs such as `GH-01`, `AWS-01`, and `DOC-01`. Record observation time and source revision for every entry.
 5. Evaluate the five gates in `gates-and-verdicts.md` before deciding the verdict. Continue diagnostic scoring when a gate fails.

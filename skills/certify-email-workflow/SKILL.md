@@ -33,12 +33,12 @@ Collect:
 
 - Email Workflow repository or PR URL
 - Email Workflow ref to evaluate
-- SMS Workflow reference repository and ref
+- optional SMS Workflow reference repository and ref; default to `Spring-Oaks-Capital-LLC/sms-workflow@main`
 - target environment and AWS region
 - operator-selected AWS profile
 - optional existing DEV execution ARN
 
-Resolve both refs to commit SHAs and record them before scoring. A branch name is input convenience, not report identity.
+Resolve both refs to commit SHAs and record them before scoring. When the SMS reference is omitted, resolve the current HEAD of `Spring-Oaks-Capital-LLC/sms-workflow@main` once at the start of the run. A branch name is input convenience, not report identity; score only the resolved SHA and do not re-resolve it during the run.
 
 ## Capability model
 
