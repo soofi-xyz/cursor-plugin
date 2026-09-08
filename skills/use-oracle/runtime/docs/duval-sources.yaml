@@ -244,14 +244,16 @@ enrichment:
     observed_coverage: 0_percent
     column: avm_value
     source_policy: appraisal market_value is not an AVM and cannot populate this field
-    requested_delivery: folio-keyed licensed bulk AVM extract
+    requested_delivery: licensed bulk AVM extract keyed and validated by FIPS 12031 plus Duval folio/APN
+    required_value_contract: value, valuation date, model method, confidence score, high/low bounds, and stable vendor property ID
+    approved_source_profiles: []
     publication_requirement: durable public Filebase/IPFS redistribution rights
     request_template: skills/use-oracle/runtime/docs/duval-avm-source-request.md
     candidate_providers:
       - ATTOM AVM bulk
       - Clear Capital ClearAVM bulk/API
     blocker_owner: Oracle Data Partnerships
-    blocker: provider, credentials, immutable extract, and publication rights are not yet supplied
+    blocker: provider, credentials, immutable extract, code-reviewed source profile, and publication rights are not yet supplied
   bbb:
     status: published-and-donphan-verified
     source_access_status: accessible

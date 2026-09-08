@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { ParquetReader } = require("@dsnp/parquetjs");
 const SOURCE_MANIFEST_SCHEMA = "elephant.avm-source-manifest.v1";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const APPROVED_AVM_SOURCE_PROFILES = new Map();
 
 function normalizeFolio(value) {
   const compact = String(value ?? "")
@@ -37,7 +38,7 @@ function nonEmptyString(value, field) {
   return value.trim();
 }
 
-function validateSourceManifest(value, countyKey) {
+function validateSourceManifest(value, countyKey, approvedSourceProfiles) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("AVM source manifest must be a JSON object");
   }
@@ -60,8 +61,13 @@ function validateSourceManifest(value, countyKey) {
   if (!/^[a-f0-9]{64}$/.test(value.recordsSha256 ?? "")) {
     throw new Error("AVM source manifest requires recordsSha256");
   }
-  return {
+  const manifest = {
     ...value,
+    countyFips: nonEmptyString(value.countyFips, "countyFips"),
+    sourceProfileId: nonEmptyString(
+      value.sourceProfileId,
+      "sourceProfileId",
+    ),
     provider: nonEmptyString(value.provider, "provider"),
     extractId: nonEmptyString(value.extractId, "extractId"),
     sourceRetrievedAt: nonEmptyString(
@@ -73,9 +79,33 @@ function validateSourceManifest(value, countyKey) {
       "licenseReviewReference",
     ),
   };
+  const approvedProfile = approvedSourceProfiles.get(manifest.sourceProfileId);
+  if (approvedProfile === undefined) {
+    throw new Error(
+      `AVM source profile ${manifest.sourceProfileId} is not approved`,
+    );
+  }
+  for (const field of [
+    "county",
+    "countyFips",
+    "provider",
+    "licenseReviewReference",
+  ]) {
+    if (approvedProfile[field] !== manifest[field]) {
+      throw new Error(
+        `AVM source profile ${manifest.sourceProfileId} does not approve manifest ${field}`,
+      );
+    }
+  }
+  if (approvedProfile.publicationPermitted !== true) {
+    throw new Error(
+      `AVM source profile ${manifest.sourceProfileId} does not permit publication`,
+    );
+  }
+  return manifest;
 }
 
-function validateRecord(value, lineNumber) {
+function validateRecord(value, lineNumber, sourceManifest, exportedAt) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`AVM record ${lineNumber} must be a JSON object`);
   }
@@ -83,6 +113,17 @@ function validateRecord(value, lineNumber) {
   if (folio === null) {
     throw new Error(
       `AVM record ${lineNumber} has an invalid parcel_identifier`,
+    );
+  }
+  const vendorApn = normalizeFolio(value.vendor_apn);
+  if (vendorApn === null || vendorApn !== folio) {
+    throw new Error(
+      `AVM record ${lineNumber} vendor_apn does not exactly match parcel_identifier`,
+    );
+  }
+  if (value.county_fips !== sourceManifest.countyFips) {
+    throw new Error(
+      `AVM record ${lineNumber} county_fips does not match the approved source profile`,
     );
   }
   const avmValue = Number(value.current_avm_value);
@@ -95,10 +136,24 @@ function validateRecord(value, lineNumber) {
   if (!ISO_DATE.test(valuationDate)) {
     throw new Error(`AVM record ${lineNumber} has an invalid valuation_date`);
   }
+  const valuationTimestamp = Date.parse(`${valuationDate}T00:00:00.000Z`);
+  if (
+    !Number.isFinite(valuationTimestamp) ||
+    valuationTimestamp > Date.parse(exportedAt)
+  ) {
+    throw new Error(
+      `AVM record ${lineNumber} has a future or invalid valuation_date`,
+    );
+  }
   const valuationMethodType = nonEmptyString(
     value.valuation_method_type,
     `record ${lineNumber} valuation_method_type`,
   );
+  if (/apprais|assess|tax.?roll/i.test(valuationMethodType)) {
+    throw new Error(
+      `AVM record ${lineNumber} uses a non-AVM valuation_method_type`,
+    );
+  }
   const vendorPropertyId = nonEmptyString(
     value.vendor_property_id,
     `record ${lineNumber} vendor_property_id`,
@@ -116,8 +171,15 @@ function validateRecord(value, lineNumber) {
     }
     return parsed;
   };
-  const lowValue = optionalNumber("valuation_low", { minimum: 0 });
-  const highValue = optionalNumber("valuation_high", { minimum: 0 });
+  const requiredNumber = (field, options) => {
+    const parsed = optionalNumber(field, options);
+    if (parsed === null) {
+      throw new Error(`AVM record ${lineNumber} requires ${field}`);
+    }
+    return parsed;
+  };
+  const lowValue = requiredNumber("valuation_low", { minimum: 0 });
+  const highValue = requiredNumber("valuation_high", { minimum: 0 });
   if (lowValue !== null && lowValue > avmValue) {
     throw new Error(`AVM record ${lineNumber} valuation_low exceeds its AVM`);
   }
@@ -129,7 +191,7 @@ function validateRecord(value, lineNumber) {
     currentAvmValue: avmValue,
     valuationDate,
     valuationMethodType,
-    confidenceScore: optionalNumber("confidence_score", {
+    confidenceScore: requiredNumber("confidence_score", {
       minimum: 0,
       maximum: 100,
     }),
@@ -140,15 +202,23 @@ function validateRecord(value, lineNumber) {
 }
 
 function newerRecord(left, right) {
+  if (left.vendorPropertyId !== right.vendorPropertyId) {
+    throw new Error(
+      `AVM source maps folio ${left.folio} to multiple vendor property IDs`,
+    );
+  }
   if (left.valuationDate !== right.valuationDate) {
     return left.valuationDate > right.valuationDate ? left : right;
   }
-  const leftKey = `${left.valuationMethodType}|${left.vendorPropertyId}`;
-  const rightKey = `${right.valuationMethodType}|${right.vendorPropertyId}`;
-  return leftKey <= rightKey ? left : right;
+  if (JSON.stringify(left) !== JSON.stringify(right)) {
+    throw new Error(
+      `AVM source contains ambiguous tied valuations for folio ${left.folio}`,
+    );
+  }
+  return left;
 }
 
-async function loadAvmRecords(recordsPath) {
+async function loadAvmRecords(recordsPath, sourceManifest, exportedAt) {
   const byFolio = new Map();
   let recordCount = 0;
   const lines = readline.createInterface({
@@ -159,7 +229,12 @@ async function loadAvmRecords(recordsPath) {
     for await (const line of lines) {
       if (line.trim().length === 0) continue;
       recordCount += 1;
-      const record = validateRecord(JSON.parse(line), recordCount);
+      const record = validateRecord(
+        JSON.parse(line),
+        recordCount,
+        sourceManifest,
+        exportedAt,
+      );
       const existing = byFolio.get(record.folio);
       byFolio.set(
         record.folio,
@@ -191,6 +266,7 @@ export async function enrichQueryTableWithAvm({
   outputCoverage,
   recordsPath,
   sourceManifestPath,
+  approvedSourceProfiles = APPROVED_AVM_SOURCE_PROFILES,
   exportedAt = new Date().toISOString(),
   manifestPath = `${outputParquet}.manifest.json`,
 }) {
@@ -204,6 +280,7 @@ export async function enrichQueryTableWithAvm({
   const sourceManifest = validateSourceManifest(
     JSON.parse(await readFile(sourceManifestPath, "utf8")),
     countyKey,
+    approvedSourceProfiles,
   );
   const recordsSha256 = await sha256File(recordsPath);
   if (recordsSha256 !== sourceManifest.recordsSha256) {
@@ -211,7 +288,11 @@ export async function enrichQueryTableWithAvm({
       "AVM source records digest does not match reviewed manifest",
     );
   }
-  const source = await loadAvmRecords(recordsPath);
+  const source = await loadAvmRecords(
+    recordsPath,
+    sourceManifest,
+    exportedAt,
+  );
   if (source.recordCount !== sourceManifest.recordCount) {
     throw new Error(
       `AVM source record count ${source.recordCount} does not match manifest ${sourceManifest.recordCount}`,
@@ -290,6 +371,8 @@ export async function enrichQueryTableWithAvm({
       source_retrieved_at: sourceManifest.sourceRetrievedAt,
       publication_permitted: true,
       license_review_reference: sourceManifest.licenseReviewReference,
+      source_profile_id: sourceManifest.sourceProfileId,
+      county_fips: sourceManifest.countyFips,
       match_method: "exact_normalized_parcel_identifier",
     },
   );
@@ -305,6 +388,8 @@ export async function enrichQueryTableWithAvm({
     enrichedAt: exportedAt,
     provider: sourceManifest.provider,
     extractId: sourceManifest.extractId,
+    sourceProfileId: sourceManifest.sourceProfileId,
+    countyFips: sourceManifest.countyFips,
     inputRowCount,
     outputRowCount,
     sourceRecordCount: source.recordCount,

@@ -13,6 +13,18 @@ import { enrichQueryTableWithAvm } from "../src/enrichment/query-table-avm.mjs";
 const require = createRequire(import.meta.url);
 const { ParquetReader } = require("@dsnp/parquetjs");
 const temporaryDirectories = [];
+const approvedSourceProfiles = new Map([
+  [
+    "test-provider-v1",
+    {
+      county: "duval",
+      countyFips: "12031",
+      provider: "licensed-test-provider",
+      licenseReviewReference: "contract-review:test",
+      publicationPermitted: true,
+    },
+  ],
+]);
 
 afterEach(async () => {
   await Promise.all(
@@ -25,6 +37,8 @@ afterEach(async () => {
 async function fixture({
   publicationPermitted = true,
   corruptDigest = false,
+  firstRecordOverrides = {},
+  secondRecordOverrides = {},
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "duval-avm-"));
   temporaryDirectories.push(directory);
@@ -70,6 +84,8 @@ async function fixture({
   const body = [
     {
       parcel_identifier: "164634-0000",
+      vendor_apn: "164634-0000",
+      county_fips: "12031",
       current_avm_value: 225_000,
       valuation_date: "2026-07-01",
       valuation_method_type: "licensed-vendor-avm",
@@ -77,9 +93,12 @@ async function fixture({
       valuation_high: 240_000,
       valuation_low: 210_000,
       vendor_property_id: "vendor-1",
+      ...firstRecordOverrides,
     },
     {
       parcel_identifier: "1646340000",
+      vendor_apn: "1646340000",
+      county_fips: "12031",
       current_avm_value: 231_000,
       valuation_date: "2026-08-15",
       valuation_method_type: "licensed-vendor-avm",
@@ -87,12 +106,18 @@ async function fixture({
       valuation_high: 245_000,
       valuation_low: 218_000,
       vendor_property_id: "vendor-1",
+      ...secondRecordOverrides,
     },
     {
       parcel_identifier: "9999999999",
+      vendor_apn: "9999999999",
+      county_fips: "12031",
       current_avm_value: 180_000,
       valuation_date: "2026-08-15",
       valuation_method_type: "licensed-vendor-avm",
+      confidence_score: 78,
+      valuation_high: 195_000,
+      valuation_low: 168_000,
       vendor_property_id: "vendor-unmatched",
     },
   ]
@@ -105,6 +130,8 @@ async function fixture({
     `${JSON.stringify({
       schemaVersion: "elephant.avm-source-manifest.v1",
       county: "duval",
+      countyFips: "12031",
+      sourceProfileId: "test-provider-v1",
       provider: "licensed-test-provider",
       extractId: "duval-2026-08-15",
       sourceRetrievedAt: "2026-09-08T16:00:00.000Z",
@@ -136,6 +163,7 @@ describe("licensed AVM enrichment", () => {
       inputCoverage: input.inputCoverage,
       recordsPath: input.recordsPath,
       sourceManifestPath: input.sourceManifestPath,
+      approvedSourceProfiles,
       outputParquet: path.join(input.outputDir, "query-table.parquet"),
       outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       manifestPath: path.join(input.outputDir, "avm-enrichment-manifest.json"),
@@ -202,6 +230,7 @@ describe("licensed AVM enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
@@ -218,9 +247,105 @@ describe("licensed AVM enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
     ).rejects.toThrow(/digest/i);
+  });
+
+  it("rejects a source profile that has not been reviewed in code", async () => {
+    const input = await fixture();
+    await expect(
+      enrichQueryTableWithAvm({
+        countyKey: "duval",
+        schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+        inputParquet: input.inputParquet,
+        inputCoverage: input.inputCoverage,
+        recordsPath: input.recordsPath,
+        sourceManifestPath: input.sourceManifestPath,
+        outputParquet: path.join(input.outputDir, "query-table.parquet"),
+        outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+      }),
+    ).rejects.toThrow(/not approved/i);
+  });
+
+  it("rejects a vendor APN or FIPS that does not exactly match Duval", async () => {
+    const input = await fixture({
+      firstRecordOverrides: { county_fips: "12086" },
+    });
+    await expect(
+      enrichQueryTableWithAvm({
+        countyKey: "duval",
+        schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+        inputParquet: input.inputParquet,
+        inputCoverage: input.inputCoverage,
+        recordsPath: input.recordsPath,
+        sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
+        outputParquet: path.join(input.outputDir, "query-table.parquet"),
+        outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+      }),
+    ).rejects.toThrow(/county_fips/i);
+  });
+
+  it("requires confidence and valuation bounds for every AVM", async () => {
+    const input = await fixture({
+      firstRecordOverrides: { confidence_score: null },
+    });
+    await expect(
+      enrichQueryTableWithAvm({
+        countyKey: "duval",
+        schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+        inputParquet: input.inputParquet,
+        inputCoverage: input.inputCoverage,
+        recordsPath: input.recordsPath,
+        sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
+        outputParquet: path.join(input.outputDir, "query-table.parquet"),
+        outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+      }),
+    ).rejects.toThrow(/confidence_score/i);
+  });
+
+  it("rejects APN disagreement and tax-roll valuation substitution", async () => {
+    for (const [overrides, expectedError] of [
+      [{ vendor_apn: "0969250000" }, /vendor_apn/i],
+      [{ valuation_method_type: "appraisal_market_value" }, /non-AVM/i],
+    ]) {
+      const input = await fixture({ firstRecordOverrides: overrides });
+      await expect(
+        enrichQueryTableWithAvm({
+          countyKey: "duval",
+          schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+          inputParquet: input.inputParquet,
+          inputCoverage: input.inputCoverage,
+          recordsPath: input.recordsPath,
+          sourceManifestPath: input.sourceManifestPath,
+          approvedSourceProfiles,
+          outputParquet: path.join(input.outputDir, "query-table.parquet"),
+          outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+        }),
+      ).rejects.toThrow(expectedError);
+    }
+  });
+
+  it("rejects ambiguous valuations tied on date", async () => {
+    const input = await fixture({
+      secondRecordOverrides: { valuation_date: "2026-07-01" },
+    });
+    await expect(
+      enrichQueryTableWithAvm({
+        countyKey: "duval",
+        schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+        inputParquet: input.inputParquet,
+        inputCoverage: input.inputCoverage,
+        recordsPath: input.recordsPath,
+        sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
+        outputParquet: path.join(input.outputDir, "query-table.parquet"),
+        outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+      }),
+    ).rejects.toThrow(/ambiguous tied/i);
   });
 });
