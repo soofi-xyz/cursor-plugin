@@ -242,7 +242,7 @@ export function validateFilebaseApproval(
  * @param {string} params.contentType - HTTP content type.
  * @returns {Promise<string>} Filebase CID.
  */
-async function uploadFilebaseObject({ client, bucket, key, body, contentType }) {
+export async function uploadFilebaseObject({ client, bucket, key, body, contentType }) {
   const command = new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType });
   /** @type {string | undefined} */
   let headerCid;
@@ -263,8 +263,8 @@ async function uploadFilebaseObject({ client, bucket, key, body, contentType }) 
     },
     { step: "deserialize", name: `captureFilebaseCid-${key}`, priority: "low" },
   );
-  await client.send(command);
-  const cid = headerCid?.trim();
+  const sendResult = await client.send(command);
+  const cid = (headerCid ?? sendResult?.headers?.["x-amz-meta-cid"] ?? sendResult?.cid)?.trim();
   if (typeof cid !== "string" || cid.length === 0) {
     throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
   }
@@ -485,10 +485,12 @@ export async function publishPermitFilebase(artifacts, config) {
  * @param {string} token - Filebase platform API bearer token.
  * @param {string} label - Existing IPNS label.
  * @param {string} cid - Target CID.
+ * @param {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} [fetchImpl]
+ *   Fetch implementation. Defaults to global fetch.
  * @returns {Promise<{ label: string, network_key: string, cid: string }>} Updated name record.
  */
-async function upsertFilebaseName(token, label, cid) {
-  const listResponse = await fetch(FILEBASE_NAMES_API, {
+export async function upsertFilebaseName(token, label, cid, fetchImpl = fetch) {
+  const listResponse = await fetchImpl(FILEBASE_NAMES_API, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
   if (!listResponse.ok) {
@@ -501,12 +503,12 @@ async function upsertFilebaseName(token, label, cid) {
   );
   const response =
     existing === undefined
-      ? await fetch(FILEBASE_NAMES_API, {
+      ? await fetchImpl(FILEBASE_NAMES_API, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ label, cid, enabled: true }),
         })
-      : await fetch(`${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`, {
+      : await fetchImpl(`${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`, {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ cid }),
@@ -515,6 +517,73 @@ async function upsertFilebaseName(token, label, cid) {
     throw new Error(`Filebase IPNS upsert failed for ${label}: ${response.status}`);
   }
   return await response.json();
+}
+
+/**
+ * Update an existing Filebase IPNS label after proving that it resolves to
+ * the expected network key. Coverage-only repairs use this stricter path so
+ * a typo cannot create a second label or move another county's pointer.
+ *
+ * @param {string} token - Filebase platform API bearer token.
+ * @param {string} label - Existing coverage IPNS label.
+ * @param {string} expectedNetworkKey - Current resolvable k51... name.
+ * @param {string} cid - New coverage artifact CID.
+ * @param {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} [fetchImpl]
+ *   Fetch implementation. Defaults to global fetch.
+ * @returns {Promise<{ label: string, network_key: string, cid: string }>} Updated name record.
+ */
+export async function updateExistingFilebaseName(
+  token,
+  label,
+  expectedNetworkKey,
+  cid,
+  fetchImpl = fetch,
+) {
+  const listResponse = await fetchImpl(FILEBASE_NAMES_API, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  if (!listResponse.ok) {
+    throw new Error(`Filebase name list failed: ${listResponse.status}`);
+  }
+  const parsed = await listResponse.json();
+  if (!Array.isArray(parsed)) throw new Error("Filebase name list is not an array");
+  const existing = parsed.find(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "label" in entry &&
+      entry.label === label,
+  );
+  if (
+    existing === undefined ||
+    !("network_key" in existing) ||
+    existing.network_key !== expectedNetworkKey
+  ) {
+    throw new Error(
+      `Filebase IPNS label ${label} is missing or does not match expected network key ${expectedNetworkKey}`,
+    );
+  }
+  const response = await fetchImpl(
+    `${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ cid }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Filebase IPNS update failed for ${label}: ${response.status}`);
+  }
+  const updated = await response.json();
+  if (
+    typeof updated !== "object" ||
+    updated === null ||
+    updated.label !== label ||
+    updated.network_key !== expectedNetworkKey
+  ) {
+    throw new Error(`Filebase returned an unexpected IPNS record for ${label}`);
+  }
+  return updated;
 }
 
 /**

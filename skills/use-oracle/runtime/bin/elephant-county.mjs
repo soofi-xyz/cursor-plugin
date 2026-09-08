@@ -19,10 +19,17 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { parseCsvRecords } from "../src/core/csv.mjs";
 import {
+  loadEnvFile,
   publishFilebase,
   publishPermitFilebase,
 } from "../src/core/filebase.mjs";
 import { runReplay } from "../src/core/replay.mjs";
+import {
+  exportCoverageArtifact,
+  loadCoverageArtifact,
+  publishCoverageFilebase,
+  writeCoverageApproval,
+} from "../src/core/coverage-publication.mjs";
 import { pinellasAdapter } from "../src/counties/pinellas/adapter.mjs";
 import { duvalAdapter } from "../src/counties/duval/adapter.mjs";
 import { requireEnrichmentProfile } from "../src/counties/enrichment-profiles.mjs";
@@ -115,6 +122,19 @@ export function parseFlags(argv, booleanFlags = []) {
 }
 
 /**
+ * @param {Record<string, string | boolean>} flags
+ * @param {string} name
+ * @returns {string}
+ */
+function requiredFlag(flags, name) {
+  const value = flags[name];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
+}
+
+/**
  * @param {string} seedPath - CSV file path.
  * @returns {Promise<Record<string, string>[]>} Parsed seed rows.
  */
@@ -204,6 +224,105 @@ async function runPublish(argv) {
     env: process.env,
   });
   console.log(JSON.stringify({ event: "publish_complete", result }, null, 2));
+}
+
+/**
+ * `elephant-county export-coverage --county <key> --evidence <json> --output <dir>`
+ *
+ * Builds only dataset-coverage.json from frozen, reconciled evidence. This
+ * command is adapter-independent, so already-published counties such as Lee
+ * do not need an ingest adapter registration.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runExportCoverage(argv) {
+  const flags = parseFlags(argv);
+  const result = await exportCoverageArtifact({
+    county: requiredFlag(flags, "county"),
+    evidencePath: requiredFlag(flags, "evidence"),
+    outputDir: requiredFlag(flags, "output"),
+  });
+  console.log(JSON.stringify({ event: "coverage_export_complete", result }, null, 2));
+}
+
+/**
+ * `elephant-county sign-coverage-approval ...`
+ *
+ * Human-run action that binds an Ed25519 signature to one exact coverage
+ * artifact, bucket, object key, existing IPNS label/network key, and time.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runSignCoverageApproval(argv) {
+  const flags = parseFlags(argv);
+  const county = requiredFlag(flags, "county");
+  const artifact = await loadCoverageArtifact({
+    county,
+    inputDir: requiredFlag(flags, "input"),
+  });
+  const outputPath = requiredFlag(flags, "output");
+  const approval = await writeCoverageApproval({
+    artifact,
+    bucket: requiredFlag(flags, "bucket"),
+    expectedIpnsName: requiredFlag(flags, "expected-ipns-name"),
+    approver: requiredFlag(flags, "approver"),
+    approvedAt:
+      typeof flags["approved-at"] === "string"
+        ? flags["approved-at"]
+        : new Date().toISOString(),
+    privateKeyPath: requiredFlag(flags, "private-key"),
+    outputPath,
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: "coverage_approval_signed",
+        outputPath,
+        payload: approval.payload,
+        keyId: approval.signature.keyId,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+/**
+ * `elephant-county publish-coverage --county <key> --input <dir>
+ *   --bucket <bucket> --expected-ipns-name <k51...> [--dry-run]
+ *   [--approve <json> --approval-public-key <pem>] [--env-file <dotenv>]`
+ *
+ * Uploads one coverage JSON object and updates only the existing
+ * oracle-dataset-coverage-<county> IPNS label.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runPublishCoverage(argv) {
+  const flags = parseFlags(argv, ["dry-run"]);
+  const county = requiredFlag(flags, "county");
+  const artifact = await loadCoverageArtifact({
+    county,
+    inputDir: requiredFlag(flags, "input"),
+  });
+  const env = { ...process.env };
+  if (typeof flags["env-file"] === "string") {
+    await loadEnvFile(flags["env-file"], env);
+  }
+  const result = await publishCoverageFilebase(artifact, {
+    dryRun: flags["dry-run"] === true,
+    bucket: requiredFlag(flags, "bucket"),
+    expectedIpnsName: requiredFlag(flags, "expected-ipns-name"),
+    approvalManifestPath: typeof flags.approve === "string" ? flags.approve : null,
+    approvalPublicKeyPath:
+      typeof flags["approval-public-key"] === "string"
+        ? flags["approval-public-key"]
+        : null,
+    env,
+  });
+  console.log(JSON.stringify({ event: "coverage_publish_complete", result }, null, 2));
 }
 
 /**
@@ -846,6 +965,9 @@ async function main() {
   if (command === "ingest") return runIngest(rest);
   if (command === "export") return runExport(rest);
   if (command === "publish") return runPublish(rest);
+  if (command === "export-coverage") return runExportCoverage(rest);
+  if (command === "sign-coverage-approval") return runSignCoverageApproval(rest);
+  if (command === "publish-coverage") return runPublishCoverage(rest);
   if (command === "replay") return runReplayCommand(rest);
   if (command === "sunbiz-prepare") return runSunbizPrepareCommand(rest);
   if (command === "sunbiz-filter") return runSunbizFilterCommand(rest);
@@ -877,10 +999,13 @@ async function main() {
     return runPermitPublishCommand(rest);
   }
   console.error(
-    "Usage: elephant-county <ingest|export|publish|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
+    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
       "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
+      "  export-coverage --county <key> --evidence <json> --output <publish-dir>\n" +
+      "  sign-coverage-approval --county <key> --input <publish-dir> --bucket <bucket> --expected-ipns-name <k51...> --approver <identity> --private-key <ed25519.pem> --output <approval.json> [--approved-at <ISO-8601>]\n" +
+      "  publish-coverage --county <key> --input <publish-dir> --bucket <bucket> --expected-ipns-name <k51...> [--dry-run] [--approve <approval.json> --approval-public-key <ed25519-public.pem>] [--env-file <dotenv>]\n" +
       "  replay  --county <key> --fixture <dir> --output <dir>\n" +
       "  sunbiz-prepare --archive <cordata.zip> --sha256 <digest> --output <expanded-dir>\n" +
       "  sunbiz-filter --county <profile-key> --quarter <YYYYQn> --source-dir <expanded-dir> --output <dir> [--max-source-records N]\n" +
@@ -919,6 +1044,9 @@ export {
   runIngest,
   runExport,
   runPublish,
+  runExportCoverage,
+  runSignCoverageApproval,
+  runPublishCoverage,
   runReplayCommand,
   runSunbizPrepareCommand,
   runSunbizFilterCommand,
