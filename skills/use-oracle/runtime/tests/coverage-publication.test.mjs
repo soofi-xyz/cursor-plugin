@@ -282,6 +282,16 @@ describe("coverage-only Filebase publish", () => {
       const client = {
         async send(command) {
           s3Commands.push(command);
+          if (command?.middlewareStack) {
+            const handler = command.middlewareStack.resolve(
+              async () => ({
+                output: {},
+                response: { headers: { "x-amz-meta-cid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi" } },
+              }),
+              {},
+            );
+            await handler({ input: command.input });
+          }
           return {};
         },
       };

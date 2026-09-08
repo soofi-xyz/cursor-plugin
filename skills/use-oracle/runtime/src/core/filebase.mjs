@@ -263,8 +263,8 @@ export async function uploadFilebaseObject({ client, bucket, key, body, contentT
     },
     { step: "deserialize", name: `captureFilebaseCid-${key}`, priority: "low" },
   );
-  await client.send(command);
-  const cid = headerCid?.trim();
+  const sendResult = await client.send(command);
+  const cid = (headerCid ?? sendResult?.headers?.["x-amz-meta-cid"] ?? sendResult?.cid)?.trim();
   if (typeof cid !== "string" || cid.length === 0) {
     throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
   }
