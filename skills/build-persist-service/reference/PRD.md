@@ -1,6 +1,8 @@
 # Persist Service — Product Requirements Document (PRD)
 
-Authoritative blueprint for re-creating the **Persist** graph-persistence service from scratch. It captures the full feature set, data contracts, runtime behaviour, and infrastructure topology the implementation must enforce.
+Scope statement and index for the **Persist** graph-persistence service. Section 1 defines what Persist is, its public surface, and its non-goals. Every later section is a pointer to the reference file that specifies that area from the code; those files are authoritative for contracts, resource shapes, IAM, env vars, workflows, and verification. Section numbers are kept so cross-references in the reference files resolve.
+
+How to read: start with §1, then open the reference named under the section your task touches. The skill's `SKILL.md` routes by task keyword to the same files.
 
 ---
 
@@ -8,283 +10,96 @@ Authoritative blueprint for re-creating the **Persist** graph-persistence servic
 
 ### 1.1 Mission
 
-Persist is a serverless graph-persistence layer that fronts an Amazon Neptune cluster behind a SigV4-authenticated HTTPS API and an EventBridge fact-ingestion surface. It accepts lexicon-compliant graph data in two shapes (GraphSON v3 documents and Neptune bulk-load CSV), exposes both synchronous and asynchronous Gremlin query channels, accelerates full-text Gremlin reads through Amazon Neptune full-text search backed by Amazon OpenSearch, and maintains lexicon-declared derived index properties on durable graph elements.
+Persist is a serverless graph-persistence layer that fronts an Amazon Neptune cluster behind a SigV4-authenticated HTTPS API and an EventBridge fact-ingestion surface. It accepts lexicon-compliant graph data in two shapes (GraphSON v3 documents and Neptune bulk-load CSV), exposes both synchronous and asynchronous Gremlin query channels, and maintains lexicon-declared derived index properties on durable graph elements.
 
 Persist additionally exposes a **polymorphic GraphQL read surface** whose object types are generated deterministically from the lexicon. Each field resolves against the data source declared in a Persist-owned resolution map — the Neptune graph, a configured DynamoDB table, or the Interprose vendor API — without the caller knowing or choosing the source. GraphQL is strictly read-only; all writes stay on the existing GraphSON/CSV/event ingest contracts.
 
+Around that core, Persist runs several derived planes that are specified in their own references: an OpenSearch full-text-search mirror, Athena exports of derived indexes and of the raw Neptune stream, a snapshot-recovery cluster, dedicated reader instances, cross-account partner access, and operations dashboards and alerting.
+
 ### 1.2 Primary user surface
 
-A single AWS API Gateway HTTP API at `/persist/*`, IAM-authorised, with the following capabilities:
+A single AWS API Gateway HTTP API under `/persist/*`, IAM-authorised. The API is exposed through its execute-api URL, published to SSM together with a cross-account invoke role; there is no custom domain mapping ([`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.7).
 
-| Verb     | Path                                | Purpose                                                                                                |
-| -------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `POST`   | `/persist/ingest`                   | Synchronous, transactional GraphSON v3 ingest with hashed IDs and lexicon validation                   |
-| `POST`   | `/persist/ingest-async`             | Validate + enqueue GraphSON v3 ingest; payload stored in S3, pointer enqueued to SQS                   |
-| `POST`   | `/persist/validate`                 | Validate a GraphSON v3 document against the lexicon **without persisting** (supports candidate lexicon)|
-| `POST`   | `/persist/gremlin`                  | Run a **read-only** Gremlin query against the Neptune **reader** endpoint and return GraphSON v3, including Neptune FTS queries backed by OpenSearch |
-| `POST`   | `/persist/gremlin-async`            | Submit a long-running Gremlin query for asynchronous execution; returns `requestId`                    |
-| `GET`    | `/persist/gremlin-async/:requestId` | Get terminal/in-flight job state and metadata                                                          |
-| `DELETE` | `/persist/gremlin-async/:requestId` | Idempotent cancel; persists `cancelRequested` intent or terminal `CANCELLED` depending on state        |
-| `POST`   | `/persist/graphql`                  | Read-only GraphQL query execution over lexicon-generated types with per-field data-source resolution (Neptune, DynamoDB, or Interprose) |
-| `GET`    | `/persist/graphql/schema`           | Return the currently active generated GraphQL SDL plus lexicon and resolution-map version metadata     |
+| Verb     | Path                                | Purpose | Reference |
+| -------- | ----------------------------------- | ------- | --------- |
+| `POST`   | `/persist/ingest`                   | Synchronous, transactional GraphSON v3 ingest with hashed IDs and lexicon validation | [`graphson-ingest-contract.md`](./graphson-ingest-contract.md) |
+| `POST`   | `/persist/ingest-async`             | Validate + enqueue GraphSON v3 ingest; payload stored in S3, pointer enqueued to SQS | [`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) |
+| `POST`   | `/persist/validate`                 | Validate a GraphSON v3 document against the lexicon **without persisting** (supports candidate lexicon) | [`graphson-ingest-contract.md`](./graphson-ingest-contract.md) |
+| `POST`   | `/persist/gremlin`                  | Run a **read-only** Gremlin query against a Neptune reader (`readerTarget` selects which) and return GraphSON v3 | [`gremlin-sync-query.md`](./gremlin-sync-query.md), [`neptune-reader-topology.md`](./neptune-reader-topology.md) |
+| `POST`   | `/persist/gremlin/explain`          | Return Neptune's query plan for a read-only Gremlin query without executing it | [`gremlin-explain.md`](./gremlin-explain.md) |
+| `POST`   | `/persist/gremlin-async`            | Submit a long-running Gremlin query for asynchronous execution; returns `requestId` | [`async-gremlin.md`](./async-gremlin.md) |
+| `GET`    | `/persist/gremlin-async/:requestId` | Get terminal/in-flight job state and metadata | [`async-gremlin.md`](./async-gremlin.md) |
+| `DELETE` | `/persist/gremlin-async/:requestId` | Idempotent cancel; persists `cancelRequested` intent or terminal `CANCELLED` depending on state | [`async-gremlin.md`](./async-gremlin.md) |
+| `POST`   | `/persist/graphql`                  | Read-only GraphQL query execution over lexicon-generated types with per-field data-source resolution | [`graphql-read-surface.md`](./graphql-read-surface.md), [`graphql-pii-access-policy.md`](./graphql-pii-access-policy.md) |
+| `GET`    | `/persist/graphql/schema`           | Return the active generated GraphQL SDL plus lexicon and resolution-map version metadata | [`graphql-read-surface.md`](./graphql-read-surface.md) |
 
 Out-of-band, the service also exposes:
 
-- An **EventBridge rule** for `GraphFactProduced` events emitted by other products. Persist validates the embedded GraphSON v3 payload and routes by size: small facts (vertices + edges <= `SYNC_INGEST_MAX_ELEMENTS`, default 50) are written synchronously in one Neptune transaction, while larger payloads take the async GraphSON ingest path. Payloads carrying `vertexRefs` always take the sync path because references must be verified before any write.
-- A **Step Functions state machine** (the **Neptune CSV workflow**) for bulk CSV ingest from S3.
-- A **Step Functions state machine** (the **Derived Index Rebuild workflow**) for full or selected re-indexing of lexicon-declared derived indexes.
-- An **EventBridge Scheduler rule** that invokes a Neptune Streams poller for incremental derived-index updates after graph writes commit.
-- An **OpenSearch full-text-search replication plane** that keeps an OpenSearch index synchronized from Neptune Streams so `POST /persist/gremlin` can use Neptune's `Neptune#fts` Gremlin integration without exposing OpenSearch directly.
+- An **EventBridge rule** for `GraphFactProduced` events emitted by other products. Persist validates the embedded GraphSON v3 payload and routes by size: small facts (vertices + edges <= `SYNC_INGEST_MAX_ELEMENTS`, default 50) are written synchronously in one Neptune transaction, while larger payloads take the async GraphSON ingest path. Payloads carrying `vertexRefs` always take the sync path because references must be verified before any write. [`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md)
+- A **Step Functions state machine** (the **Neptune CSV workflow**) for bulk CSV ingest from S3. [`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md)
+- A **Step Functions state machine** (the **Derived Index Rebuild workflow**) for selected re-indexing of lexicon-declared derived indexes, driven by an index-definition discovery poller. [`derived-index-maintenance.md`](./derived-index-maintenance.md), [`derived-index-discovery-and-catchup.md`](./derived-index-discovery-and-catchup.md)
+- An **EventBridge Scheduler rule** that invokes a Neptune Streams poller for incremental derived-index updates after graph writes commit, plus a lag probe. [`derived-index-maintenance.md`](./derived-index-maintenance.md), [`operations-dashboards-and-alerting.md`](./operations-dashboards-and-alerting.md)
+- Full-text search over the graph (`Neptune#fts` through `POST /persist/gremlin`, backed by an OpenSearch mirror). [`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md)
+- Athena reporting planes: a debt derived-index export, a raw Neptune stream export into per-label tables, and an incremental index stream consumer. [`athena-debt-index-export.md`](./athena-debt-index-export.md), [`neptune-stream-export.md`](./neptune-stream-export.md), [`athena-index-stream-consumer.md`](./athena-index-stream-consumer.md)
 
 ### 1.3 Non-goals
 
-- Persist's public read surfaces are Gremlin and the lexicon-generated GraphQL API — nothing else. OpenSearch-backed full-text search is accessed through the existing Gremlin read surface, not through a separate `/persist/search` endpoint or a raw OpenSearch endpoint.
-- Persist does **not** provide an arbitrary search engine or caller-defined OpenSearch schema. It only maintains the OpenSearch documents required for Neptune full-text search over Persist's graph data and the derived properties declared by Lexicon's `indexes` metadata.
-- The GraphQL surface does **not** accept caller-defined types, caller-defined resolvers, mutations, or subscriptions. The schema is generated from the lexicon; the field-to-source routing comes only from the Persist-owned resolution map (§3.9). Callers cannot select or override a data source per request.
-- Persist does **not** proxy arbitrary Interprose operations. Interprose is reachable only as a resolution target for fields declared in the resolution map, through the batched, cached, rate-limited resolver client in §4.5 — never as a passthrough API.
+- Persist's public read surfaces are Gremlin and the lexicon-generated GraphQL API — nothing else. There is no `/persist/search` endpoint.
+- The GraphQL surface does **not** accept caller-defined types, caller-defined resolvers, mutations, or subscriptions. The schema is generated from the lexicon; the field-to-source routing comes only from the Persist-owned resolution map. Callers cannot select or override a data source per request.
+- Persist does **not** proxy arbitrary Interprose operations. Interprose is reachable only as a resolution target for fields declared in the resolution map, through the cached, concurrency-bounded resolver client in [`graphql-read-surface.md`](./graphql-read-surface.md) — never as a passthrough API.
 - Persist does **not** provide the legacy document-store surface (`/persistence/transactions`, `/persistence/collections`) or accept API-key authentication. Callers use SigV4 against `/persist/*`; deployment correlation and log records stay in the owning service's storage.
-- Persist does **not** synthesise its own VPC certificates or domains. Bootstrap creates the tenant's shared API Gateway custom domain before product deployment; Persist owns only its `/persist` mapping to that existing domain.
+- Persist does **not** create or own an API custom domain. It publishes its execute-api URL and a cross-account invoke role to SSM for consumers ([`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.7).
 - Persist does **not** own the shared lexicon document; it consumes Lexicon product artifacts from S3 through the `/lexicon/data-uri` SSM parameter.
 - Persist does **not** consume arbitrary EventBridge traffic. It subscribes only to versioned graph-fact events that carry GraphSON v3 and pass the same lexicon and integrity rules as HTTP ingest.
 
 ---
-
 ## 2. Architecture
+
+Specified in [`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md). The sub-sections below map the former PRD structure onto that file and its siblings.
 
 ### 2.1 Stacks (AWS CDK)
 
-The CDK app is composed of three stacks deployed in order:
-
-```
-bin/app.ts
-├── NeptuneStack         # VPC + Neptune cluster + Lambda SG + bulk-load IAM role
-├── PersistSearchStack   # OpenSearch Serverless collection + Neptune-to-OpenSearch replication
-└── PersistStack         # API/ingest Lambdas, S3 buckets, SQS queues, DynamoDB,
-                         # ECS Fargate, Step Functions, EventBridge, HTTP API + IAM authoriser
-```
-
-`PersistSearchStack.addDependency(neptuneStack)` and `PersistStack.addDependency(persistSearchStack)` ensure the database and OpenSearch full-text-search replication plane deploy before API routes that can submit `Neptune#fts` Gremlin queries.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §2 — the full CDK app topology (seven stacks), deployment order, context keys, and SSM handoffs.
 
 ### 2.2 NeptuneStack contents
 
-- **VPC** with `maxAzs: 2`, `natGateways: 1`, three subnet tiers (`public`, `app=PRIVATE_WITH_EGRESS`, `db=PRIVATE_ISOLATED`), and an S3 gateway endpoint reachable from `app` and `db`.
-- Two **Security Groups**:
-  - `LambdaSg` — `allowAllOutbound: true`, attached to every Lambda/Fargate task that talks to Neptune.
-  - `NeptuneSg` — egress to `0.0.0.0/0:443` (for S3 bulk loading), ingress on `8182/tcp` from `LambdaSg` and from the VPC CIDR.
-- **Neptune cluster** (`CfnDBCluster`):
-  - Subnet group on isolated subnets, custom cluster parameter group `neptune1.4` with `neptune_query_timeout=3600000` ms, `neptune_streams=1`, and `neptune_streams_expiry_days` from CDK context (`30` by default, bounded to AWS's 1–90 day range).
-  - `iamAuthEnabled: true`, `storageEncrypted: true`, `enableCloudwatchLogsExports: ["audit"]`, `copyTagsToSnapshot: true`.
-  - `deletionProtection` defaults true (false in non-prod via `--context stage=…`).
-  - Writer instance `db.r8g.8xlarge`, reader instance `db.r8g.12xlarge`.
-- **Bulk-load IAM role** (`NeptuneBulkLoadRole`, assumed by `rds.amazonaws.com`) with `s3:ListBucket`/`s3:GetObject` on `*`, exported to PersistStack and granted read on the Neptune bulk-load bucket.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §3 — VPC, security groups, cluster parameters, instances, bulk-load role, outputs. Dedicated readers and endpoints: [`neptune-reader-topology.md`](./neptune-reader-topology.md). Recovery cluster: [`neptune-recovery-and-persistence-target.md`](./neptune-recovery-and-persistence-target.md). Partner peering and DB-auth role: [`cross-account-vpc-peering.md`](./cross-account-vpc-peering.md).
 
-Stack outputs (re-exported at the application level): `NeptuneWriterEndpoint`, `NeptuneReaderEndpoint`, `NeptunePort`, `NeptuneClusterResourceId`, `NeptuneClusterIdentifier`, `NeptuneBulkLoadRoleArn`, `NeptuneVpcId`.
+### 2.3 PersistSearchStack
 
-### 2.3 PersistSearchStack contents
-
-`PersistSearchStack` owns the OpenSearch resources and the Neptune Streams consumer that make Neptune full-text search usable through Gremlin. Neptune remains the source of truth; OpenSearch is rebuildable and eventually consistent.
-
-- **Amazon OpenSearch Serverless collection**:
-  - Type `SEARCH`; collection name stable per tenant/environment, e.g. `persist-fts-<stage>`.
-  - Encryption policy exists before collection creation. The default uses an AWS owned key unless the deployer supplies a customer-managed KMS key; changing the key after data exists requires collection recreation and re-indexing.
-  - Network policy denies public access to the OpenSearch API endpoint and allows only the OpenSearch Serverless-managed VPC endpoint in the Persist VPC. Dashboards remain disabled/private unless an explicit operator-only policy is supplied.
-  - Data access policy grants the replication poller write/index permissions and grants Persist Gremlin query roles read access. Data access policies are paired with IAM `aoss:APIAccessAll` on the collection ARN because OpenSearch Serverless requires both.
-  - The Neptune index name is the direct index target, not an alias, because Neptune full-text search can return incorrect results when querying an alias instead of an index.
-- **OpenSearch Serverless VPC endpoint** in the app subnets, reachable from `LambdaSg` and any Fargate task that executes Gremlin FTS queries.
-- **Search sync state table** (`SearchSyncStateTable`) with PK `pk`, SK `sk`, PAY_PER_REQUEST, AWS-managed encryption, PITR enabled. Stores the OpenSearch stream checkpoint/lease, initial backfill status, index generation, and health metadata.
-- **OpenSearch replication poller** (`OpenSearchStreamPoller`) runs from EventBridge Scheduler. It reads Neptune Streams from a stored checkpoint, transforms Gremlin vertex/edge changes into Neptune's documented OpenSearch document model (`entity_id`, `entity_type`, `document_type`, `predicates.<property>.value`), writes idempotently to the configured OpenSearch index, and advances the checkpoint only after OpenSearch writes succeed.
-- **OpenSearch backfill workflow** (`PersistOpenSearchBackfillWorkflow`) is a STANDARD Step Functions workflow for initial sync and rebuilds from existing Neptune data. It captures a stream watermark, exports or scans existing graph elements, writes the OpenSearch index, verifies sample parity against Gremlin, and then records the checkpoint from which continuous stream replication must resume.
-- **CloudWatch alarms/metrics** for stream lag, records processed, records failed, backfill status, OpenSearch write failures, and search query failures.
-
-Outputs consumed by `PersistStack`: `OpenSearchCollectionArn`, `OpenSearchCollectionEndpoint`, `OpenSearchIndexName`, `OpenSearchVpcEndpointId`, `SearchSyncStateTableName`, and `PersistOpenSearchBackfillWorkflowArn`.
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) — the full-text-search mirror stack.
 
 ### 2.4 PersistStack contents
 
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4 — storage, queues, DynamoDB, compute, Fargate, routing fabric, API exposure.
+
 #### 2.4.1 Storage
 
-| Bucket                       | Retention                   | Purpose                                                                                              |
-| ---------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `IngestAsyncPayloadBucket`   | 2-day lifecycle             | GraphSON v3 async-ingest payloads under `ingest-async/YYYY/MM/DD/<requestId>.json`                   |
-| `NeptuneBulkLoadBucket`      | 2-day lifecycle             | Generated/aggregated Neptune CSV files under `bulk-load/`, `bulk-load-aggregate/`, `workflow-rehash/`, plus `workflow-summaries/` |
-| `GremlinAsyncResultsBucket`  | 7-day lifecycle             | JSON result documents from async Gremlin queries under `gremlin-async/results/YYYY/MM/DD/<requestId>.json` |
-| `IndexMaintenanceBucket`     | 14-day lifecycle            | Derived-index rebuild manifests, shard inputs, dry-run diffs, and summaries under `index-rebuild/`   |
-| `PersistBlobBucket`          | No lifecycle expiry         | Immutable content-addressed text blobs under `persist-blobs/sha256/<hh>/<hh>/<sha256>.txt`           |
-
-All buckets enforce `BLOCK_ALL` public access, SSL-only, S3-managed encryption, and `BUCKET_OWNER_ENFORCED` ownership.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.1.
 
 #### 2.4.2 Queues
 
-| Queue                                           | Retention | VT      | DLQ + maxReceiveCount |
-| ----------------------------------------------- | --------- | ------- | --------------------- |
-| `IngestAsyncQueue` (GraphSON async ingest)      | 2 d       | 30 min  | `IngestAsyncDlq`, 5   |
-| `FilteredBatchQueue` (stage-2 aggregator input) | 2 d       | 30 min  | `FilteredBatchDlq`, 5 |
-| `GremlinAsyncQueue` (async Gremlin submissions) | 4 d       | 15 min  | `GremlinAsyncDlq`, 5  |
-| `GraphFactEventDlq` (EventBridge target DLQ)    | 14 d      | n/a     | n/a                   |
-
-Each DLQ has a 4–14-day retention. SQS-managed encryption, `enforceSSL: true` everywhere.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.2.
 
 #### 2.4.3 DynamoDB
 
-| Table                    | Key                       | Notes                                                                |
-| ------------------------ | ------------------------- | -------------------------------------------------------------------- |
-| `GremlinAsyncJobsTable`  | PK `requestId` (S)        | PAY_PER_REQUEST, AWS-managed encryption, PITR enabled, TTL on `ttlEpochSeconds` (default `7d` from `queuedAt`) |
-| `DerivedIndexStateTable` | PK `pk` (S), SK `sk` (S)  | PAY_PER_REQUEST, AWS-managed encryption, PITR enabled. Stores the Neptune Streams checkpoint/lease, rebuild execution metadata, and optional per-index watermarks. |
-
-`GremlinAsyncJobsTable` items mirror the `GremlinAsyncJobState` schema (see §6.3). `DerivedIndexStateTable` items are defined in §6.6.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.3.
 
 #### 2.4.4 Compute
 
-All Lambdas are `NodejsFunction` with `runtime=NODEJS_24_X`, `architecture=ARM_64`, ESM bundling (`format: ESM`, `target: node24`, `mainFields: ["module", "main"]`, `--conditions module`), and the standard ESM `createRequire` banner so `gremlin`/`gremlin-aws-sigv4` (CommonJS) can satisfy dynamic built-in `require`s like `buffer`. Logging format is JSON with three-month CloudWatch log-group retention.
-
-| Function                            | Memory | Timeout | VPC | Trigger                                       | Purpose |
-| ----------------------------------- | ------ | ------- | --- | --------------------------------------------- | ------- |
-| `PersistHandler`                    | 512    | 30 s    | ✓   | API Gateway HTTP API                          | API router for all `/persist/*` routes except GraphQL |
-| `PersistGraphQlHandler`             | 1024   | 30 s    | ✓   | API Gateway HTTP API                          | Read-only GraphQL executor: lexicon-generated schema, per-field resolution to Neptune, DynamoDB, or Interprose |
-| `PersistGraphFactHandler`           | 512    | 30 s    | ✓   | EventBridge rule for `GraphFactProduced`      | Validate graph-fact events and route them to sync Neptune ingest or async GraphSON ingest |
-| `PersistAsyncBulkWorker`            | 1024   | 15 min  | ✓   | `IngestAsyncQueue` SQS (`batchSize=400`, `maxBatchingWindow=1m` prod / `3s` test, `maxConcurrency=10`, `reportBatchItemFailures`) | Stage-1 ingest worker |
-| `PersistAsyncBulkAggregateWorker`   | 1024   | 15 min  | ✓   | `FilteredBatchQueue` SQS (`batchSize=6`, similar batching window) | Stage-2 ingest aggregator |
-| `GremlinAsyncValidate`              | 256    | 60 s    | ✓   | Step Functions `LambdaInvoke`                 | Validate-and-set-running for async Gremlin |
-| `GremlinAsyncFailureHandler`        | 256    | 60 s    | ✓   | Step Functions catch                          | Persist failure terminal state |
-| `PersistWorkflowStart`              | 512    | 30 s    | —   | Step Functions                                | Decode/normalise workflow input |
-| `PersistWorkflowCostPredictor`      | 512    | 60 s    | —   | Step Functions                                | List S3 prefixes, compute cost estimate |
-| `PersistWorkflowValidate`           | 1024   | 15 min  | —   | Step Functions Distributed Map item processor | Per-CSV-object lexicon validation |
-| `PersistWorkflowItemRoute`          | 256    | 60 s    | —   | Step Functions                                | `headObject` to choose `direct` vs `aggregate` mode |
-| `PersistWorkflowItemProcessor`      | 4096 + 10 GiB ephemeral storage | 15 min | ✓ | Step Functions (with task token in `aggregate` mode) | Dedup → upload → start load (or enqueue stage-2) |
-| `PersistWorkflowItemStatus`         | 1024   | 180 s   | ✓   | Step Functions                                | Detailed bulk-load status check |
-| `PersistWorkflowItemStatusSimple`   | 1024   | 180 s   | ✓   | Step Functions                                | Lightweight bulk-load status check (used inside Distributed Map polling loop) |
-| `IndexRebuildPrepare`               | 512    | 60 s    | ✓   | Step Functions                                | Load canonical lexicon, build selected index catalog, capture stream watermark, and write rebuild manifest |
-| `IndexRebuildShardWorker`           | 1024   | 15 min  | ✓   | Step Functions Distributed Map item processor | Recompute derived index values for a shard of trigger element IDs and write target properties |
-| `IndexStreamPoller`                 | 1024   | 5 min   | ✓   | EventBridge Scheduler                         | Poll Neptune Streams, match committed graph changes to lexicon index triggers, recompute affected properties, and advance checkpoint |
-
-Plus an **ECS Fargate** task (ARM64, 1 vCPU / 2048 MB, 120 s stop timeout) packaged from `lambda/fargate/Dockerfile` that hosts the long-running async-Gremlin executor (`GREMLIN_ASYNC_EXECUTION_TIMEOUT_MS=3600000` ms = 1 h cap).
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.4 and §4.5.
 
 #### 2.4.5 Routing fabric
 
-- **HTTP API** (`HttpApi` `PersistApi`) with default stage and CORS pre-flight for `*`. Routes:
-  - `POST /persist/graphql` and `GET /persist/graphql/schema` → `HttpLambdaIntegration(PersistGraphQlHandler)` with `HttpIamAuthorizer`. These explicit routes take precedence over the proxy route.
-  - `/persist` and `/persist/{proxy+}` for all other methods/paths → `HttpLambdaIntegration(PersistHandler)` with `HttpIamAuthorizer`.
-- **API Gateway custom domain mapping** under base path `persist` against the Bootstrap-created tenant custom domain passed by Deployer (`AWS::ApiGatewayV2::ApiMapping` for the HTTP API). Persist must not create the shared API Gateway `DomainName`; Bootstrap creates it before product deployment.
-- **EventBridge rule** (`GraphFactProducedRule`) on the tenant event bus. Pattern: `{ "detail-type": ["GraphFactProduced"], "detail": { "graphson_format": ["graphson-v3"] } }`. Target: `PersistGraphFactHandler`, with bounded EventBridge retry policy and `GraphFactEventDlq` as the target DLQ.
-- **EventBridge Pipe** (`GremlinAsyncPipe`) source = `GremlinAsyncQueue` (`batchSize: 1`), target = Step Functions `GremlinAsyncStateMachine` (`FIRE_AND_FORGET`). The submission flow is therefore SQS → EventBridge Pipe → Step Functions, **not** SQS → Lambda.
-- **EventBridge Scheduler** (`IndexStreamPollSchedule`) invokes `IndexStreamPoller` once per minute by default. Neptune Streams do not natively trigger Lambda, so the poller is explicitly scheduled and protected by a DynamoDB lease.
-- **Step Functions / GremlinAsyncStateMachine**:
-  ```
-  UnwrapSqsRecord ($[0]) → ValidateAndSetRunning (Lambda)
-                          ├── action == SKIP → Succeed
-                          └── otherwise     → ExecuteQuery (Fargate, WAIT_FOR_TASK_TOKEN, heartbeat 65 min)
-                                                ├── on success → Succeed (terminal write inside container)
-                                                └── catch    → HandleFailure (Lambda)
-  ```
-  Total state machine timeout: 7200 s (2 h). Tracing enabled.
-- **Step Functions / PersistNeptuneCsvWorkflow** (Neptune CSV bulk-load) – see §5.
-- **Step Functions / PersistIndexRebuildWorkflow** (derived index rebuild) – see §5.6.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §4.6 and §4.7.
 
 #### 2.4.6 IAM (high-level)
 
-- All Neptune-touching roles get `neptune-db:connect` plus the strictly-needed read/write/delete/loader actions on `arn:aws:neptune-db:<region>:<account>:<clusterResourceId>/*`.
-- Gremlin read roles get read-only Neptune data actions and OpenSearch Serverless `aoss:APIAccessAll` on `OpenSearchCollectionArn`, with matching data-access-policy read permissions on the configured index. This is required for Neptune full-text search when OpenSearch Serverless backs `Neptune#fts` queries.
-- OpenSearch replication roles can read Neptune Streams, write to `SearchSyncStateTable`, and create/update/delete documents in the configured OpenSearch index. They cannot invoke public `/persist/*` API Gateway routes or write arbitrary indexes.
-- Blob-materialising roles (`PersistHandler`, `PersistGraphFactHandler`, GraphSON async ingest components, and CSV workflow item processors) get only `s3:PutObject` and `s3:GetObject` on `PersistBlobBucket/<PERSIST_BLOB_PREFIX>/*`; `s3:GetObject` covers the `HeadObject` verification path. They do not get delete permissions.
-- Workers that emit task callbacks have `states:SendTaskSuccess` / `states:SendTaskFailure` on `*` (Step Functions does not support resource-level constraints here).
-- The Glue start step uses the AWS-required `glue:* on *` (Step Functions optimised integration).
-- API Gateway routes use `HttpIamAuthorizer`; every caller must SigV4-sign `execute-api` requests.
-- `PersistGraphFactHandler` runs in the VPC. It can read the lexicon object, verify referenced vertices through the Neptune reader, write graph data through the Neptune writer for the sync path, write async payloads to `IngestAsyncPayloadBucket`, and send messages to `IngestAsyncQueue` for the async path. The EventBridge rule can invoke only this handler and write failed deliveries to `GraphFactEventDlq`.
-- Derived-index Lambdas can read the lexicon object and `IndexMaintenanceBucket`, read/write `DerivedIndexStateTable`, read Neptune Streams and execute read traversals with `neptune-db:ReadDataViaQuery`, and execute narrowly-scoped property writes with `neptune-db:WriteDataViaQuery` on the writer endpoint. They cannot invoke public API Gateway routes.
-- `PersistGraphQlHandler` is strictly read-only: `neptune-db:connect` + `neptune-db:ReadDataViaQuery` against the reader endpoint, `s3:GetObject` on the lexicon object and the resolution-map object, `dynamodb:GetItem`/`dynamodb:BatchGetItem`/`dynamodb:Query` only on the tables named in the resolution map, and `secretsmanager:GetSecretValue` only on the Interprose credentials secret. It gets no Neptune write actions, no ingest bucket/queue access, and no OpenSearch write access.
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §5.
 
 ### 2.5 Configuration surface (env vars)
 
-The runtime is configured exclusively via env vars (read once on cold start; missing required values must fail closed). Notable keys:
-
-| Key                                         | Default       | Used by                                      |
-| ------------------------------------------- | ------------- | -------------------------------------------- |
-| `NEPTUNE_HOST` / `NEPTUNE_WRITER_HOST` / `NEPTUNE_READER_HOST` | — | Gremlin client + Neptune Data API client |
-| `NEPTUNE_PORT`                              | `8182`        | Gremlin client                               |
-| `NEPTUNE_CONNECTION_MAX_AGE_MS`             | `2700000`     | Connection rotation                          |
-| `NEPTUNE_RETRY_MAX_ATTEMPTS`                | `5`           | `GremlinRetry`                               |
-| `NEPTUNE_RETRY_BASE_DELAY_MS`               | `1000`        | `GremlinRetry`                               |
-| `OPENSEARCH_COLLECTION_ENDPOINT`            | —             | Neptune FTS query side-effect injection      |
-| `OPENSEARCH_COLLECTION_ARN`                 | —             | IAM grants + runtime validation              |
-| `OPENSEARCH_INDEX_NAME`                     | `amazon_neptune` | Direct OpenSearch index used by Neptune FTS |
-| `GREMLIN_FTS_ALLOWED_QUERY_TYPES`           | `simple_query_string,match,prefix,fuzzy,term,query_string` | Gremlin query policy |
-| `GREMLIN_FTS_DEFAULT_QUERY_TYPE`            | `simple_query_string` | Gremlin FTS helper defaults              |
-| `GREMLIN_FTS_MAX_RESULTS`                   | `1000`        | Max `Neptune#fts.maxResults` accepted by API |
-| `GREMLIN_FTS_ALLOW_CALLER_ENDPOINT`         | `false`       | Whether caller-supplied `Neptune#fts.endpoint` is allowed; production must stay false |
-| `LEXICON_DATA_URI`                          | from SSM `/lexicon/data-uri` at deploy time | Lexicon loader |
-| `LEXICON_OBJECT_TIMEOUT_MS`                 | `10000`       | Lexicon S3 fetch                             |
-| `INGEST_ASYNC_PAYLOAD_BUCKET`               | bucket arn    | API + worker                                 |
-| `INGEST_ASYNC_QUEUE_URL`                    | queue url     | API submit                                   |
-| `INGEST_ASYNC_MAX_RECEIVE_COUNT`            | `5`           | Stage-1 worker (matches CDK)                 |
-| `INGEST_FILTERED_BATCH_QUEUE_URL`           | queue url     | Stage-1 → stage-2                             |
-| `INGEST_FILTERED_BATCH_MAX_RECEIVE_COUNT`   | `5`           | Stage-2 worker                               |
-| `NEPTUNE_BULK_BUCKET`                       | bucket name   | All bulk paths                               |
-| `NEPTUNE_BULK_PREFIX`                       | `bulk-load`   | Sync ingest stage                            |
-| `NEPTUNE_FILTERED_BULK_PREFIX`              | `bulk-load-aggregate` | Stage-2 aggregator                   |
-| `WORKFLOW_BULK_PREFIX`                      | `bulk-load`   | Workflow item processor                      |
-| `WORKFLOW_SUMMARY_PREFIX`                   | `workflow-summaries` | Both `direct` and `aggregate` paths   |
-| `NEPTUNE_BULK_IAM_ROLE_ARN`                 | role arn      | StartLoaderJob                               |
-| `NEPTUNE_BULK_REGION`                       | stack region  | StartLoaderJob                               |
-| `BULK_POLL_INTERVAL_MS` / `BULK_MAX_WAIT_MS`| `5000` / `840000` | Bulk loader poller                       |
-| `NEPTUNE_BULK_START_REQUEST_TIMEOUT_MS`     | `120000`      | StartLoaderJob HTTP timeout                  |
-| `NEPTUNE_BULK_STATUS_REQUEST_TIMEOUT_MS`    | `30000`       | GetLoaderJobStatus HTTP timeout              |
-| `NEPTUNE_BULK_REQUEST_TIMEOUT_MS`           | `30000`       | Legacy fallback for both                     |
-| `NEPTUNE_BULK_STATUS_LOG_EVERY_POLLS`       | `12`          | Loader poll log cadence                      |
-| `NEPTUNE_CSV_DEDUP_BATCH_SIZE`              | `1000`        | Dedup batches                                |
-| `NEPTUNE_CSV_DEDUP_BATCH_CONCURRENCY`       | `100` (CDK overrides 110) | Vertex dedup concurrency           |
-| `NEPTUNE_CSV_EDGE_DEDUP_BATCH_CONCURRENCY`  | `100` (CDK 8 to limit edge fan-out) | Edge dedup concurrency      |
-| `WORKFLOW_MAX_OBJECT_SIZE_BYTES`            | `524288000` (500 MiB) | Per-CSV size guard                   |
-| `WORKFLOW_DIRECT_LOAD_THRESHOLD_BYTES`      | `16777216` (16 MiB) | `direct` vs `aggregate` routing        |
-| `WORKFLOW_COST_CEILING_USD`                 | `10`          | Cost-predictor default                       |
-| `WORKFLOW_COST_PER_GB_USD`                  | `0.12`        | Cost predictor                               |
-| `WORKFLOW_COST_PER_1000_OBJECTS_USD`        | `0.0004`      | Cost predictor                               |
-| `WORKFLOW_VALIDATION_REQUEST_TIMEOUT_MS`    | `30000`       | Workflow validation S3 calls                 |
-| `WORKFLOW_COST_PREDICTOR_REQUEST_TIMEOUT_MS`| `10000`       | Cost predictor S3 list                       |
-| `GREMLIN_ASYNC_QUEUE_URL`                   | queue url     | API submit                                   |
-| `GREMLIN_ASYNC_JOBS_TABLE_NAME`             | table name    | DDB-backed job store                         |
-| `GREMLIN_ASYNC_RESULTS_BUCKET` / `GREMLIN_ASYNC_RESULTS_PREFIX` | bucket / `gremlin-async/results` | Result store |
-| `GREMLIN_ASYNC_JOB_TTL_SECONDS`             | `604800` (7 d)| DDB TTL                                      |
-| `GREMLIN_ASYNC_EXECUTION_TIMEOUT_MS`        | `3600000` | Execute Gremlin timeout |
-| `GREMLIN_ASYNC_MAX_EXECUTION_TIMEOUT_MS`    | matches above | Hard ceiling                                 |
-| `GREMLIN_ASYNC_STATUS_REQUEST_TIMEOUT_MS`   | `30000`       | GetGremlinQueryStatus                        |
-| `GREMLIN_ASYNC_CANCEL_REQUEST_TIMEOUT_MS`   | falls back to status timeout | CancelGremlinQuery             |
-| `GREMLIN_ASYNC_MAX_RECEIVE_COUNT`           | `5`           | Worker retry decision                        |
-| `GREMLIN_BATCH_EXISTS_CHUNK_SIZE`           | `1000`        | Existence checks chunk size                  |
-| `GREMLIN_BATCH_EXISTS_CONCURRENCY`          | `100` (capped at 110) | Existence checks concurrency         |
-| `SYNC_INGEST_MAX_ELEMENTS`                  | `50`          | EventBridge fact-ingest sync/async routing threshold (vertices + edges) |
-| `INDEX_MAINTENANCE_BUCKET`                  | bucket name   | Derived-index rebuild manifests and summaries |
-| `INDEX_REBUILD_PREFIX`                      | `index-rebuild` | Derived-index rebuild S3 prefix            |
-| `DERIVED_INDEX_STATE_TABLE_NAME`            | table name    | Streams checkpoint/lease and rebuild state   |
-| `INDEX_REBUILD_SHARD_SIZE`                  | `1000`        | Trigger element IDs per rebuild shard        |
-| `INDEX_REBUILD_MAX_CONCURRENCY`             | `20`          | Distributed Map default for index rebuild    |
-| `INDEX_STREAM_POLL_LIMIT`                   | `10000`       | Neptune Streams `limit` per poll             |
-| `INDEX_STREAM_POLL_INTERVAL_SECONDS`        | `60`          | EventBridge Scheduler cadence                |
-| `INDEX_STREAM_LEASE_TTL_SECONDS`            | `120`         | Single active stream poller lease duration   |
-| `INDEX_STREAM_MAX_TRANSACTIONS_PER_POLL`    | `250`         | Backpressure guard before yielding to next scheduled poll |
-| `INDEX_STREAM_LAG_WARN_FRACTION`            | `0.50`        | Warn when lag exceeds this fraction of `neptune_streams_expiry_days` |
-| `SEARCH_SYNC_STATE_TABLE_NAME`              | table name    | OpenSearch checkpoint/lease and backfill state |
-| `SEARCH_STREAM_POLL_LIMIT`                  | `10000`       | Neptune Streams `limit` per OpenSearch poll |
-| `SEARCH_STREAM_POLL_INTERVAL_SECONDS`       | `60`          | EventBridge Scheduler cadence for OpenSearch poller |
-| `SEARCH_STREAM_LEASE_TTL_SECONDS`           | `120`         | Single active OpenSearch stream poller lease duration |
-| `SEARCH_STREAM_LAG_WARN_FRACTION`           | `0.50`        | Warn when OpenSearch lag exceeds this fraction of stream expiry |
-| `SEARCH_BACKFILL_SHARD_SIZE`                | `1000`        | Graph element IDs per OpenSearch backfill shard |
-| `SEARCH_BACKFILL_MAX_CONCURRENCY`           | `20`          | Distributed Map default for OpenSearch backfill |
-| `SEARCH_FRESHNESS_MAX_LAG_SECONDS`          | `300`         | Optional fail-closed threshold for FTS query freshness |
-| `PERSIST_BLOB_BUCKET`                       | bucket name   | Content-addressed text blob object store     |
-| `PERSIST_BLOB_PREFIX`                       | `persist-blobs` | Blob object key prefix                     |
-| `PERSIST_BLOB_MAX_BYTES`                    | `1048576` (1 MiB) | Maximum UTF-8 byte length for one blob value |
-| `PERSIST_BLOB_OBJECT_TIMEOUT_MS`            | `10000`       | S3 PUT/HEAD timeout for blob materialisation |
-| `GRAPHQL_RESOLUTION_MAP_URI`                | —             | S3 URI of the Persist-owned resolution map (§3.9); required by `PersistGraphQlHandler`, fails closed when missing or invalid |
-| `GRAPHQL_RESOLUTION_MAP_TIMEOUT_MS`         | `10000`       | Resolution-map S3 fetch timeout                |
-| `GRAPHQL_MAX_QUERY_DEPTH`                   | `8`           | Reject queries deeper than this before execution |
-| `GRAPHQL_MAX_QUERY_COMPLEXITY`              | `1000`        | Static complexity budget per request (fields × list multipliers) |
-| `GRAPHQL_MAX_LIST_PAGE_SIZE`                | `100`         | Hard cap on `first` pagination arguments       |
-| `GRAPHQL_FIELD_TIMEOUT_MS`                  | `5000`        | Per-source resolver timeout (each Neptune/DynamoDB/Interprose batch call) |
-| `INTERPROSE_BASE_URL`                       | —             | Interprose API base URL; required only when the resolution map declares `interprose` sources |
-| `INTERPROSE_CREDENTIALS_SECRET_ARN`         | —             | Secrets Manager secret holding Interprose credentials |
-| `INTERPROSE_MAX_CONCURRENT_REQUESTS`        | `4`           | Per-container concurrency cap toward Interprose |
-| `INTERPROSE_MAX_BATCH_SIZE`                 | `25`          | Max keys coalesced into one Interprose batch call |
-| `INTERPROSE_CACHE_TTL_SECONDS`              | `60`          | In-process TTL cache for Interprose resolver responses |
-| `POWERTOOLS_SERVICE_NAME` / `POWERTOOLS_LOG_LEVEL` / `POWERTOOLS_METRICS_NAMESPACE` | `persist*` / `INFO` / `persist` | Logging + metrics |
+[`stacks-configuration-and-iam.md`](./stacks-configuration-and-iam.md) §7 — the single canonical environment-variable table (code defaults and CDK overrides).
 
 ---
 
@@ -292,302 +107,63 @@ The runtime is configured exclusively via env vars (read once on cold start; mis
 
 ### 3.1 Response envelope
 
-All HTTP responses use a uniform JSON envelope. Success:
-
-```json
-{ "ok": true, "data": <route-specific> }
-```
-
-Error (HTTP status mapped per error tag — see §3.6):
-
-```json
-{
-  "ok": false,
-  "error": {
-    "type": "GraphSONPayloadValidationError",
-    "message": "GraphSON payload validation failed",
-    "details": { "issues": [ { "code": "Type", "path": "/vertices/0/@value/id", "message": "..." } ], "issueCount": 1 }
-  }
-}
-```
-
-`accepted(...)` returns `202` for queued submissions; everything else is `200`/`4xx`/`5xx` per §3.6.
+[`error-catalogue-and-responses.md`](./error-catalogue-and-responses.md) §2.
 
 ### 3.2 GraphSON v3 typed values
 
-The service accepts and returns the GraphSON v3 typed-object representation:
-
-- Primitives: `g:Int32`, `g:Int64` (number **or** bigint-as-string), `g:Float`, `g:Double`, `g:UUID`, `g:Date`, `g:Timestamp`, `g:List<T>`, `g:Set<T>`, `g:Map<K,V>` (alternating array), and the Persist extension `persist:Blob`.
-- IDs (`GraphSONId`) MUST be `g:Int32`, `g:Int64`, or `g:UUID`. Plain string IDs are rejected.
-- Vertices: `g:Vertex` with non-empty `properties` (validated by schema).
-- Edges: `g:Edge` carrying `id`, `label`, `inV/outV` (`GraphSONId`), `inVLabel`, `outVLabel`, optional `properties` (`g:Property` map).
-- Vertex references: `g:VertexRef` carrying `id` (`GraphSONId`) and `label`. This is a Persist extension, not a TinkerPop element type. It declares that the vertex already exists in Neptune and may be used as an edge endpoint without being upserted.
-- Vertex properties: `g:VertexProperty[]` keyed by property name.
-
-The full request body for ingest/validate is wrapped:
-
-```json
-{
-  "@type": "tinker:graph",
-  "@value": {
-    "vertices": [ { "@type": "g:Vertex", "@value": { ... } } ],
-    "vertexRefs": [ { "@type": "g:VertexRef", "@value": { ... } } ],
-    "edges":    [ { "@type": "g:Edge",   "@value": { ... } } ]
-  }
-}
-```
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §2.
 
 #### 3.2.1 Persist Blob typed values
 
-`persist:Blob` is a write-time text type for graph properties whose original value is too large or sensitive to store directly in Neptune. The caller sends the original text; Persist stores that text in S3 and replaces the property value with the deterministic S3 URI before hashing or writing the graph element.
-
-```json
-{ "@type": "persist:Blob", "@value": "original text payload" }
-```
-
-Blob rules:
-
-- `@value` MUST be a JSON string whose UTF-8 byte length is `<= PERSIST_BLOB_MAX_BYTES`. Empty strings are valid unless the lexicon property declares a stricter rule.
-- A lexicon property with `type: "blob"` accepts `persist:Blob` values. `items.type: "blob"` is valid for arrays/lists of blobs. `persist:Blob` is rejected on non-blob properties.
-- Blob materialisation is recursive inside supported list/set wrappers, but not inside `g:Map` unless a future lexicon contract defines map-shaped blob fields.
-- Blob properties are stored in Neptune as ordinary single-value or multi-value `String` properties containing `s3://...` URIs. Public read paths therefore return the URI, not the original text.
-- Callers MUST NOT pre-supply a plain `s3://` string for a blob property on GraphSON ingest. Persist owns URI generation so graph IDs remain deterministic from original text.
+Contract: [`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §2. Derivation and runtime: [`identity-hashing-and-blobs.md`](./identity-hashing-and-blobs.md) §3.
 
 #### 3.2.2 Vertex reference optionality
 
-`vertexRefs` is optional. Payloads that omit it parse and validate exactly like ordinary GraphSON ingest payloads.
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §3.
 
 ### 3.3 Lexicon (single source of truth and shared ontology)
 
-The shared lexicon is the ontology for graph data across products. Persist treats it as the contract that gives graph labels, relationships, and properties stable semantic meaning, so independently deployed products can write and read interconnected data without inventing local vocabulary or coupling directly to Neptune implementation details.
-
-Persist enforces the lexicon at every write boundary. GraphSON ingest, GraphSON async ingest, validation-only requests, and Neptune CSV workflow validation all use lexicon rules to reject unknown entity types, unknown relationships, missing required properties, invalid enum values, invalid formats, and endpoint-label mismatches before persistence starts. Gremlin remains the only public read surface in this PRD, but queries are expected to use lexicon-defined labels and properties so downstream readers operate on the same vocabulary as writers.
-
-Persist does **not** own lexicon governance. The lexicon document is produced and versioned outside this service; Persist consumes the approved JSON, caches it briefly, and fails closed when it cannot refresh. Request-scoped candidate lexicons exist to validate proposed ontology changes before they are promoted, not to let callers bypass the canonical schema.
-
-The lexicon JSON document is published by the Lexicon product to S3, with its canonical URI in SSM `/lexicon/data-uri`. The document declares `vertices[]`, `edges[]`, `common_patterns[]`, and optional metadata keys that consumers must ignore unless their own contract says otherwise. Vertex and edge rules support:
-
-- `type` (label),
-- `properties: { [key]: { type, required?, enum?, format?, items? } }` where `type ∈ string|integer|number|boolean|array|blob`,
-- `required: string[]` (vertex; optional on edge),
-- `from` / `to` (edge endpoint labels),
-- `indexes: { [indexName]: { type, enum?, format?, pattern?, change_trigger, subject_query, value_query } }` for derived analytical properties declared by Lexicon. The index key is the durable target property name.
-
-Derived `indexes` metadata is now a Persist runtime contract, but not a caller write contract. GraphSON and CSV writers may not set derived index keys as ordinary properties; those keys are server-managed, rejected at inbound validation boundaries, and excluded from ID hashing when Persist writes them internally. Persist consumes the canonical lexicon to build an `IndexCatalog`:
-
-- Each catalog entry is identified by `{ owner_type, index_name }`; `index_name` is the property key written back to the owning graph element.
-- The owner type is implied by the vertex or edge definition that contains the `indexes` object. Current lexicon data declares debt vertex indexes: `debt_status_latest`, `current_balance`, `account_age_days`, `dsa_company_name`, and `is_dsa`.
-- `type`, `enum`, `format`, `pattern`, `items`, and `minLength` validate the derived value using the same scalar rules as regular properties.
-- `change_trigger.type` and `change_trigger.label` identify the Neptune Streams record that should cause recomputation. Current definitions use edge-label triggers such as `debt_status_changed`, `debt_has_balance`, `company_owns_debt`, and `company_represents_debt`.
-- `subject_query.gremlin` maps the changed graph element id (`__ID__`) to the concrete owner element id.
-- `value_query.gremlin` recomputes the canonical current value from graph history, not from the changed record alone. This is required because historical backfills can insert older events after newer events.
-
-Only the canonical lexicon drives index writes. Candidate lexicons can be used for validation and dry-run rebuild planning, but any rebuild or stream mode that writes to Neptune must reject `candidate_lexicon_s3_uri`.
-
-Index writes use the Neptune writer endpoint and are idempotent: `null` / empty traversal results remove the target property, non-null values are written as single-cardinality properties after type validation, and the write never changes the durable element id. Current promoted lexicon data declares vertex-owned debt indexes; if edge-owned indexes are promoted later, the same catalog/writer contract applies to `g.E(ownerId)`.
-
-The loader (`LexiconSchemaService`):
-
-- Reads the URI from `LEXICON_DATA_URI`, parses the S3 URI, fetches the object with a per-request timeout (`LEXICON_OBJECT_TIMEOUT_MS`, default 10 s), JSON-parses it, and validates against the lexicon schema (collecting **all** issues, not just the first).
-- Caches the loaded lexicon in-process for **300 s** with single-flight refresh.
-- Supports a request-scoped **candidate lexicon override** (`candidate_lexicon_s3_uri`) — accepted only if the URI is in the Lexicon data bucket that backs `/lexicon/data-uri` and under the reserved prefix `ovid-agent-changes/` ending in `.json`.
-- Fails closed: any post-expiry refresh failure surfaces a tagged error (we never serve a stale lexicon).
+Consumption and property rules: [`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §4. Index rules and catalog: [`derived-index-maintenance.md`](./derived-index-maintenance.md) §2. Authoring the lexicon itself belongs to the `build-lexicon-product` skill.
 
 ### 3.4 Hashed IDs (deterministic)
 
-Server-managed meta-properties (`created_at`, the literal `id` property, and lexicon-derived index keys) are stripped before hashing. Then:
-
-- **Vertex ID** = `sha256(stable_stringify({ label, properties: normalize(properties) }))`.
-- **Edge ID** = `sha256(stable_stringify({ label, outV: normalize(outV), inV: normalize(inV), properties: normalize(properties) }))` where `outV`/`inV` already use the hashed vertex ID when the endpoint is part of the same payload.
-- Normalisation sorts object keys lexicographically, treats `BigInt` as `{type:"bigint", value: stringDigits}`, recursively normalises GraphSON-typed wrappers, and sorts vertex multi-property values by their stable string. Numbers and booleans pass through; arrays preserve order **except** vertex multi-properties. Server-managed fields (`id`, `created_at`, and lexicon-derived index keys) are not hash inputs.
-- `persist:Blob` values are materialised to deterministic S3 URIs before this hash step. The original text is never a direct hash input; the resolved URI is. Because the URI key is `sha256(utf8(originalText))`, the same original text in the same Persist deployment always produces the same property value and therefore the same graph element ID.
-- `PERSIST_BLOB_BUCKET` is part of the persisted URI. It must be treated as immutable after data exists; changing it is a graph identity migration, not a configuration-only change.
-- Hashed IDs flow back as `g:UUID` typed values in the response payload — the client must use them on subsequent writes.
+[`identity-hashing-and-blobs.md`](./identity-hashing-and-blobs.md) §2.
 
 #### 3.4.1 Blob URI derivation
 
-Persist derives blob object identity from the exact UTF-8 bytes of the caller-supplied string. It MUST NOT trim, normalise Unicode, canonicalise line endings, parse markdown/HTML, or otherwise transform the text before hashing or writing.
-
-Algorithm:
-
-1. Encode the string as UTF-8 bytes.
-2. Compute lowercase hex `contentHash = sha256(bytes)`.
-3. Compute `key = <PERSIST_BLOB_PREFIX>/sha256/<contentHash[0:2]>/<contentHash[2:4]>/<contentHash>.txt`.
-4. Write the bytes to `s3://<PERSIST_BLOB_BUCKET>/<key>` with `Content-Type: text/plain; charset=utf-8` and metadata `{ persist-content-sha256, persist-content-byte-length, persist-blob-schema-version: "1" }`.
-5. Return the canonical URI `s3://<PERSIST_BLOB_BUCKET>/<key>`.
-
-The S3 write is idempotent and append-only. Use conditional `PutObject` with `If-None-Match: *` when supported by the SDK/runtime. If the object already exists, treat it as success after `HeadObject` confirms the expected metadata. Do not overwrite or delete blob objects during graph ingest. A theoretical SHA-256 collision or metadata mismatch fails closed with a tagged blob error.
+[`identity-hashing-and-blobs.md`](./identity-hashing-and-blobs.md) §3.
 
 ### 3.5 GraphSON ingest semantic + integrity rules
 
-Three-phase validation runs **before** any side effect:
-
-1. **Schema decode** (collecting **all** issues, not just the first). On failure returns `GraphSONPayloadValidationError` with `[{ code, path: <JSON Pointer>, message }]`. Union noise is collapsed (e.g. multiple GraphSON wrapper attempts at the same path are reported as a single user-friendly `Type` issue, and the redundant child `/@type Missing` issue under that path is suppressed).
-2. **Integrity**:
-   - Empty graph → `EmptyGraph` issue.
-   - Edges referencing vertex IDs that are neither present in `vertices` nor declared in `vertexRefs` → `MissingEdgeVertex` (with `direction: outV|inV`).
-   - The same ID appearing in both `vertices` and `vertexRefs` → `DuplicateVertexRef`.
-   - Vertices that no edge connects to → `IsolatedVertex`.
-   - Refs in `vertexRefs` that no edge connects to → `IsolatedVertexRef`.
-3. **Semantic / lexicon**:
-   - Required vertex/edge properties present (server-managed keys excluded).
-   - Unknown vertex/edge labels, unknown `vertexRefs` labels, and unknown properties.
-   - Derived index property keys from `indexes` are treated as server-managed. If a caller supplies one in GraphSON, graph-fact, or CSV input, validation fails before any side effect.
-   - Type mismatches (`TypeMismatch`), enum mismatches (`EnumMismatch`), string-format mismatches (`FormatMismatch`) — formats supported: `date`, `date-time`, `email`, `phone_number`, `time`, `uri`. Date formats also accept `g:Date`/`g:Timestamp` GraphSON wrappers and report `expected ISO date string or g:Date` etc.
-   - Blob mismatches (`BlobTypeMismatch`, `BlobTooLarge`, `BlobNotAllowed`) for `persist:Blob` wrappers that are used outside lexicon `blob` properties or exceed the configured byte limit.
-   - Edge endpoint sanity: `outVLabel`/`inVLabel` must equal the lexicon `from`/`to`, and the labels of vertex IDs referenced inside the same payload must match.
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §5.
 
 #### 3.5.1 Cross-authority vertex references
 
-`vertexRefs` supports cross-authority edge writes. A producer can assert an edge to a vertex it did not author without mirroring that endpoint's full property bag into the ingest payload. The producer supplies the existing vertex's deterministic content-hash ID and label:
-
-```json
-{
-  "@type": "g:VertexRef",
-  "@value": {
-    "id": { "@type": "g:UUID", "@value": "<sha256 content hash>" },
-    "label": "phone_number"
-  }
-}
-```
-
-A `g:VertexRef` means: "this vertex already exists in Neptune at this content hash; do not upsert it." The validator treats the ref ID as known for `MissingEdgeVertex` checks, but the persistence layer never writes the referenced vertex. Refs are sync-path only:
-
-- `POST /persist/ingest` accepts `vertexRefs` and verifies them before opening the write transaction.
-- `POST /persist/ingest-async` rejects non-empty `vertexRefs` because the bulk writer cannot verify referenced vertices before loading CSV.
-- `GraphFactProduced` events with any `vertexRefs` route through the sync path regardless of element count.
-- Neptune CSV workflow input does not support `vertexRefs`; CSV rows must contain concrete Neptune IDs.
-
-After validation and before persistence, `verifyVertexRefs` batches a single Gremlin read against all declared refs:
-
-```gremlin
-g.V('hash1','hash2',...).project('id','label').by(id).by(label).toList()
-```
-
-Each returned `(id, label)` pair is compared against the declared ref. A hash that does not resolve to any vertex → `VertexNotFoundForRef`. A hash that resolves to a different label → `LabelMismatchForRef`. A malformed ref ID → `MalformedRefId`. All three surface to HTTP callers as `MissingVertexRef` (404) before any write.
-
-Normalisation pre-populates the internal ID map with verified refs. An edge pointing at a ref hash therefore hashes identically to an edge pointing at a full payload vertex with the same final hash. This preserves idempotency across mirror-vs-ref producer representations.
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §3.
 
 ### 3.6 Error catalogue → HTTP status
 
-The HTTP layer is the authoritative tag-to-status mapper. Each error type is a structured object with a discriminator (`type` / `_tag`), a `message`, and an optional `details` object whose contents are tag-specific (e.g. `endpoint`, `query`, `requestId`, `path`, `expected`, `received`, `issues[]`, etc.). Tags map to:
-
-| HTTP | Tag(s) |
-| ---- | ----- |
-| 400  | `BadRequest`, `GremlinSyntaxError`, `GremlinMutationNotAllowedError`, `GremlinFtsPolicyError`, `GraphSONValidationError`, `GraphSONPayloadValidationError`, `GraphSONIntegrityError`, `DerivedIndexServerManagedPropertyError`, `PersistBlobValidationError`, `GraphQlRequestError`, `GraphQlComplexityError` |
-| 404  | `VertexNotFoundError`, `GremlinAsyncRequestNotFoundError`, `MissingVertexRef` |
-| 500  | `GremlinExecutionError`, `GremlinAsyncJobSerializationError`, `GremlinAsyncResultSerializationError`, `GremlinAsyncJobConditionalConflictError`, `OpenSearchSyncStateError`, `PersistBlobHashCollisionError`, `GraphQlSchemaGenerationError`, `GraphQlResolutionMapError`, fallback `InternalServerError` |
-| 503  | `NeptuneConnectionError`, `NeptuneRetriableError`, `S3PayloadStoreError`, `SqsEnqueueError`, `PersistBlobStoreError`, `GremlinAsyncJobStoreError`, `GremlinAsyncResultStoreError`, `GremlinAsyncExecutionError`, `GremlinAsyncExecutionTimeoutError`, `GremlinAsyncCancelError`, `OpenSearchIndexUnavailable`, `OpenSearchIndexLagExceeded`, `OpenSearchSyncCheckpointMissing` |
-
-GraphQL transport errors above apply only to whole-request failures (malformed document, complexity rejection, schema/resolution-map load failure). Per-field data-source failures do **not** fail the HTTP request; they surface inside the GraphQL `errors` array with a `null` field value (§4.5).
-
-The router additionally **sanitises** GraphSON error payloads on the `/ingest` path (e.g. `GremlinExecutionError` is converted into a generic `Internal Server Error` to avoid leaking query text to callers).
+[`error-catalogue-and-responses.md`](./error-catalogue-and-responses.md) §3 and §4.
 
 ### 3.7 EventBridge `GraphFactProduced` event
 
-Products that want Persist to store graph facts through the tenant event bus publish a versioned EventBridge event instead of writing directly to Neptune. The event detail embeds the same GraphSON v3 vertex/edge objects accepted by §3.2, but omits the outer `tinker:graph` wrapper because the EventBridge envelope supplies the product event context.
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §3.
 
-```json
-{
-  "source": "shorturl",
-  "detail-type": "GraphFactProduced",
-  "detail": {
-    "schema_version": "1.0",
-    "graphson_format": "graphson-v3",
-    "fact_type": "short_url.visited",
-    "entity_types": ["web_visit", "debt"],
-    "idempotency_key": "shorturl:evt_123",
-    "graphson": {
-      "vertices": ["<g:Vertex GraphSON v3 object>"],
-      "vertexRefs": ["<g:VertexRef object — optional>"],
-      "edges": ["<g:Edge GraphSON v3 object>"]
-    }
-  }
-}
-```
+### 3.8 Full-text-search index model
 
-Contract rules:
-
-- `source` is the producing product namespace (`shorturl`, `connect`, `payments`, etc.) and must be non-empty.
-- `detail-type` must be exactly `GraphFactProduced`.
-- `schema_version` must be exactly `"1.0"` for this contract version.
-- `graphson_format` must be exactly `"graphson-v3"`.
-- `fact_type` is a namespaced event fact, e.g. `short_url.visited`; it is used for routing, logging, and downstream audit.
-- `entity_types` names the lexicon entity labels represented by the fact. Persist logs this metadata, but the labels inside the GraphSON payload remain authoritative and are validated against the lexicon.
-- `idempotency_key` is producer-stable for the logical fact. Replays of the same key and graph must be safe; deterministic graph hashing prevents duplicate vertices/edges, and the key is carried through logs and async payload metadata for audit.
-- `graphson.vertexRefs` is optional and follows the `g:VertexRef` contract in §3.5.1.
-- `graphson.vertices`, `graphson.vertexRefs`, and `graphson.edges` are transformed internally into the canonical `{ "@type": "tinker:graph", "@value": { ... } }` shape before validation and persistence.
-
-### 3.8 OpenSearch full-text-search index model
-
-OpenSearch is a derived read index for Neptune full-text search, not an authority for graph state. Persist follows Neptune's documented OpenSearch document model for Gremlin data:
-
-```json
-{
-  "entity_id": "<vertex-or-edge-id>",
-  "entity_type": ["<vertex-or-edge-label>"],
-  "document_type": "vertex",
-  "predicates": {
-    "property_name": [{ "value": "property value" }]
-  }
-}
-```
-
-Indexing rules:
-
-- Vertices and edges are both indexable documents unless a future lexicon contract explicitly excludes an owner type. For Gremlin FTS, `entity_type` stores labels and `document_type` is `vertex` or `edge`.
-- Lexicon-known scalar properties are indexed under `predicates.<property>.value`. `blob` properties are indexed as the persisted S3 URI string, never as raw blob text.
-- Server-managed `created_at`, hashed IDs, and lexicon-derived index properties may be indexed because callers can read them through Gremlin; callers still cannot set server-managed properties at ingest boundaries.
-- Non-string indexing is enabled for safe scalar types so Gremlin FTS can sort/filter using fields such as `predicates.amount.value` when the underlying OpenSearch mapping supports it. When sorting by a non-string field, queries must use the `.value` suffix required by Neptune FTS.
-- The OpenSearch index is eventually consistent with Neptune. Persist exposes the lag through metrics and may fail FTS queries with `OpenSearchIndexLagExceeded` when `SEARCH_FRESHNESS_MAX_LAG_SECONDS` is configured and the sync checkpoint is too far behind.
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) §4.
 
 ### 3.9 GraphQL schema generation and the resolution map
 
+[`graphql-read-surface.md`](./graphql-read-surface.md) §3 and §4.
+
 #### 3.9.1 Schema generation from the lexicon
 
-The GraphQL schema is generated deterministically from the canonical lexicon at load time — there is no hand-authored SDL for lexicon types. The same 300 s TTL / single-flight / fail-closed loading rules as §3.3 apply; a lexicon refresh regenerates the schema. Candidate lexicons are **not** accepted on the GraphQL surface.
-
-Generation rules:
-
-- Every lexicon vertex `type` becomes a GraphQL object type. The type name is the vertex label converted to PascalCase (`debt` → `Debt`, `phone_number` → `PhoneNumber`); field names keep the lexicon's snake_case verbatim so property vocabulary stays identical across Gremlin and GraphQL.
-- Every lexicon property maps by `type`: `string` → `String`, `integer` → `PersistInt64` (custom scalar, serialised as string when out of `Int` range), `number` → `Float`, `boolean` → `Boolean`, `array` → list of the mapped `items` type, `blob` → `String` carrying the persisted `s3://` URI (never original text, matching §3.2.1).
-- Properties with `enum` become GraphQL enum types named `<Type><Property>Enum` with lexicon values verbatim; values that are not valid GraphQL enum names fall back to `String` with the enum documented in the field description.
-- `format: date|date-time|time` map to the custom scalar `PersistDateTime` (ISO-8601 string). Element IDs are `ID!` carrying the deterministic content-hash ID from §3.4.
-- Lexicon-derived index keys (§3.3) appear as ordinary read fields on their owner type.
-- Every lexicon edge becomes a relationship field on both endpoint types: the `from` type gets a field named after the edge label returning the `to` type, and the `to` type gets the reverse field prefixed by convention (`rev_<label>`). Relationship fields returning lists use `first`/`after` pagination arguments bounded by `GRAPHQL_MAX_LIST_PAGE_SIZE`. Edge properties are exposed through a `<Label>Connection`/edge wrapper only when the lexicon edge declares properties; otherwise the field returns the target type directly.
-- Required lexicon properties are non-null **only** when their resolution source is `graph`; any field resolved from DynamoDB or Interprose is nullable regardless of lexicon `required`, because an external-source failure must degrade to `null` + error entry instead of destroying the parent selection (§4.5).
-- The root `Query` type exposes, per vertex type: `<type>(id: ID!)` single lookup and `<type>_by(...)` lookups for lexicon-indexed properties. No free-form traversal or filter DSL is generated; complex traversals remain Gremlin's job.
-- Generation is a pure function of `(lexicon document, resolution map)`. Two loads of the same inputs must yield byte-identical SDL; the SDL and a content hash are returned by `GET /persist/graphql/schema`.
+[`graphql-read-surface.md`](./graphql-read-surface.md) §3.
 
 #### 3.9.2 Resolution map (Persist-owned artifact)
 
-Field-to-source routing lives in a versioned JSON artifact owned by Persist — **not** in the lexicon (physical topology must not leak into the shared ontology) and **not** hardcoded in resolver code. The artifact is stored in a Persist-owned S3 location referenced by `GRAPHQL_RESOLUTION_MAP_URI`, loaded with the same TTL/fail-closed discipline as the lexicon, and validated against the current lexicon at load time.
-
-```json
-{
-  "schema_version": "1.0",
-  "defaults": { "source": "graph" },
-  "types": {
-    "debt": {
-      "fields": {
-        "current_balance": { "source": "graph" },
-        "servicing_notes": { "source": "dynamodb", "table_env": "GRAPHQL_DDB_TABLE_SERVICING", "key": { "pk": "debt#${id}", "sk": "servicing_notes" }, "attribute": "notes" },
-        "live_payment_status": { "source": "interprose", "operation": "getAccountStatus", "key_field": "interprose_account_id", "response_path": "status" }
-      }
-    }
-  }
-}
-```
-
-Contract rules:
-
-- `source ∈ graph|dynamodb|interprose`. Unlisted types/fields inherit `defaults.source` (normally `graph`).
-- Every mapped field must exist in the lexicon for that type; unknown types, unknown fields, malformed key templates, and `interprose` entries whose `key_field` is not a lexicon property of the owner type are load-time validation errors (`GraphQlResolutionMapError`, fail closed).
-- `dynamodb` entries name their table through an env-var indirection (`table_env`) so IAM grants and CDK wiring stay explicit per table; key templates may interpolate only the element `id` and lexicon properties already resolved from the graph.
-- `interprose` entries name a whitelisted operation from the Persist Interprose client (§4.5); arbitrary URLs or verbs in the map are rejected.
-- Relationship fields (edges) always resolve from the graph. Only scalar/leaf fields may be routed to DynamoDB or Interprose.
-- The map carries `schema_version` and is content-hashed; the active hash is exposed via `GET /persist/graphql/schema` and logged with every GraphQL request for auditability.
-- Changing a field's source is a caller-invisible operation by design, but it changes freshness semantics — treat map promotion like a lexicon promotion (reviewed artifact, not ad-hoc edits).
+[`graphql-read-surface.md`](./graphql-read-surface.md) §4.
 
 ---
 
@@ -595,126 +171,27 @@ Contract rules:
 
 ### 4.1 `POST /persist/gremlin`
 
-- Schema: `{ gremlin: string (1..50,000) }`.
-- Read-only: a query policy rejects mutation steps and transaction control including `addV`, `addE`, `property`, `drop`, `mergeV`, `mergeE`, `sideEffect(...)`, `tx`, `commit`, and `rollback` (case-insensitive, word-boundary aware). Returns `GremlinMutationNotAllowedError` (400).
-- Neptune FTS exception: `withSideEffect(...)` is allowed only for these keys:
-  - `Neptune#fts.endpoint` — injected by Persist from `OPENSEARCH_COLLECTION_ENDPOINT` when absent. If supplied by the caller, it must exactly match the configured endpoint and `GREMLIN_FTS_ALLOW_CALLER_ENDPOINT` must be true; production keeps this false.
-  - `Neptune#fts.queryType` — value must be in `GREMLIN_FTS_ALLOWED_QUERY_TYPES`.
-  - `Neptune#fts.maxResults` — integer `1..GREMLIN_FTS_MAX_RESULTS`.
-  - `Neptune#fts.batchSize` — integer `1..GREMLIN_FTS_MAX_RESULTS`.
-  - `Neptune#fts.minScore` — non-negative number.
-  - `Neptune#fts.sortBy` — string value; lexicon-known property names are preferred, and non-string sort fields must use Neptune's `.value` suffix.
-  - `Neptune#fts.sortOrder` — `ASC` or `DESC` (case-insensitive).
-  - `Neptune#noReordering` — optional boolean query hint for rare cases where callers need Neptune to preserve traversal order around FTS.
-- Any other `withSideEffect` key, any bare `sideEffect(...)` traversal step, or any caller-supplied FTS endpoint that fails validation returns `GremlinFtsPolicyError` (400). The policy remains required even though `/persist/gremlin` uses the reader endpoint: AWS reader endpoints can serve from the primary in single-instance clusters and briefly during failover, so reader routing is not the only mutation guard.
-- Neptune FTS queries use the configured OpenSearch index through Neptune's Gremlin syntax, for example:
-  ```gremlin
-  g.withSideEffect("Neptune#fts.queryType", "match")
-   .V()
-   .has("company_name", "Neptune#fts acme")
-   .limit(25)
-  ```
-  Persist injects `Neptune#fts.endpoint` before execution when the query contains `Neptune#fts` predicates and no endpoint side effect.
-- Executes via the **reader** Gremlin client using `client.submit(query)`; results are normalised through a `toJsonSafe` pass that:
-  - Stringifies `bigint`,
-  - Converts `Date` → epoch ms,
-  - Converts `Map`/`Set` → plain object/array (Map keys flattened to string via `mapKeyToString` honoring `{ key }` / `{ name }` cases).
-- Response: `{ results: unknown[], durationMs: number, requestId?: string, fts?: { used: boolean, indexName?: string, syncLagSeconds?: number } }`. Errors map via the connection / retry / syntax classifier (see §7); OpenSearch unavailability or excessive freshness lag maps to §3.6.
+[`gremlin-sync-query.md`](./gremlin-sync-query.md). Reader selection: [`neptune-reader-topology.md`](./neptune-reader-topology.md). Full-text hints: [`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) §4.6. Query plans: [`gremlin-explain.md`](./gremlin-explain.md).
 
 ### 4.2 `POST /persist/ingest`
 
-- Body: `GraphSONIngestRequest` (see §3.2).
-- Pipeline:
-  1. **Validate payload** — schema + integrity + lexicon validation (§3.5).
-  2. **Verify vertexRefs** — if the payload declares refs, one batched Gremlin read confirms each referenced hash resolves to a vertex at the declared label. Failures surface as `MissingVertexRef` (404). No-op when the payload carries no refs.
-  3. **Materialise blobs** — for every lexicon `blob` property, write the original `persist:Blob` text to `PersistBlobBucket` using §3.4.1, replace the value with the canonical S3 URI, and record blob counters. This is the only S3 side effect before the graph transaction; orphaned content-addressed blobs after a later transaction failure are acceptable and must be treated as immutable cache entries.
-  4. **Normalise for persist** — strip meta props, hash IDs from the blob-resolved property graph, build a response copy, then **stamp** `created_at` (`g:Timestamp`, ingest-time epoch ms) on every payload vertex (`label="created_at"`, deterministic VP id `<vertexId>#created_at`) and edge. Refs are not upserted; they only populate the endpoint ID map for edge hashing and writes.
-  5. **Upsert vertices/edges** inside a single `g.tx().begin()` transaction:
-     - `upsertVertex(g, hash, label, props)` = `g.V().has(id, hash).fold().coalesce(unfold(), addV(label).property(id, hash).property(...))`.
-     - `upsertEdge(g, hash, outV, label, inV, props)` = `g.E().has(id, hash).fold().coalesce(unfold(), V(out).addE(label).to(V(in)).property(id, hash)...)`.
-     - Properties unwrap GraphSON typed values back to host-language primitives (with temporal canonicalisation, see §7.1).
-- All-or-nothing semantics: the wrapper commits on success, rolls back on any failure or interruption (when `tx.isOpen`).
-- Response: `{ vertices: { upserted: GVertex[] }, edges: { upserted: GEdge[] }, durationMs: number }`. Each upserted entity carries the hashed ID.
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §6.
 
 ### 4.3 `POST /persist/validate`
 
-- Accepts either the bare `tinker:graph` body **or** a wrapper `{ graph, candidate_lexicon_s3_uri? }`. The router's `parseValidationRequest` returns `400` (`BadRequest`) for malformed wrappers.
-- Runs the **same** validation pipeline as `/ingest` through lexicon/blob validation, but does not materialise blobs, write S3 objects, compute final hash IDs, or persist to Neptune.
-- If the payload contains `vertexRefs`, also runs `verifyVertexRefs`; the route remains side-effect-free but confirms that referenced endpoint vertices exist at the declared labels.
-- Response: `{ valid: true }` on success; otherwise the appropriate validation error.
+[`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §7.
 
 ### 4.4 Service composition / dependency wiring
 
-Each router scopes its own dependency container so that a config error in an unrelated router cannot break this one. The three composition groups are:
-
-- **GraphSON router** depends on: Gremlin client + transactions, Lexicon loader, GraphSON semantic validator, GraphSON validator, vertex-ref verifier, Persist Blob service, GraphSON sync ingest service, GraphSON async ingest service.
-- **Gremlin router** depends on: Gremlin client + transactions, GraphSON service (for shared utilities), Gremlin FTS policy/config, and optional OpenSearch sync-state freshness reader.
-- **Async Gremlin router** depends on: Submit, Status, and Cancel services (each backed by the DDB job store and, for cancel, the Neptune Data API client).
-- **GraphQL handler** (separate Lambda, §4.5) depends on: Lexicon loader, resolution-map loader, schema generator, Gremlin reader client, DynamoDB resolver client, and Interprose resolver client.
-
-The container is constructed **once per router**, not per request, so the lexicon TTL cache survives across invocations within the same Lambda warm container.
+Conventions: [`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §2. Per router: [`graphson-ingest-contract.md`](./graphson-ingest-contract.md) §8, [`gremlin-sync-query.md`](./gremlin-sync-query.md) §6, [`async-gremlin.md`](./async-gremlin.md) §2, [`graphql-read-surface.md`](./graphql-read-surface.md) §5.
 
 ### 4.5 `POST /persist/graphql` and `GET /persist/graphql/schema`
 
-- Request schema: `{ query: string (1..100,000), variables?: object, operationName?: string }`. Mutations and subscriptions in the document are rejected with `GraphQlRequestError` (400) before execution — the generated schema contains no mutation/subscription root, and the executor additionally refuses non-`query` operations defensively.
-- **Runtime (normative)**: the GraphQL executor MUST run inside the `PersistGraphQlHandler` Lambda behind the existing IAM-authorised HTTP API, using GraphQL Yoga on `graphql-js`. Do **not** use AWS AppSync, a standalone GraphQL server (ECS/Fargate/ALB), or API-Gateway-level GraphQL features: resolvers must reach Neptune inside the VPC, reuse the SigV4 auth and envelope conventions, share the Gremlin connection state managers and retry classifier with the rest of Persist, and keep IAM least-privilege on a single role. A managed resolver layer would degenerate into Lambda resolvers while losing those invariants.
-- **Static guards before execution**: parse → depth check (`GRAPHQL_MAX_QUERY_DEPTH`) → complexity estimate (`GRAPHQL_MAX_QUERY_COMPLEXITY`, list fields multiplied by their bounded `first` argument). Violations return `GraphQlComplexityError` (400) without touching any data source.
-- **Execution model**:
-  - Graph-sourced fields resolve through the Neptune **reader** with the same read-only policy, retry classification, and connection state manager as `/persist/gremlin`. The planner groups graph fields per element so one element resolves its graph properties in one traversal, not one traversal per field.
-  - DynamoDB-sourced fields resolve through `BatchGetItem`/`Query` per the resolution-map key template.
-  - Interprose-sourced fields resolve through the Persist Interprose client: whitelisted operations only, credentials from `INTERPROSE_CREDENTIALS_SECRET_ARN`, concurrency capped by `INTERPROSE_MAX_CONCURRENT_REQUESTS`, and an in-process TTL response cache (`INTERPROSE_CACHE_TTL_SECONDS`).
-  - **All three source clients batch per request** (DataLoader pattern): resolver keys collected within one execution tick are coalesced into batched source calls (`INTERPROSE_MAX_BATCH_SIZE`, `GREMLIN_BATCH_EXISTS_CHUNK_SIZE`-style chunking for graph reads, DynamoDB 100-key batches). N+1 fan-out per list item is a defect, not a tuning knob.
-  - Every source batch call is wrapped in `GRAPHQL_FIELD_TIMEOUT_MS`.
-- **Partial-failure semantics**: a failed source batch nulls only the affected fields and appends GraphQL `errors` entries with `extensions: { code, source: "graph"|"dynamodb"|"interprose", retriable: boolean }`. Error messages never include Interprose URLs, credentials, raw vendor responses, or Gremlin query text. Interprose being down must not fail graph-backed fields, and vice versa.
-- **Freshness semantics**: graph fields reflect committed Neptune state (derived indexes are eventually consistent per §5.6), Interprose fields are live vendor reads subject to the TTL cache, DynamoDB fields reflect the owning table's write discipline. The response `extensions.sources` object reports, per source used: `{ used: true, cacheHit?: boolean, durationMs: number }` so callers can observe mixed freshness without learning the field-level mapping.
-- **Response**: standard GraphQL over HTTP — `{ data, errors?, extensions }` with HTTP 200 for any executed document. The §3.1 envelope applies only to transport-level rejections (400/500/503 tags in §3.6).
-- `GET /persist/graphql/schema` returns `{ sdl: string, sdlHash: string, lexiconUri: string, resolutionMapHash: string, generatedAt: string }`. This is the introspection-of-record; runtime introspection queries are also allowed since the surface is IAM-authorised.
-- **Observability**: metrics `graphql_requests`, `graphql_request_duration_ms`, `graphql_field_resolutions` / `graphql_field_failures` dimensioned by `source` (bounded: `graph|dynamodb|interprose`), `graphql_complexity_rejections`, `interprose_resolver_calls`, `interprose_resolver_cache_hits`, `interprose_resolver_throttles`. Structured logs carry `requestId`, `operationName`, `sdlHash`, `resolutionMapHash`, per-source batch counts, and durations — never resolved values.
+[`graphql-read-surface.md`](./graphql-read-surface.md) §2, §5 to §9. PII gate: [`graphql-pii-access-policy.md`](./graphql-pii-access-policy.md).
 
-#### 4.5.1 Resolver architecture (normative)
+#### 4.5.1 Resolver architecture
 
-The resolver layer follows a **ports-and-adapters** design so that adding a data source never touches the schema generator, the executor, or existing adapters. Field resolution behaviour is data-driven from the resolution map — there is no hand-written resolver function per type or per field.
-
-**The `SourceResolver` port.** Every data source is one adapter implementing a single interface:
-
-```typescript
-interface SourceResolver<TEntry extends ResolutionMapEntry = ResolutionMapEntry> {
-  /** Discriminator matching resolution-map `source` values. */
-  readonly source: string;
-  /** Load-time validation of one map entry against the lexicon. Returns tagged issues; any issue fails the map load closed. */
-  validateEntry(entry: TEntry, ownerType: LexiconType, lexicon: Lexicon): ResolutionMapIssue[];
-  /** Batched fetch. One call per (entry, execution level), never per parent item. Keys are parent element IDs plus the graph-resolved lexicon properties the entry's key template references. */
-  batchLoad(entry: TEntry, keys: readonly ResolverKey[], ctx: GraphQLRequestContext): Promise<ReadonlyArray<ResolverResult>>;
-}
-```
-
-The signature above is normative in shape, not in typing style: express the async/error channel in the codebase's runtime (e.g. `Effect<ReadonlyArray<ResolverResult>, BatchError, R>` instead of a rejecting `Promise`), as long as the three members and their semantics are preserved.
-
-- `ResolverResult` is `{ ok: true, value }` or `{ ok: false, error: TaggedError }` per key — an adapter never throws for per-key failures, so one bad key cannot poison a batch. Batch-level failures (timeout, connection) fail the batch's effect and null every field served by that batch.
-- Adapters own their transport concerns internally: the graph adapter wraps the shared Gremlin reader state manager and retry classifier (§7.2/§7.3); the DynamoDB adapter owns `BatchGetItem` chunking to 100 keys; the Interprose adapter owns the operation whitelist, credential fetch, `INTERPROSE_MAX_CONCURRENT_REQUESTS` semaphore, `INTERPROSE_MAX_BATCH_SIZE` coalescing, and the TTL response cache. The executor knows none of this.
-- Each adapter follows §7.7: a typed interface, a construction path that takes clients/clocks/config as injected dependencies, and a live binding — expressed in the codebase's established runtime/DI style (e.g. Effect services and layers). Tests pass in-memory fakes through the same interface.
-
-**The registry.** `SourceResolverRegistry` is a map from `source` discriminator to adapter, assembled once in the composition module. Resolution-map loading validates that every `source` value in the map has a registered adapter and calls each adapter's `validateEntry` for its entries. **Adding a new data source is exactly three changes**: implement the port, register the adapter, and extend the resolution-map schema's `source` enum plus entry shape. No changes to executor, planner, schema generator, or other adapters — this is the open–closed boundary and reviewers must reject designs that special-case a source inside the executor.
-
-**The generic field resolver.** The schema generator attaches one generic resolver factory to every field, closed over that field's resolution-map entry:
-
-- `graph`-sourced scalar fields resolve from the parent object: the planner fetches all graph-sourced fields of an element in **one** traversal per (type, execution level) through the graph adapter, and the field resolver is a property read on that prefetched record.
-- Externally-sourced fields resolve through a per-request DataLoader keyed by `(typeName, fieldName)`, which delegates to `registry.get(entry.source).batchLoad(...)`.
-- Relationship fields resolve through the graph adapter's traversal loaders with the pagination bounds from §3.9.1.
-
-**Per-request context.** `GraphQLRequestContext` is constructed per request and carries the DataLoader instances (batching/memoisation scope is exactly one request — no cross-request caching except the Interprose adapter's internal TTL cache), the request deadline derived from `GRAPHQL_FIELD_TIMEOUT_MS`, `requestId`, `sdlHash`, `resolutionMapHash`, and the metrics/log emitters. Nothing resolver-related lives in shared mutable state except the warm-container schema and map caches.
-
-**Component boundaries (not file layout).** The PRD constrains interfaces and dependency directions, not modules or filenames — express these in whatever runtime/DI style the codebase already uses (e.g. Effect services/layers), per §7.7. The required components and their allowed dependencies are:
-
-- **Schema generator** — a pure function `(lexicon, resolutionMap) → { schema, sdl, sdlHash }`. No I/O, no clients, no clock. Everything else depends on its output, never the reverse.
-- **Resolution-map service** — owns S3 load, TTL cache, and fail-closed validation (delegating per-entry checks to each adapter's `validateEntry`). Depends only on the S3 client, the lexicon service, and the registry.
-- **Source-resolver registry** — the only component that knows the set of adapters. The executor and schema generator depend on the registry interface, never on a concrete adapter.
-- **Source adapters** (`graph`, `dynamodb`, `interprose`, and future ones) — implement the `SourceResolver` port; depend on their own transport clients and config, never on the executor, the registry, or each other.
-- **Query guards** — pure pre-execution depth/complexity checks over the parsed document; no data-source dependencies.
-- **Context factory** — builds `GraphQLRequestContext` per request; the only place DataLoaders are constructed.
-- **Handler/executor** — wires Yoga to the generated schema, guards, and context factory. It contains no source-specific logic; if the executor needs to know which source a field uses, the design is wrong.
-
-**Adapter conformance tests.** A single shared contract suite runs against every registered adapter through the `SourceResolver` port: batch-call-count assertions (one call per entry per level), per-key error isolation, batch-level failure propagation, timeout mapping to tagged errors, and `validateEntry` rejection of malformed entries. A new adapter must pass this suite before registration; adapter-specific behaviour (whitelist, cache, chunking) gets its own tests on top.
+As shipped: [`graphql-read-surface.md`](./graphql-read-surface.md) §5 and §6. Target state and gap list: [`graphql-read-surface.md`](./graphql-read-surface.md) §11.
 
 ---
 
@@ -722,337 +199,83 @@ The signature above is normative in shape, not in typing style: express the asyn
 
 ### 5.1 GraphSON async ingest (`POST /persist/ingest-async`)
 
-- Accepts the same payload shape as `/ingest`, optionally with header `x-task-token` to forward a Step Functions task token.
-- Rejects non-empty `vertexRefs` with `GraphSONIntegrityError`; refs require the synchronous verifier in §3.5.1.
-- Pipeline:
-  1. Validate payload (full validation, including integrity + lexicon — fail fast before any side effect).
-  2. Materialise blobs using the same content-addressed S3 algorithm as sync ingest, replacing every blob value with its canonical URI before hashing.
-  3. Capture an ingest-time epoch ms via an injectable clock, normalise temporal properties, stamp `created_at`.
-  4. Build internal payload `{ schemaVersion: "2", requestId, graph: <persist-shape> }`. `requestId` is a UUID v4.
-  5. PUT to S3 at `s3://<INGEST_ASYNC_PAYLOAD_BUCKET>/ingest-async/YYYY/MM/DD/<requestId>.json` (UTC).
-  6. Send `{ schemaVersion: "2", requestId, s3_uri, task_token? }` to `IngestAsyncQueue`.
-- Response (`202`): `{ requestId, s3Uri, queueMessageId, queuedAt }`.
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md).
 
 #### 5.1.1 Stage-1 — `PersistAsyncBulkWorker`
 
-- Triggered by `IngestAsyncQueue` (batch up to 400 messages).
-- For each record (concurrency 5):
-  - Decode queue message → fetch payload from S3 → decode `AsyncPayloadDocument`.
-  - On decode/fetch error: if `ApproximateReceiveCount < INGEST_ASYNC_MAX_RECEIVE_COUNT`, send back as `batchItemFailures`; otherwise (terminal attempt) send `sendTaskFailure("AsyncIngestPayloadFailure")` if a `task_token` was provided.
-- After preprocessing the batch:
-  - Compute net-new vertex/edge counts via the dedup helper (single round-trip per batch hitting the **reader** for existing IDs).
-  - Build a Neptune CSV with widened scalar types (`Bool|Byte|Short|Int|Long|Float|Double|String|Date|Datetime`), header `~id,~label[,prop:Type[(single)]]…` for vertices and `~id,~from,~to,~label[,prop:Type]…` for edges. The vertex header for `created_at` is forced to `(single)` cardinality.
-  - PUT vertices/edges CSV to `s3://<NEPTUNE_BULK_BUCKET>/bulk-load/YYYY/MM/DD/<batchId>/{vertices,edges}.csv` and start the Neptune bulk load (`StartLoaderJob`, see §5.5).
-  - Wait for terminal status. On `LOAD_FAILED` with **only** `SINGLE_CARDINALITY_VIOLATION` for `created_at` and zero `parsingErrors`/`datatypeMismatchErrors`, treat as **effective success** (counted in `toleratedCreatedAtConflictCount`, normalised status `LOAD_COMPLETED_WITH_TOLERATED_CREATED_AT_CONFLICTS`).
-  - Per-token bookkeeping: aggregate successful `requestIds` per `task_token` and call `sendTaskSuccess` once per token; on permanent load failure, call `sendTaskFailure` (one per terminal record). Retryable records re-emit as `batchItemFailures`.
-  - Publish CloudWatch metrics `vertices_ingested` / `edges_ingested` with dimension `ingest_method=async_ingest` for HTTP-originated async payloads or `eventbridge_graph_fact` for EventBridge-originated payloads.
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §4.
 
 #### 5.1.2 Stage-2 — `PersistAsyncBulkAggregateWorker`
 
-This worker is **only** consumed by the workflow (§5.4); it accepts both legacy `schemaVersion=1` (graphson) and `schemaVersion=2` (csv-workflow) filtered-batch messages.
-
-- Group records by message kind. For each group:
-  - **Workflow (`schemaVersion=2`)**: fetch each `source_prefix`'s phase CSV from S3 (`vertices.csv` or `edges.csv`), merge with widened scalar types, upload merged file under `bulk-load-aggregate/YYYY/MM/DD/<batchId>-<executionId>-<phase>/<phase>.csv`, then start a single bulk load (`edgeOnlyLoad: phase==='edges'`). On success, `recordIngestCounts({method:"async_csv_upload", phase, vertices/edges})` and `WorkflowSummaryService.writeSummary(...)` per request, then `sendTaskSuccess` per task token. Cardinality of created_at conflicts is preserved.
-  - **GraphSON (`schemaVersion=1`)**: same pattern but loads vertices first then edges. If both merged sets are empty, send a `skipped: true` callback to all tokens.
-- Failure handling: classify retryable vs terminal records by receive count; emit `batchItemFailures` for retryable, send task-failure callbacks for terminal.
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §4.
 
 #### 5.1.3 EventBridge fact ingest
 
-- `PersistGraphFactHandler` receives `GraphFactProduced` events from EventBridge and validates the envelope/detail contract in §3.7 before any side effect.
-- The handler wraps `detail.graphson` into the canonical GraphSON ingest body, then runs the same schema, integrity, and lexicon validation used by the HTTP ingest paths.
-- After validation it counts `vertices + edges` and routes with `routeForCounts`:
-  - **Sync path** (`count <= SYNC_INGEST_MAX_ELEMENTS`, default 50): verify any `vertexRefs`, materialise blobs, hash IDs, and upsert in a single Neptune writer transaction through the same `persistSync` path as `POST /persist/ingest`.
-  - **Async path** (`count > SYNC_INGEST_MAX_ELEMENTS` and no refs): materialise blobs, store the resolved payload in `IngestAsyncPayloadBucket`, and send a `schemaVersion="2"` message to `IngestAsyncQueue`, sharing the Stage-1/Stage-2 bulk ingest machinery with HTTP async ingest.
-- A payload carrying `vertexRefs` always takes the sync path regardless of count. If the sync path is unavailable, the handler must fail closed instead of silently enqueueing a ref-bearing payload.
-- The async payload metadata includes the EventBridge `id`, `source`, `fact_type`, `entity_types`, and `idempotency_key` so logs, S3 payloads, queue messages, and CloudWatch metrics can be correlated back to the producing product event.
-- Blob materialisation happens before the event payload is written to `IngestAsyncPayloadBucket`; metadata may include blob counts and byte totals, but raw blob text must never be logged or copied outside the blob bucket and the async payload graph.
-- Handler failures are surfaced to EventBridge. EventBridge retries according to the rule target policy and then delivers exhausted events to `GraphFactEventDlq`. Deterministic `MissingVertexRef` failures are acknowledged and skipped because retries will not self-heal unless a new upstream fact creates the referenced vertex; these are counted as `graph_facts_skipped_missing_ref`.
-- Metrics: each accepted fact increments `graph_facts_accepted` with `ingest_method=eventbridge_graph_fact_sync` for the sync path or `eventbridge_graph_fact` for the async path. The sync path publishes `vertices_ingested` / `edges_ingested` with `ingest_method=eventbridge_graph_fact_sync`; the async path publishes the same counters through Stage-1 with `ingest_method=eventbridge_graph_fact`.
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §4.
 
 ### 5.2 Async Gremlin (`POST /persist/gremlin-async`, `GET …`, `DELETE …`)
 
-#### Submit
-
-- Body: `{ gremlin: string }` (1..50,000 trim-non-empty).
-- Validate, hash query (sha256), generate `requestId` (UUID v4), `queuedAt` (ISO 8601 UTC).
-- Persist DDB row `status: "QUEUED"`, `attemptCount: 0`, `cancelRequested: false`, `ttlEpochSeconds = queuedAt + 7d` (configurable). Use `attribute_not_exists(requestId)` on PutItem (idempotent).
-- Send `{ schemaVersion: "1", requestId, queuedAt }` to `GremlinAsyncQueue`. On `SqsEnqueueError`: write `FAILED` terminal state (best-effort; logged on persistence failure) so the job never sticks in `QUEUED`, then surface `503` to caller.
-- Response (`202`): `{ requestId, status: "QUEUED", queuedAt }`.
-
-#### Status
-
-- Lookup by `requestId` (consistent read). Response shape is **metadata only** — never inline the Neptune result body:
-  ```
-  { requestId, status, queuedAt, startedAt?, finishedAt?, durationMs?, resultS3Uri?, error?, neptuneQueryId? }
-  ```
-  `durationMs` is computed from started/finished if both are present and well-formed.
-
-#### Cancel (idempotent)
-
-- `QUEUED` → `compareAndSet(QUEUED → CANCELLED)` writing `cancelRequested=true`, `canceledAt`, `finishedAt`. Returns `{ status: "CANCELLED", canceledAt }`.
-- `RUNNING` + known `neptuneQueryId` → call Neptune Data API `CancelGremlinQuery`, then write terminal `CANCELLED`.
-- `RUNNING` without `neptuneQueryId` → persist `cancelRequested=true` only, return `{ status: "RUNNING" }`. The next Fargate poll/finalisation respects this intent and writes a terminal `CANCELLED`.
-- Already terminal `CANCELLED` → echo back idempotently.
-- Conditional conflicts (someone else moved the row) trigger a re-read and the resolved state is returned.
-
-#### Execution path
-
-- **EventBridge Pipe** delivers each SQS record as a single-element array to the **GremlinAsyncStateMachine**:
-  1. `UnwrapSqsRecord` → take `$[0]`.
-  2. `ValidateAndSetRunning` (`GremlinAsyncValidate` Lambda):
-     - Parse `body` (a JSON string) and validate it against the `GremlinAsyncQueueMessage` contract.
-     - Read job state. If missing or `status != QUEUED`, return `{ action: "SKIP" }`. If `cancelRequested` and currently `QUEUED`, write terminal `CANCELLED` first, then `SKIP`.
-     - Otherwise `compareAndSet(QUEUED → RUNNING)` setting `startedAt`, incremented `attemptCount`, clearing `cancelRequested`. Return `{ action: "EXECUTE", requestId, gremlinQuery, queuedAt }`.
-  3. `Choice`: `SKIP` → `Succeed`. `EXECUTE` → `EcsRunTask` with `WAIT_FOR_TASK_TOKEN` and a 65-min heartbeat.
-- **Fargate worker** (`gremlin-async-fargate-entrypoint.ts`):
-  - Reads `TASK_TOKEN` and the `QUEUE_MESSAGE` env vars, decodes the message.
-  - Re-reads job state; refuses anything but `RUNNING`. If `cancelRequested`, writes terminal `CANCELLED`, sends task-failure with reason `CANCELLED`.
-  - Calls Neptune Data API `ExecuteGremlinQuery({ gremlinQuery })` with a 14-min request timeout (Lambda) / 1-h timeout (Fargate). Failures map to `GremlinAsyncExecutionError` or `GremlinAsyncExecutionTimeoutError` and become DDB terminal `FAILED`/`TIMEOUT`.
-  - On success: re-read job to honour late `cancelRequested`. If still running, write the result document to S3 (`gremlin-async/results/YYYY/MM/DD/<requestId>.json`) including a metadata snapshot, then `compareAndSet(RUNNING → SUCCEEDED)` with `resultS3Uri`/`resultSizeBytes`/`neptuneQueryId`. Send `SendTaskSuccess`. If a write fails after Neptune already executed, fall back to terminal `FAILED` with the original `neptuneQueryId` preserved.
-  - Step Functions catch (`HandleFailure` Lambda) writes a terminal failure if any unexpected error escapes the container.
+[`async-gremlin.md`](./async-gremlin.md) §3, §5, §6.
 
 ### 5.3 Step Functions: GremlinAsyncStateMachine
 
-- Type: STANDARD, total timeout 7200 s, X-Ray tracing enabled.
-- Wait-for-task-token heartbeat: 3900 s.
+[`async-gremlin.md`](./async-gremlin.md) §4.
 
 ### 5.4 Step Functions: PersistNeptuneCsvWorkflow
 
-A STANDARD state machine that ingests Neptune-shaped CSVs from S3:
-
-```
-PrepareWorkflowInput            (Lambda: workflow-start)
-  → PredictWorkflowCost          (Lambda: workflow-cost-predictor)
-  → IsWorkflowCostApproved (Choice)
-        ├── REJECTED   → Fail "WorkflowCostCeilingExceeded"
-        └── APPROVED   → ShouldRunPersistSparkRehash (Choice)
-                              ├── glue.shouldRun=true
-                              │     → ValidateWorkflowCsvObjects (Distributed Map over input prefix)
-                              │     → RunPersistSparkRehash (Glue job, RUN_JOB)
-                              │     → ProcessVertices (Distributed Map)
-                              │     → ProcessEdges    (Distributed Map)
-                              └── glue.shouldRun=false → ProcessVertices → ProcessEdges
-```
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md).
 
 #### 5.4.1 Inputs (accepted shapes)
 
-```jsonc
-// Preferred — single shared prefix, runs the persist-spark Glue rehash job
-{ "s3_uri": "s3://bucket/prefix", "costCeilingUsd": 10, "maxConcurrency": 2,
-  "candidate_lexicon_s3_uri": "s3://lexicon-bucket/ovid-agent-changes/<session>/lexicon.json" }
-
-// Backwards-compatible alias for the same shape
-{ "input_prefix_s3_uri": "s3://bucket/prefix", ... }
-
-// Legacy — sibling /vertices/ and /edges/ prefixes; skips Glue
-{ "vertices_s3_uri": "s3://bucket/root/vertices/", "edges_s3_uri": "s3://bucket/root/edges/", ... }
-```
-
-`PrepareWorkflowInput` emits a normalised `NeptuneCsvWorkflowPreparedInput`:
-
-```jsonc
-{
-  "schemaVersion": "1",
-  "executionId":   "<arn>",
-  "candidateLexiconS3Uri": "...",  // optional
-  "maxConcurrency": 60,            // default; honours integer input
-  "cost": { "costCeilingUsd": 10 },
-  "glue": { "shouldRun": true, "inputPrefixS3Uri", "inputBucket", "inputPrefix", "outputPrefixS3Uri" },
-  // OR { "shouldRun": false }
-  "phases": {
-    "vertices": { "bucket", "prefix": "…/vertices/", "validationMode": "skip" | "required" },
-    "edges":    { "bucket", "prefix": "…/edges/",    "validationMode": "skip" | "required" }
-  }
-}
-```
-
-When Glue runs, the output Spark prefix is computed from `PERSIST_SPARK_OUTPUT_BUCKET` (the workflow's bulk-load bucket) + `PERSIST_SPARK_OUTPUT_PREFIX=workflow-rehash` + a sanitised executionId (legal chars `[A-Za-z0-9._-]+`).
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §3.
 
 #### 5.4.2 Cost gate
 
-The cost predictor calls `ListObjectsV2` (paginated, `WORKFLOW_COST_PREDICTOR_REQUEST_TIMEOUT_MS` per request) on either the Glue input prefix or both legacy phase prefixes. Estimated USD = `totalBytes/GiB * costPerGbUsd + totalObjects/1000 * costPer1000ObjectsUsd` (rounded to 4 decimals). Status is `APPROVED` if `<= costCeilingUsd`, otherwise `REJECTED` and the workflow `Fail`s with `error: "WorkflowCostCeilingExceeded"`.
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §4.
 
 #### 5.4.3 Validation (Distributed Map over Glue input prefix)
 
-Only when `glue.shouldRun=true`. Each item:
-
-- Skip silently for non-CSV objects (e.g. `_metadata.json` from Spark).
-- Infer phase from the source key (`/vertices/` or `/edges/`).
-- Stream the CSV through a streaming CSV parser; fail with `WorkflowInputValidationError` if there is no header row.
-- Run lexicon validation per row. Header validates: required structural cols (`~id,~label[,~from,~to]`), unknown property columns, duplicate property columns, invalid `propertyKey:Type[(single|set)]` headers, server-managed keys are excluded. `propertyKey:Blob` is accepted only when the lexicon property type is `blob`; the cell value is original text and must be materialised to a blob URI before any rehash or loader output. Per-row validation: missing `~label`, unknown row label, type/enum/format mismatches, required-property gaps, multi-value cells (`val1;val2` with `\;` escape) split correctly with cardinality checks.
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §4.
 
 #### 5.4.4 Rehash (Glue)
 
-A Step Functions `GlueStartJobRun` task with `RUN_JOB` integration invokes the rehash Glue job with arguments `--input_prefix` and `--output_prefix`. The job name is sourced from SSM `/persist-spark/glue/neptune-csv-rehash/job-name`. IAM uses the Step Functions optimised wildcard policy (`glue:StartJobRun`/`GetJobRun`/`GetJobRuns`/`BatchStopJobRun` on `*` per AWS docs).
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §4.
 
 #### 5.4.5 Phase Distributed Maps (vertices first, then edges)
 
-Each phase map iterates `s3:ListObjectsV2` over the phase prefix using a custom item reader that supports a JSON-path-resolved bucket name and a `Prefix.$` projection (so the prefix can come from the previous step's output). Item selector emits:
-
-```jsonc
-{ "schemaVersion": "1", "executionId", "phase", "sourceBucket", "sourceKey",
-  "validationMode", "objectSize", "itemIndex", "candidateLexiconS3Uri" }
-```
-
-`maxConcurrency` is `$.maxConcurrency` (the prepared input value).
-
-For each item:
-
-1. **Route** (`PersistWorkflowItemRoute` Lambda): `headObject` → choose `processingMode = "direct"` if `contentLength > WORKFLOW_DIRECT_LOAD_THRESHOLD_BYTES` (16 MiB) else `"aggregate"`, and emit `{ ...input, contentLength, processingMode }`.
-2. **Aggregate path** (`processingMode === "aggregate"`):
-   - Step Functions invokes `PersistWorkflowItemProcessor` with **`WAIT_FOR_TASK_TOKEN`**. The Lambda dedups the CSV (see §5.4.6), uploads the filtered CSV under `bulk-load/...`, builds a `schemaVersion=2` filtered-batch message and sends it to `FilteredBatchQueue`. The aggregate worker picks it up, merges across messages, runs the bulk load, writes the workflow summary, and **calls `SendTaskSuccess` with the `taskToken`**. Step Functions resumes only when the load completes.
-3. **Direct path** (`processingMode === "direct"`):
-   - Step Functions invokes `PersistWorkflowItemProcessor` synchronously (no task token). The Lambda dedups, uploads, and **starts** the bulk load for that single object (`startLoad(sourcePrefix, { edgeOnlyLoad: phase==='edges' })`).
-   - If the dedup result is `skipped`, the response carries `skipped=true`; the Choice routes to `Skip*DirectItem` Succeed.
-   - Otherwise the `startResult` enters a polling loop: `Wait(60s) → Check*LoadStatus (PersistWorkflowItemStatusSimple) → Choice(done==true ? Complete : Wait)` until terminal.
-   - On terminal success: metrics (`async_csv_upload`) and workflow summary are recorded inside `PersistWorkflowItemStatusSimple` once the loader reaches `LOAD_COMPLETED` (or the tolerated `created_at` conflict status).
-
-Lambda invokes have explicit retry (`Lambda.ServiceException`, `Lambda.AWSLambdaException`, `Lambda.SdkClientException`, `Lambda.ClientExecutionTimeoutException`, `Lambda.TooManyRequestsException`, `Lambda.Unknown`, `Sandbox.Timedout`, `Runtime.ExitError`) with 2 s base, x2 backoff, 6 attempts (or 1-min steady polls × 4 for status checks).
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §2 and §4.
 
 #### 5.4.6 Dedup
 
-Per CSV object:
-
-- Reject if `objectSize > WORKFLOW_MAX_OBJECT_SIZE_BYTES`. Skip when size is 0 or the key is not `*.csv`.
-- Stream rows via a streaming CSV parser.
-- Header sanity: `~id` (and `~from`,`~to`,`~label` for edges). Strip any inbound `created_at` columns; append a single `created_at:Datetime` column (with `(single)` cardinality on vertices) to the output header.
-- Resolve any `*:Blob` columns to content-addressed S3 URIs before computing row hashes or writing filtered CSV. The staged Neptune CSV header must use `*:String` for resolved blob URI columns because Neptune stores the URI string, not a custom loader type.
-- Buffer rows into batches of `NEPTUNE_CSV_DEDUP_BATCH_SIZE`. For each batch (with phase-specific concurrency capped at 110 for vertices / 8 for edges, the lower edge cap protects edge fan-out from Neptune throttling):
-  - Optionally validate rows against the lexicon when `validationMode === "required"`.
-  - Hit the **reader** Gremlin connection with `g.V|E().has(id, P.within(...idsChunk)).id().toList()` to find existing IDs.
-  - Drop rows already present; serialise the survivors with the deterministic `created_at` column appended.
-- Output is written to a temp file under `os.tmpdir()/persist-workflow-*/{vertices|edges}.csv`. Cleanup runs on success and failure.
-- Returns counters `{ rowsRead, rowsExisting, rowsNew, skipped, skipReason?, tempFilePath?, tempDirPath? }`. `skipReason="NO_NEW_ROWS"` when the filtered set is empty.
-
-A separate batch-mode helper, used by stage-1 ingest, computes aggregate net-new vertex/edge counts in a single round-trip per SQS batch.
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §4.
 
 ### 5.5 Neptune bulk loader (`NeptuneBulkLoaderService`)
 
-A custom HTTPS client signed with SigV4 for the `/loader` endpoint:
-
-- **Start**: `POST https://<host>:<port>/loader` with body `{ source, format:"csv", iamRoleArn, region, mode:"NEW", updateSingleCardinalityProperties:false, queueRequest:true, failOnError:false, parallelism:"OVERSUBSCRIBE", edgeOnlyLoad }`. Per-attempt timeouts and SigV4 are enforced; transient send errors get up to 4 retries with exponential backoff (200 ms base × 2ⁿ); **Max load task queue size limit breached** errors are additionally auto-retried 40 times at 15-s spacing.
-- **Status**: AWS SDK `GetLoaderJobStatusCommand` with `details: true` and (for terminal failures) `errors: true`, paginated through up to 400 pages of 25 errors each. Transient status errors (`getaddrinfo EBUSY`, `EAI_AGAIN`, `ECONNRESET`, `ETIMEDOUT`, `GetLoaderJobStatus request timed out`) are retried by both the loader and the workflow status checker.
-- **Polling**: `BULK_POLL_INTERVAL_MS=5000` ms (loader) or `Wait 1 min` (workflow Map). `BULK_MAX_WAIT_MS=840000` ms (≈14 min).
-- **Tolerated created_at conflicts**: when terminal status is `LOAD_FAILED` and the **only** error code present is `SINGLE_CARDINALITY_VIOLATION` for the `created_at` property and `parsingErrors=0` and `datatypeMismatchErrors=0`, the result is normalised to `LOAD_COMPLETED_WITH_TOLERATED_CREATED_AT_CONFLICTS` and `effectiveSuccess=true`. The conflict count flows into `toleratedCreatedAtConflictCount` for observability.
-- **Logging**: progress logs are emitted on status change or every `NEPTUNE_BULK_STATUS_LOG_EVERY_POLLS=12` polls. Failures sample up to 5 error-log entries plus the full `overallStatus` payload.
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §4.
 
 ### 5.6 Derived index maintenance
 
-Persist owns the execution of Lexicon's derived `indexes` contract. The immutable source facts remain canonical; derived index properties are maintained conveniences on the durable owner element for analytical reads. Two mechanisms share the same `IndexCatalog`, Gremlin execution service, type validator, and idempotent writer:
-
-- **Re-indexing**: a durable Step Functions STANDARD workflow for initial materialisation, lexicon index-definition changes, backfills, and time-relative values such as `account_age_days`.
-- **Incremental maintenance**: a scheduled Neptune Streams poller that consumes committed graph changes and updates affected existing index values.
+Core (catalog, writer, rebuild workflow, stream indexer): [`derived-index-maintenance.md`](./derived-index-maintenance.md). Discovery, definition state, trigger-first rebuilds, workflow catch-up: [`derived-index-discovery-and-catchup.md`](./derived-index-discovery-and-catchup.md).
 
 #### 5.6.1 Step Functions: PersistIndexRebuildWorkflow
 
-A STANDARD state machine because rebuilds are long-running, must survive Lambda/container restarts, and need persisted execution state/history. The workflow uses Distributed Map for shard parallelism; Distributed Map stays in STANDARD mode and writes map-run results to `IndexMaintenanceBucket`.
-
-```
-PrepareIndexRebuild              (Lambda: index-rebuild-prepare)
-  → BuildTriggerShardManifest     (same Lambda or nested task)
-  → RecomputeIndexShards          (Distributed Map over S3 shard manifest)
-  → WriteIndexRebuildSummary      (Lambda)
-  → OptionallyAdvanceStreamCheckpoint
-```
-
-Accepted input:
-
-```jsonc
-{
-  "schemaVersion": "1",
-  "mode": "WRITE",                 // "WRITE" | "DRY_RUN"; WRITE requires canonical lexicon
-  "indexes": [                     // optional; omitted means every lexicon-declared index
-    { "owner_type": "debt", "index_name": "current_balance" }
-  ],
-  "costCeilingUsd": 10,
-  "maxConcurrency": 20,
-  "candidate_lexicon_s3_uri": "s3://lexicon-bucket/ovid-agent-changes/<session>/lexicon.json"
-}
-```
-
-Workflow requirements:
-
-1. `PrepareIndexRebuild` loads the lexicon, rejects `mode="WRITE"` with a candidate lexicon, validates all selected index definitions, and writes a manifest under `s3://<INDEX_MAINTENANCE_BUCKET>/<INDEX_REBUILD_PREFIX>/<executionId>/manifest.json`.
-2. Before scanning, the workflow reads the current Neptune Streams `LATEST` event id as a rebuild watermark. On successful initial materialisation it may set the stream checkpoint to that watermark; subsequent polling uses `AFTER_SEQUENCE_NUMBER` so changes that commit after the watermark are replayed.
-3. For each selected index, trigger elements are enumerated from the reader endpoint using the declared trigger label (`g.E().hasLabel(label).id()` for edge triggers, `g.V().hasLabel(label).id()` for vertex triggers). IDs are written into JSONL shard files sized by `INDEX_REBUILD_SHARD_SIZE`.
-4. `RecomputeIndexShards` runs one child execution per shard. For each trigger element id it binds `__ID__` into `subject_query.gremlin`, runs `value_query.gremlin`, validates the result against the index schema, and either writes `property(single, index_name, value)` on the owner element or removes `index_name` when the value is null / empty.
-5. Repeated work is safe. Because `value_query` recomputes the final current value from graph history, two trigger elements for the same owner can race or retry without changing the final result incorrectly.
-6. Dry-run mode performs all reads and validation, writes diffs/samples to S3, and never mutates Neptune or stream checkpoints.
-7. The summary includes `indexesProcessed`, `triggerElementsRead`, `ownerElementsTouched`, `propertiesWritten`, `propertiesRemoved`, `validationFailures`, `dryRun`, `streamWatermark`, and per-index counters.
+[`derived-index-maintenance.md`](./derived-index-maintenance.md) §4.
 
 #### 5.6.2 Neptune Streams incremental indexer
 
-Neptune Streams are enabled in `NeptuneStack`. AWS exposes streams through the Neptune REST API, not as a native Lambda event source, so Persist runs `IndexStreamPoller` from EventBridge Scheduler.
+[`derived-index-maintenance.md`](./derived-index-maintenance.md) §5.
 
-Poller requirements:
+### 5.7 Full-text-search replication
 
-1. Acquire a lease in `DerivedIndexStateTable` (`pk="stream"`, `sk="checkpoint"`) before reading. A concurrent invocation exits successfully without work.
-2. Read from `https://<NEPTUNE_READER_HOST>:8182/propertygraph/stream` with `iteratorType=AFTER_SEQUENCE_NUMBER`, `commitNum`, `opNum`, and `limit=INDEX_STREAM_POLL_LIMIT`. Bootstrap is explicit: production must either have a checkpoint from a completed rebuild or fail closed with `IndexStreamCheckpointMissing`.
-3. Parse PG_JSON records. A record matches an index trigger when:
-   - `change_trigger.type === "edge"` and `record.data.type === "e"` and `record.data.key === "label"` and `record.data.value.value === change_trigger.label`, or
-   - `change_trigger.type === "vertex"` and `record.data.type === "vl"` and `record.data.key === "label"` and `record.data.value.value === change_trigger.label`.
-4. Process only complete transactions. The poller groups records until `isLastOp=true`, recomputes all matching indexes for that transaction, and advances the checkpoint to the response `lastEventId` only after every derived-index write succeeds.
-5. Current lexicon indexes are immutable-history add triggers, so `op="ADD"` is the normal path. `REMOVE` trigger records are logged with the full stream event id and skipped unless a future lexicon trigger explicitly declares remove handling.
-6. Index property writes create property stream records (`type="vp"` or `type="ep"`), but they do not retrigger the indexer because trigger matching only uses vertex/edge label records. This prevents index-maintenance feedback loops.
-7. If processing fails after reading records, the checkpoint is not advanced. The next scheduled poll replays the same records; idempotent recomputation makes replay safe.
-8. The poller emits lag metrics from stream `commitTimestamp` and warns when lag exceeds `INDEX_STREAM_LAG_WARN_FRACTION * neptune_streams_expiry_days`. If the checkpoint falls outside the stream retention window, the poller fails closed and the runbook requires a rebuild.
-
-### 5.7 OpenSearch full-text-search replication
-
-Persist owns OpenSearch as a derived index that enables Neptune's built-in full-text search from Gremlin. The replication plane is deliberately separate from the derived-index writer: derived indexes mutate Neptune properties, while OpenSearch replication writes only to OpenSearch and never changes graph state.
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md).
 
 #### 5.7.1 Step Functions: PersistOpenSearchBackfillWorkflow
 
-A STANDARD state machine handles initial materialisation and rebuilds of the OpenSearch index. Production must complete this workflow before FTS queries are considered healthy.
-
-```
-PrepareOpenSearchBackfill          (Lambda)
-  → CaptureStreamWatermark          (same Lambda or nested task)
-  → BuildGraphElementShardManifest  (Lambda)
-  → IndexOpenSearchShards           (Distributed Map over S3 shard manifest)
-  → VerifyOpenSearchSamples         (Lambda)
-  → RecordSearchCheckpoint          (Lambda)
-```
-
-Accepted input:
-
-```jsonc
-{
-  "schemaVersion": "1",
-  "mode": "WRITE",                 // "WRITE" | "DRY_RUN"
-  "documentTypes": ["vertex", "edge"],
-  "labels": ["debt", "company"],   // optional; omitted means every label
-  "costCeilingUsd": 10,
-  "maxConcurrency": 20,
-  "indexGeneration": "2026-06-22T13-00-00Z"
-}
-```
-
-Workflow requirements:
-
-1. `PrepareOpenSearchBackfill` validates OpenSearch configuration, confirms the collection and direct index are reachable, and writes a manifest under `s3://<INDEX_MAINTENANCE_BUCKET>/<INDEX_REBUILD_PREFIX>/opensearch/<executionId>/manifest.json`.
-2. Before scanning graph elements, the workflow captures the current Neptune Streams `LATEST` event id as a backfill watermark. On successful write-mode completion, continuous replication starts from that watermark with `AFTER_SEQUENCE_NUMBER`.
-3. The workflow enumerates graph element IDs from the Neptune reader endpoint (`g.V().id()` and `g.E().id()`, with optional label filters), writes JSONL shard files sized by `SEARCH_BACKFILL_SHARD_SIZE`, and processes shards through Distributed Map at `SEARCH_BACKFILL_MAX_CONCURRENCY`.
-4. Each shard worker reads element properties from Neptune, transforms them into the OpenSearch model in §3.8, and upserts documents into the configured OpenSearch index with stable document IDs derived from `entity_id`.
-5. `DRY_RUN` mode performs reads and transformation validation but does not write OpenSearch documents or checkpoints.
-6. `VerifyOpenSearchSamples` compares a bounded sample of OpenSearch documents against live Gremlin reads before the workflow records the checkpoint. Any mismatch fails the workflow and leaves FTS unhealthy.
-7. The summary includes `documentsPlanned`, `documentsWritten`, `documentsSkipped`, `validationFailures`, `sampleMismatches`, `streamWatermark`, `indexGeneration`, `dryRun`, `startedAt`, and `finishedAt`.
-
-For existing Neptune databases, AWS documents two safe enablement flows. If write workloads can pause, pause writes, enable/reboot streams if needed, clone/export to OpenSearch, start continuous replication, then resume. If writes cannot pause, capture the latest stream event id from a clone, backfill from the clone, and start continuous replication from the captured checkpoint. Persist's workflow records the same checkpoint concept so no graph writes are silently skipped between backfill and replication.
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) §3 and §4.5.
 
 #### 5.7.2 Neptune Streams to OpenSearch poller
 
-`OpenSearchStreamPoller` consumes the same Neptune Streams source as the derived-index poller but uses its own lease/checkpoint item in `SearchSyncStateTable` (`pk="opensearch"`, `sk="checkpoint"`).
-
-Poller requirements:
-
-1. Acquire a lease before reading. A concurrent invocation exits successfully without work.
-2. Read from `https://<NEPTUNE_READER_HOST>:8182/propertygraph/stream` with `iteratorType=AFTER_SEQUENCE_NUMBER`, the stored `commitNum` / `opNum`, and `limit=SEARCH_STREAM_POLL_LIMIT`. Production must either have a checkpoint from `PersistOpenSearchBackfillWorkflow` or fail closed with `OpenSearchSyncCheckpointMissing`.
-3. Process only complete transactions. For vertex/edge label and property records, update or delete the corresponding OpenSearch document. Property changes are merged into the current document shape by reading the affected element from Neptune when the stream record alone is insufficient.
-4. Write OpenSearch documents idempotently using stable document IDs. Remove documents when the source graph element is deleted.
-5. Advance the checkpoint to the response `lastEventId` only after every OpenSearch write in the processed transaction succeeds. On failure, leave the checkpoint unchanged so the next poll replays the same transaction.
-6. Emit lag metrics from stream commit timestamps. If the checkpoint falls outside the stream retention window, fail closed and require `PersistOpenSearchBackfillWorkflow` to rebuild the index.
-7. Keep OpenSearch failures isolated from graph writes. Ingest and Gremlin reads without FTS continue when OpenSearch is unhealthy; Gremlin FTS queries fail with `OpenSearchIndexUnavailable` or `OpenSearchIndexLagExceeded` when the configured health/freshness gate is not satisfied.
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) §3 and §5.
 
 ---
 
@@ -1060,225 +283,35 @@ Poller requirements:
 
 ### 6.1 Async-bulk queue messages
 
-```ts
-// Stage-1 inbound (GraphSON async ingest)
-{ schemaVersion: "2", requestId: string, s3_uri: string, task_token?: string,
-  metadata?: { eventId?: string, source?: string, factType?: string,
-               entityTypes?: string[], idempotencyKey?: string } }
-
-// Stage-1 → Stage-2 (GraphSON path)
-{ schemaVersion: "1", batchId: string, source_prefix: "s3://…/<batchId>/",
-  requests: [ { requestId, task_token? } ] }
-
-// Stage-1 → Stage-2 (CSV-workflow path)
-{ schemaVersion: "2", batchId, executionId, phase: "vertices"|"edges",
-  source_prefix: "s3://…/<batchId>-<phase>-<itemIndex>/",
-  requests: [ { requestId, itemIndex, sourceS3Uri, rowsRead, rowsExisting, rowsNew, task_token? } ] }
-```
-
-Stage-1 GraphSON payload document (S3):
-
-```ts
-{
-  schemaVersion: "2",
-  requestId: string,
-  graph: GraphSONIngestBody,
-  metadata?: {
-    eventId?: string,
-    source?: string,
-    factType?: string,
-    entityTypes?: string[],
-    idempotencyKey?: string
-  }
-}
-```
+GraphSON messages: [`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §3. CSV batch messages: [`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §3. Async Gremlin queue message: [`async-gremlin.md`](./async-gremlin.md) §3.
 
 ### 6.2 Workflow item records
 
-`schemaVersion="1"`:
-
-- Routing input: `{ executionId, phase, sourceBucket, sourceKey, validationMode, objectSize, itemIndex, candidateLexiconS3Uri? }`.
-- Routing output adds `processingMode: "aggregate"|"direct"` and `contentLength`.
-- Started result (direct path): adds `stagedPrefix, loadId, startedAtEpochMs`.
-- Skipped result: adds `skipped: true, skipReason?`.
-- Completed result: adds `stagedPrefix, loadId, loaderStatus`.
-- Status pending result: `{ done: false, loadId, loaderStatus }`. Status completed result: `{ done: true, item }`.
-
-Workflow summaries are written by `WorkflowSummaryService` to `s3://<NEPTUNE_BULK_BUCKET>/workflow-summaries/<executionId>/<phase>/item-<itemIndex>.json`.
+[`csv-bulk-load-workflow.md`](./csv-bulk-load-workflow.md) §3.
 
 ### 6.3 Async Gremlin job state (DynamoDB)
 
-```ts
-{
-  requestId: string,                    // PK
-  status: "QUEUED"|"RUNNING"|"SUCCEEDED"|"FAILED"|"TIMEOUT"|"CANCELLED",
-  gremlinQuery: string,                 // 1..50,000
-  queryHash: string,                    // sha256 hex
-  queuedAt:   ISO8601 UTC,
-  startedAt?: ISO8601 UTC,
-  finishedAt? ISO8601 UTC,
-  updatedAt:  ISO8601 UTC,
-  attemptCount: int >= 0,
-  cancelRequested: boolean,
-  canceledAt?: ISO8601 UTC,
-  neptuneQueryId?: string,
-  resultS3Uri?: "s3://...",
-  resultSizeBytes?: int,
-  errorType?, errorMessage?, errorDetails?: { ... },
-  sfnExecutionArn?: string,
-  ttlEpochSeconds: int (default queuedAt + 7d)
-}
-```
-
-`compareAndSetStatus` uses `ConditionExpression: attribute_exists(requestId) AND status IN (:expected0, …)` and `UpdateExpression` builds typed expression names/values to avoid reserved keywords. `writeTerminalState` SETs the new status fields and REMOVEs no-longer-relevant attributes (e.g. `errorType`/`errorMessage`/`errorDetails` when no error). Conditional failures map to `GremlinAsyncJobConditionalConflictError`, which the calling services use to re-read state and respond idempotently.
+[`async-gremlin.md`](./async-gremlin.md) §3.
 
 ### 6.4 Async Gremlin result document (S3)
 
-```jsonc
-{
-  "schemaVersion": "1",
-  "requestId": "...",
-  "storedAt":  "ISO8601 UTC",
-  "metadata": { "status": "SUCCEEDED", "queuedAt", "attemptCount", "cancelRequested",
-                "startedAt?", "finishedAt?", "durationMs?", "neptuneQueryId?" },
-  "payload":  <ExecuteGremlinQueryCommandOutput>
-}
-```
+[`async-gremlin.md`](./async-gremlin.md) §3.
 
 ### 6.5 EventBridge graph-fact event schema
 
-```ts
-{
-  source: string,
-  "detail-type": "GraphFactProduced",
-  detail: {
-    schema_version: "1.0",
-    graphson_format: "graphson-v3",
-    fact_type: string,
-    entity_types: string[],
-    idempotency_key: string,
-    graphson: {
-      vertices: GVertex[],
-      vertexRefs?: GVertexRef[],
-      edges: GEdge[]
-    }
-  }
-}
-```
+[`async-graphson-ingest-and-graph-facts.md`](./async-graphson-ingest-and-graph-facts.md) §3.
 
 ### 6.6 Derived index schemas
 
-`IndexCatalogEntry` is built from the canonical lexicon:
-
-```ts
-{
-  ownerType: string,
-  ownerKind: "vertex" | "edge",
-  indexName: string,
-  valueSchema: { type: "string"|"integer"|"number"|"boolean", enum?: string[], format?: string, pattern?: string },
-  changeTrigger: { type: "vertex"|"edge", label: string },
-  subjectQuery: { gremlin: string },
-  valueQuery: { gremlin: string }
-}
-```
-
-`DerivedIndexStateTable` stream checkpoint item:
-
-```ts
-{
-  pk: "stream",
-  sk: "checkpoint",
-  commitNum: number,
-  opNum: number,
-  lastCommitTimestamp?: number,
-  updatedAt: ISO8601 UTC,
-  leaseOwner?: string,
-  leaseExpiresAtEpochSeconds?: number,
-  sourceExecutionArn?: string
-}
-```
-
-`IndexRebuildSummary` document in S3:
-
-```ts
-{
-  schemaVersion: "1",
-  executionId: string,
-  mode: "WRITE"|"DRY_RUN",
-  lexiconDataUri: string,
-  streamWatermark?: { commitNum: number, opNum: number },
-  indexes: Array<{ ownerType: string, indexName: string, triggerLabel: string }>,
-  counters: {
-    triggerElementsRead: number,
-    ownerElementsTouched: number,
-    propertiesWritten: number,
-    propertiesRemoved: number,
-    validationFailures: number
-  },
-  startedAt: ISO8601 UTC,
-  finishedAt: ISO8601 UTC
-}
-```
+[`derived-index-maintenance.md`](./derived-index-maintenance.md) §6. Definition-state and checkpoint-store items: [`derived-index-discovery-and-catchup.md`](./derived-index-discovery-and-catchup.md) §3.
 
 ### 6.7 Persist Blob schemas
 
-Blob materialisation returns only stable metadata and never returns raw text:
+[`identity-hashing-and-blobs.md`](./identity-hashing-and-blobs.md) §3.
 
-```ts
-{
-  schemaVersion: "1",
-  contentHash: string,       // lowercase sha256 hex of exact UTF-8 bytes
-  byteLength: number,
-  s3Uri: `s3://${string}`,
-  objectCreated: boolean     // false when the object already existed and HEAD verified it
-}
-```
+### 6.8 Full-text-search schemas
 
-Implementation services should expose a `PersistBlobService.materializeText(value: string): Promise<PersistBlobMaterializationResult>` and a graph transform that replaces `persist:Blob` wrappers with plain string URI values before ID hashing. The transform must preserve list/set order and vertex multi-property sorting semantics from §3.4.
-
-### 6.8 OpenSearch full-text-search schemas
-
-`SearchSyncStateTable` checkpoint item:
-
-```ts
-{
-  pk: "opensearch",
-  sk: "checkpoint",
-  commitNum: number,
-  opNum: number,
-  lastCommitTimestamp?: number,
-  indexName: string,
-  indexGeneration?: string,
-  updatedAt: ISO8601 UTC,
-  leaseOwner?: string,
-  leaseExpiresAtEpochSeconds?: number,
-  sourceExecutionArn?: string
-}
-```
-
-`OpenSearchBackfillSummary` document in S3:
-
-```ts
-{
-  schemaVersion: "1",
-  executionId: string,
-  mode: "WRITE" | "DRY_RUN",
-  indexName: string,
-  indexGeneration: string,
-  streamWatermark?: { commitNum: number, opNum: number },
-  documentTypes: Array<"vertex" | "edge">,
-  labels?: string[],
-  counters: {
-    documentsPlanned: number,
-    documentsWritten: number,
-    documentsSkipped: number,
-    validationFailures: number,
-    sampleMismatches: number
-  },
-  startedAt: ISO8601 UTC,
-  finishedAt: ISO8601 UTC
-}
-```
+[`opensearch-fts-mirror.md`](./opensearch-fts-mirror.md) §4.4 and §4.5.
 
 ---
 
@@ -1286,73 +319,39 @@ Implementation services should expose a `PersistBlobService.materializeText(valu
 
 ### 7.1 Temporal handling
 
-- Lexicon string formats `date` and `date-time` are also satisfied by GraphSON `g:Date`/`g:Timestamp` typed wrappers. The validator reports `expected: "ISO date string or g:Date"` (or `... or g:Timestamp`) when the wrapper is mismatched.
-- For persistence, the GraphSON normaliser canonicalises temporal wrappers into the host-language temporal value Gremlin expects (e.g. `Date`/`Number` epoch ms in TypeScript) before submitting traversals.
-- For Neptune CSV, scalar widening honours `Bool < Byte < Short < Int < Long`, falls through to `Double` when mixing integral + floating, and tags `g:Date`/`g:Timestamp` as `Date`/`Datetime` strings in the canonical CSV format (`YYYY-MM-DDTHH:MM:SSZ` for Datetime).
+[`identity-hashing-and-blobs.md`](./identity-hashing-and-blobs.md) §4.
 
 ### 7.2 Gremlin connection management
 
-- Live connection: SigV4-signed WebSocket (`wss://<host>:8182/gremlin`) using a SigV4 helper to compute the signed URL and headers. The driver wrapper extends the standard gremlin driver `RemoteConnection` so bytecode is submitted through `client.submit(bytecode, null, requestOptions)` and the underlying client closes cleanly on shutdown.
-- Two **state managers** (writer / reader) with single-flight create, max-age refresh (`NEPTUNE_CONNECTION_MAX_AGE_MS=2,700,000` ms = 45 min), `close` listeners, log-once reuse, and `reset` on retriable errors.
-- Test connection: plain WebSocket to `localhost:8182` (overridable via `GREMLIN_TEST_HOST`/`GREMLIN_TEST_PORT`).
+[`gremlin-sync-query.md`](./gremlin-sync-query.md) §7.
 
 ### 7.3 Retry classification
 
-A message classifier inspects the lower-cased error text and returns `{ retriable, shouldReconnect, retryClass }`:
-
-- `iam_signature_freshness` — `signature expired`, `signature not yet current`, `old date`, `future date`. Always reconnect.
-- `neptune_throttling` — `ThrottlingException`, `too many concurrent requests`. Backoff capped at 10 s.
-- `transient_connection` — websocket/connection drops, `timed out`, `econnreset`, `readonlyviolationexception`, `concurrentmodificationexception`. Backoff capped at 30 s. Reconnect for connection drops + signature freshness.
-
-Retries: `maxAttempts = NEPTUNE_RETRY_MAX_ATTEMPTS + 1` (default 6), exponential `baseDelay * 2^(attempt-1)` (or linear `baseDelay * attempt` for throttling). The retry helper logs the classification, attempt number, planned delay, and whether the connection will be reset before the next try.
+Classification as implemented: [`gremlin-sync-query.md`](./gremlin-sync-query.md) §8. Decision guide for timeouts and retries across every surface: [`timeouts-and-retries.md`](./timeouts-and-retries.md).
 
 ### 7.4 Transactions
 
-`withTransaction(fn)` opens a session-bound `g.tx().begin()`, commits on success, rolls back on failure or interruption (only if `tx.isOpen`). Errors map to `NeptuneRetriableError | GremlinExecutionError` so the same retry helper governs them. The test runtime bypasses transactions and runs effects directly on `g` (a session-capable Gremlin server is not required for tests).
+[`gremlin-sync-query.md`](./gremlin-sync-query.md) §9.
 
 ### 7.5 Observability
 
-- **Logger**: AWS Lambda Powertools logger (`POWERTOOLS_SERVICE_NAME=persist*`, `POWERTOOLS_LOG_LEVEL=INFO`). Each handler binds Lambda context once, appends a request-scoped key (`workflowItemRequestId`, `batchRequestId`, `workflowValidationRequestId`, …), and resets the keys in `finally`.
-- **Structured logging across services**: every service emits start/progress/end logs with the same shape — a span name (`ServiceName.method`), structured annotations (`requestId`, `executionId`, `loadId`, `taskToken`, `phase`, `bucket`, `key`, …), and a level (`info`/`warn`/`error`). Polling loops emit progress every N polls or on status change.
-- **Metrics**: AWS Lambda Powertools metrics, namespace `persist`. Buffered counters `vertices_ingested` / `edges_ingested` with dimension `ingest_method` ∈ `sync_ingest|async_ingest|eventbridge_graph_fact|eventbridge_graph_fact_sync|async_csv_upload` (and optional `phase=vertices|edges`). The EventBridge fact handler also emits `graph_facts_accepted` and `graph_facts_skipped_missing_ref`. Derived-index metrics include `index_rebuild_trigger_elements`, `index_rebuild_properties_written`, `index_rebuild_properties_removed`, `index_stream_records_read`, `index_stream_transactions_processed`, `index_stream_checkpoint_lag_ms`, and `index_stream_recompute_failures`, all dimensioned by `owner_type` / `index_name` where cardinality is bounded. OpenSearch/FTS metrics include `gremlin_fts_queries`, `gremlin_fts_query_duration_ms`, `gremlin_fts_policy_rejections`, `opensearch_documents_indexed`, `opensearch_documents_deleted`, `opensearch_stream_records_read`, `opensearch_stream_transactions_processed`, `opensearch_stream_checkpoint_lag_ms`, `opensearch_backfill_documents_written`, `opensearch_backfill_sample_mismatches`, and `opensearch_write_failures`, dimensioned only by bounded values such as `index_name`, `document_type`, and `query_type`. The buffer is flushed in the API handler's `finally` block and in every worker/poller `finally` block.
-- **Blob privacy**: raw `persist:Blob` text must never be logged, emitted in metrics, included in error details, or stored in DynamoDB/SQS/EventBridge metadata. Logs and metrics may include `contentHash`, byte length, and S3 URI.
-- **Blob metrics**: emit `blobs_materialized`, `blob_bytes_materialized`, `blob_objects_created`, and `blob_objects_reused` with bounded dimensions `ingest_method` and optional `phase`.
-- **Tracing**: Step Functions state machines have `tracingEnabled: true` (X-Ray).
+Primitives and core metrics: [`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §3. Alarms, dashboards, paging: [`operations-dashboards-and-alerting.md`](./operations-dashboards-and-alerting.md). Per-subsystem metrics live in each subsystem's reference.
 
 ### 7.6 Long-running command discipline
 
-Every external call (Neptune Data API, Neptune Streams REST API, OpenSearch Serverless, S3, Step Functions, SQS, DynamoDB) is wrapped in a promise-with-timeout helper that maps timeouts and SDK errors to the appropriate tagged error. Polling loops emit progress logs before/after each poll with elapsed counters and structured annotations so a stalled run is observable from CloudWatch alone.
+[`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §3.
 
 ### 7.7 Service / module structure
 
-The implementation organises behaviour as small services with a clear interface and a swap-in test double. The shape is intentionally framework-light so it can be reproduced in any DI style (constructor injection, factory functions, or a runtime container):
-
-- Each service has a **typed API** (a TypeScript interface), a **runtime factory** that closes over its dependencies (clients, configs, clocks, ID generators), and a **live binding** that wires real AWS SDK clients + env-var-derived config.
-- Complex services (`GremlinAsyncJobStore`, `NeptuneDataApiGremlin`, `GremlinAsyncSubmit`, `GraphSONAsyncIngest`, `GremlinFtsPolicyService`, `IndexCatalogService`, `IndexRebuildService`, `IndexStreamCheckpointStore`, `OpenSearchDocumentService`, `OpenSearchBackfillService`, `OpenSearchStreamCheckpointStore`, etc.) expose pure-function factories (`makeXxxService(runtime)`) so tests can pass mocks (in-memory clients, fixed clocks, deterministic UUIDs).
-- Errors are **structured tagged classes** with a discriminator (`type` / `_tag`) so the HTTP layer can `switch` on them when mapping to status codes.
-- Composition is split per route (§4.4) to keep config requirements minimal — a missing env var for an unrelated route must never fail this route.
+[`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §2.
 
 ### 7.8 Testing strategy
 
-- Unit tests live in `test/services/**/*.ts`, `test/schemas/**/*.ts`, `test/handlers/**/*.ts`, `test/routes/**/*.ts`, `test/http/responses.test.ts`, and `test/cdk/persist-stack.test.ts`.
-- Vitest is the test runner. `setupTests.ts` wires the ingest-metrics reset/flush before/after each test.
-- A real Gremlin Server (TinkerGraph) is required for traversal tests. `just test` (the canonical CI command) starts/stops the docker container automatically using `scripts/start-gremlin-test.sh` and `gremlin/tinkergraph-empty.properties` (string IDs enabled to mirror Neptune `T.id`).
-- `vertexRefs` tests cover schema validation, duplicate/isolated refs, missing refs, label mismatch, sync-path verification before writes, async route rejection, and edge ID parity between mirror and ref representations.
-- EventBridge ingestion tests cover the `GraphFactProduced` schema, wrapper transformation into `tinker:graph`, sync-vs-async routing, ref-bearing sync routing, validation failures before S3/SQS/Neptune side effects, skipped missing refs, and successful enqueue metadata.
-- Derived-index unit tests cover index-catalog parsing from lexicon `indexes`, rejection of caller-supplied index properties, value type/enum validation, null-as-remove semantics, and idempotent writer retries. Stream tests use captured/synthetic Neptune PG_JSON records for `ADD`, `REMOVE`, multi-op transactions, duplicate replay, and checkpoint advancement only after successful writes.
-- Rebuild workflow tests cover selected-index planning, candidate lexicon dry-run only, shard generation, Distributed Map item processing, stream watermark capture, and summary counters.
-- Persist Blob tests cover validation of `persist:Blob` wrappers, byte-limit failures, deterministic URI derivation for repeated text, idempotent S3 conflict handling, no raw-text logging, graph ID equality for repeated blob text, graph ID change for changed blob text, and CSV `*:Blob` transformation to staged `*:String` URI columns before rehash/dedup.
-- Gremlin FTS tests cover allowed `Neptune#fts.*` `withSideEffect` keys, rejection of arbitrary side effects, endpoint injection/validation, bounded `maxResults`/`batchSize`, query-type allowlisting, and mapping OpenSearch lag/unavailable states to the tagged errors in §3.6.
-- GraphQL tests cover deterministic SDL generation from lexicon fixtures (byte-identical across two loads, snapshot-tested), scalar/enum/edge mapping rules, resolution-map validation failures (unknown type/field, bad key template, non-whitelisted Interprose operation), depth/complexity rejection, per-source batching (asserting one batched call per source per execution level, not per item), partial-failure nulling with `extensions.source`, Interprose cache/throttle behaviour with a mock client, mutation/subscription rejection, and read-only IAM posture in `test/cdk/persist-stack.test.ts`. Every source adapter additionally passes the shared `SourceResolver` contract suite (§4.5.1).
-- OpenSearch replication tests cover document transformation from graph elements, non-string indexing metadata, blob URI indexing without raw blob text, initial backfill shard summaries, sample parity checks, idempotent stream replay, delete handling, and checkpoint advancement only after successful OpenSearch writes.
-- Integration tests live in `test/integration/persist-api.test.ts` and hit a deployed API via SigV4 (`PERSIST_API_URL`, `AWS_PROFILE`).
-- The OpenAPI spec at `docs/openapi.json` is regenerated by `scripts/generate-openapi.ts` (driven from the route definitions module).
+[`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §5.
 
 ### 7.9 CI/CD
 
-- `.github/workflows/ci-cd-dev.yml` (PRs to `main`, `TARGET_ENV=dev`) and `.github/workflows/ci-cd-prod.yml` (push to `main`, `TARGET_ENV=prod`) call the shared reusable workflows. The repo `justfile` exposes the contract recipes (`just check`, `just test`, `just cdk:synth`, `just cdk:deploy`).
-- `pnpm` is the package manager. `pnpm check` runs the TypeScript compiler in build mode (`tsc -b`). `pnpm lint` uses ESLint; `pnpm format` uses Prettier with import sort.
-- Husky hooks run `lint-staged` on commit.
+[`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §6.
 
 ---
 
@@ -1360,131 +359,30 @@ The implementation organises behaviour as small services with a clear interface 
 
 ### 8.1 Prerequisites
 
-- Node.js 22+ (Lambda runtime is 24).
-- pnpm.
-- AWS CLI/CDK with permissions for VPC, Neptune, OpenSearch Serverless, S3, SQS, DynamoDB, ECS, Step Functions, EventBridge rules and pipes, IAM, API Gateway, Lambda, CloudWatch Logs, SSM.
-- A deployed Lexicon product with SSM `/lexicon/data-uri` pointing to the canonical `lexicon.json` in the Lexicon data bucket.
-- A pre-populated SSM parameter `/persist-spark/glue/neptune-csv-rehash/job-name` pointing at the persist-spark Glue rehash job.
-- Neptune Streams enabled by `NeptuneStack` (`neptune_streams=1`). After changing stream cluster parameters, all Neptune DB instances must be rebooted for the setting to take effect.
-- A published resolution-map object at `GRAPHQL_RESOLUTION_MAP_URI` (a defaults-only map routing everything to `graph` is valid). When the map declares `interprose` sources: a Secrets Manager secret with Interprose credentials and `INTERPROSE_BASE_URL`. When it declares `dynamodb` sources: the referenced tables deployed and named through the `table_env` indirection.
+[`operations-playbook.md`](./operations-playbook.md) §2.
 
 ### 8.2 Deploy / destroy
 
-```bash
-pnpm install
-pnpm cdk:synth
-pnpm cdk:deploy           # NeptuneStack, then PersistSearchStack, then PersistStack (CDK auto-orders)
-pnpm cdk:destroy          # only when deletionProtection=false (non-prod)
-```
-
-Stack outputs: `ApiUrl`, `NeptuneCsvWorkflowArn`, `PersistIndexRebuildWorkflowArn`, `PersistOpenSearchBackfillWorkflowArn`, `OpenSearchCollectionEndpoint`, `OpenSearchIndexName`, `NeptuneWriterEndpoint`, `NeptuneReaderEndpoint`, `NeptunePort`, `NeptuneClusterResourceId`, `NeptuneVpcId`. SSM parameters are created for `persist-api-url`, `persist-neptune-csv-workflow-arn`, `persist-index-rebuild-workflow-arn`, `persist-opensearch-backfill-workflow-arn`, and the OpenSearch endpoint/index values consumed by Persist runtime configuration.
+[`operations-playbook.md`](./operations-playbook.md) §3. Cluster cutover and rollback: [`neptune-recovery-and-persistence-target.md`](./neptune-recovery-and-persistence-target.md). Reader endpoint rollback: [`neptune-reader-topology.md`](./neptune-reader-topology.md).
 
 ### 8.3 Smoke tests
 
-After every deploy run the four release-validation calls listed in `README.md` §"Async Gremlin release validation":
-
-1. Quick `g.V().limit(1).count()` async submit + poll until `SUCCEEDED`.
-2. Cancel a queued request before it runs.
-3. Submit a known-long-running query and confirm `TIMEOUT` after the configured budget.
-4. Confirm the status response keeps result bodies out of the metadata and that `resultS3Uri` is reachable.
-
-For `/persist/ingest` and `/persist/gremlin`, use the bash/zsh `awscurl` helper documented in the README.
-
-GraphQL release validation:
-
-1. `GET /persist/graphql/schema` returns SDL whose `sdlHash` matches the deployed lexicon + resolution map.
-2. A signed query selecting only graph-backed fields returns data with `extensions.sources.interprose` absent (proving field-level laziness).
-3. A query mixing graph and Interprose fields returns both, with `extensions.sources` reporting each source used.
-4. With Interprose credentials deliberately broken in non-prod, the same query returns graph fields plus `null` Interprose fields and `errors[].extensions.source == "interprose"` — HTTP 200, no request-level failure.
-5. A query exceeding `GRAPHQL_MAX_QUERY_DEPTH` returns `GraphQlComplexityError` (400) without any data-source call in the logs.
-
-Derived-index release validation:
-
-1. Run `PersistIndexRebuildWorkflow` in `DRY_RUN` for one selected debt index and confirm the S3 summary reports trigger counts without Neptune writes.
-2. Run the same workflow in `WRITE` after confirming the canonical lexicon is in use; verify a sample owner element has the expected derived property.
-3. Insert a graph fact that creates a matching trigger edge, wait for `IndexStreamPoller`, and verify the property is recomputed plus the stream checkpoint advances.
-4. Confirm `index_stream_checkpoint_lag_ms` is below one poll interval after the test write.
-
-OpenSearch / Neptune FTS release validation:
-
-1. Run `PersistOpenSearchBackfillWorkflow` in `DRY_RUN`, then `WRITE`, and confirm the summary reports written documents and zero sample mismatches.
-2. Submit a signed `POST /persist/gremlin` FTS query such as `g.V().has("company_name","Neptune#fts acme").limit(5)` and confirm Persist injects the configured endpoint, returns expected IDs, and includes `fts.used=true`.
-3. Ingest a graph fact with a searchable property, wait for `OpenSearchStreamPoller`, then confirm the same FTS Gremlin query returns the new element and `opensearch_stream_checkpoint_lag_ms` is below one poll interval.
-4. Submit a Gremlin query with an unsafe `withSideEffect` or caller-supplied endpoint and confirm it returns `GremlinFtsPolicyError` without reaching Neptune.
-5. Temporarily mark OpenSearch sync stale in non-prod and confirm FTS queries fail with `OpenSearchIndexLagExceeded` while non-FTS Gremlin reads and ingest still succeed.
+[`operations-playbook.md`](./operations-playbook.md) §5.
 
 ### 8.4 Rollback
 
-1. `git checkout <last-known-good>` and `pnpm cdk:deploy` — keeps infrastructure (DynamoDB, SQS, S3) in place.
-2. Re-run the smoke checks.
-3. Confirm no jobs are stuck in `QUEUED` / `RUNNING` without terminal updates (audit DynamoDB scan filtered by `status` and `updatedAt < now - 1h`).
+[`operations-playbook.md`](./operations-playbook.md) §6.
 
 ### 8.5 Common runbook items
 
-- **Loader queue full**: `Max load task queue size limit breached` is auto-retried 40× at 15 s. If still failing, throttle producer concurrency (`maxConcurrency` workflow input).
-- **Created_at single cardinality** noise: tolerated automatically on otherwise-clean loads. Anything else (parsing/datatype errors, mixed error codes) hard-fails.
-- **Stuck async-Gremlin job**: `GET` the request to inspect status. If `RUNNING` past max budget, `DELETE` to register cancel intent — the next Fargate poll (or successive worker restart) will clean up.
-- **Connection storms**: bumping `NEPTUNE_RETRY_MAX_ATTEMPTS` and lowering `GREMLIN_BATCH_EXISTS_CONCURRENCY` is the standard mitigation; the default `100..110` was tuned for `db.r8g.12xlarge` reader.
-- **Index stream checkpoint missing or trimmed**: run `PersistIndexRebuildWorkflow` in `WRITE`, allow it to set the checkpoint from its captured stream watermark, then re-enable the `IndexStreamPollSchedule`. Do not silently start from `LATEST` in production.
-- **Index stream lag warning**: inspect `IndexStreamPoller` logs for failing trigger records, reduce `INDEX_STREAM_POLL_LIMIT` only if Neptune query pressure is the cause, and prefer increasing poll frequency/concurrency after confirming the single-lease invariant remains intact.
-- **OpenSearch checkpoint missing or trimmed**: run `PersistOpenSearchBackfillWorkflow` in `WRITE`, let it record a fresh stream watermark, then re-enable `OpenSearchStreamPoller`. Do not silently start from `LATEST` in production.
-- **OpenSearch out of sync or corrupt**: disable the OpenSearch poller, rebuild the direct Neptune FTS index from Neptune through `PersistOpenSearchBackfillWorkflow`, verify sample parity, record the new checkpoint, and re-enable the poller. OpenSearch is rebuildable; do not reload Neptune data to repair the search index.
-- **OpenSearch query failures**: inspect `OpenSearchStreamPoller` and Gremlin router logs for `requestId`, `indexName`, `queryType`, and sync lag. If OpenSearch Serverless data access policy or `aoss:APIAccessAll` is missing, FTS queries fail with 403-like errors while non-FTS Gremlin remains available.
+[`operations-playbook.md`](./operations-playbook.md) §7. Alarm responses: [`operations-dashboards-and-alerting.md`](./operations-dashboards-and-alerting.md).
 
 ---
 
 ## 9. Re-creation Checklist (in order)
 
-1. **Repo skeleton**: pnpm workspace, TypeScript, `tsconfig.{base,build,app,src,test}.json`, ESLint, Prettier (with import sort), husky + lint-staged, Vitest. Package name is internal.
-2. **Runtime dependencies**: `@aws-lambda-powertools/{logger,metrics,event-handler}`, `@aws-sdk/{client-neptunedata,client-s3,client-sfn,client-sqs,credential-providers}`, `@smithy/{config-resolver,node-config-provider,hash-node,protocol-http,signature-v4}`, `gremlin`, `gremlin-aws-sigv4`, `csv-parse`. CDK: `aws-cdk-lib`, `constructs`, `aws-cdk`. Choose any preferred validation library and structured-error / DI conventions — the contracts in §3 and §6 must be honoured but the implementation style is unconstrained.
-3. **Schemas / contracts**: one module per group in `lambda/schemas/` — `graphson/{types,vertex,vertex-ref,edge,ingest,validate}`, `eventbridge/graph-fact`, `gremlin`, `gremlin-async`, `async-bulk`, `workflow`, `lexicon`, `derived-index`, `opensearch-fts`, `graphql/{request,resolution-map}`, `http`, `errors`. Errors are tagged classes; everything else is type+validator pairs.
-4. **Utils**: `lambda/utils/{csv,errors,graphsonTemporalTransform,lexiconStringFormat,neptuneTemporal,s3}.ts`.
-5. **Configuration**: `lambda/config/neptune.ts` (Neptune host/port/region, retry, connection age) plus per-service config readers tied to the env vars listed in §2.5, including `lambda/config/blob.ts` and `lambda/config/opensearch.ts`. Required vars must throw at startup; optional vars must default per §2.5.
-6. **Services** (one file each in `lambda/services/`): GraphSON (`Hash`, `Decode`, `BlobTransform`, `PersistTransform`, `PersistTransformService`, `SemanticValidationService`, `ValidationService`, `VertexRefVerifier`, `Service`, `AsyncIngestService`); Blob (`PersistBlobService`); EventBridge (`GraphFactEventService`); Gremlin (`Client`, `Tx`, `Retry`, `QueryPolicy`, `FtsPolicy`, `Service`); Lexicon (`Schema`); Derived Index (`Catalog`, `ValueValidation`, `Writer`, `RebuildPlanner`, `RebuildShard`, `StreamClient`, `StreamPoller`, `CheckpointStore`); OpenSearch FTS (`DocumentTransform`, `IndexClient`, `BackfillPlanner`, `BackfillShard`, `StreamPoller`, `CheckpointStore`, `FreshnessService`); Async Gremlin (`JobStore`, `ResultStore`, `Submit`, `Status`, `Cancel`, `Worker`, `NeptuneDataApi`); Async Bulk (`IngestPayload`, `BulkWorker`, `BulkAggregateWorker`, `FilteredBatchEnqueue`, `BulkLoader`, `BulkStage`, `CsvService`, `CsvDedup`, `CsvLexiconValidation`, `CsvWorkflowValidation`); Workflow (`Input`, `CostPredictor`, `ItemRouting`, `ItemStart`, `ItemStatus`, `Summary`, `StepFunctionsCallback`); GraphQL per the §4.5.1 component boundaries (schema generator, resolution-map service, source-resolver registry, the three source adapters, query guards, request-context factory — organised in the codebase's established runtime/DI style, not a prescribed file layout); Metrics (`IngestMetrics`); plus a composition module `services/index.ts` that exports per-router and per-handler dependency containers.
-7. **HTTP layer**: `lambda/http/{request-context.ts, responses.ts}`, `lambda/logging/{powertools.ts, runtime.ts}`, the three routers (`graphson`, `gremlin`, `gremlin-async`) and `router.ts` mounting them with `prefix="/persist"`, then `handler.ts`. The GraphQL surface is a separate handler entrypoint (its own Lambda, §2.4.4) wired to its own explicit routes (§2.4.5); its internal organisation follows the §4.5.1 component boundaries rather than a prescribed layout.
-8. **Worker handlers** + **Workflow handlers** + **EventBridge handler** + **Fargate entrypoint** in `lambda/{graph-fact-event, async-bulk-worker, async-bulk-aggregate-worker, gremlin-async-validate, gremlin-async-worker, workflow-start, workflow-cost-predictor, workflow-validate, workflow-item-route, workflow-item-processor, workflow-item-status, workflow-item-status-simple, index-rebuild-prepare, index-rebuild-shard-worker, index-stream-poller, opensearch-backfill-prepare, opensearch-backfill-shard-worker, opensearch-stream-poller, fargate}/`.
-9. **OpenAPI generator**: `lambda/api/definitions.ts` and `scripts/generate-openapi.ts`. `pnpm api:spec` writes `docs/openapi.json` (the generated spec is checked in).
-10. **CDK stacks**: `lib/neptune-stack.ts`, `lib/persist-search-stack.ts`, and `lib/persist-stack.ts` per §2.2, §2.3, and §2.4, then `bin/app.ts`.
-11. **Local Gremlin**: `scripts/start-gremlin-test.sh`, `gremlin/tinkergraph-empty.properties`, `setupTests.ts`, `vitest.config.ts`, `justfile` (`just test` orchestrates docker + vitest), and a CI caller wired to the shared workflows.
-12. **Smoke tests**: replicate the async Gremlin, derived-index, and OpenSearch/Neptune FTS release-validation steps from §8.3 in the integration suite under `test/integration`.
-
----
+[`engineering-conventions-and-testing.md`](./engineering-conventions-and-testing.md) §7.
 
 ## 10. Acceptance Criteria
 
-A re-implementation is considered functionally complete when:
-
-- All endpoints in §1.2 return the documented success/error envelopes for the example payloads in `README.md` and the OpenAPI spec.
-- `POST /persist/ingest` is transactional: a failure on any vertex/edge inside one request leaves zero new records in Neptune.
-- `POST /persist/ingest` accepts `vertexRefs`, verifies each ref exists at the declared label before the transaction starts, does not upsert referenced vertices, and returns `MissingVertexRef` (404) with zero writes when verification fails.
-- `POST /persist/ingest-async` rejects non-empty `vertexRefs` before any S3 PUT or SQS send.
-- Hashing rules in §3.4 produce identical IDs across two independent runs of the same payload (fuzz-tested by `test/services/GraphSONHash.test.ts`).
-- `POST /persist/validate` accepts both the bare `tinker:graph` payload and the `{ graph, candidate_lexicon_s3_uri }` wrapper, and surfaces issues with `code` + JSON-pointer `path`.
-- `persist:Blob` values are accepted only for lexicon `blob` properties, are written once to content-addressed S3 keys derived from the exact UTF-8 text hash, and are replaced with deterministic S3 URIs before vertex/edge ID hashing.
-- Re-ingesting the same graph with the same blob text produces the same blob URI and graph element IDs; changing only the blob text produces a different blob URI and graph element ID.
-- Raw blob text is not present in Neptune properties, CloudWatch logs, SQS messages, DynamoDB rows, EventBridge metadata, or HTTP error details after materialisation; only the S3 object contains the original text.
-- `GraphFactProduced` EventBridge events matching §3.7 validate before side effects, route small/ref-bearing facts through sync ingest, route large non-ref facts through async ingest, preserve `idempotency_key` in metadata, and never write duplicate vertices/edges when the same fact is replayed.
-- Async Gremlin survives the four release-validation steps in §8.3 inside a single deployed environment.
-- `POST /persist/gremlin` supports Neptune FTS queries through the existing Gremlin route without adding `/persist/search`; Persist injects or strictly validates `Neptune#fts.endpoint`, allows only approved `Neptune#fts.*` `withSideEffect` keys, rejects arbitrary side effects/mutations, and returns `GremlinFtsPolicyError` for policy violations.
-- OpenSearch Serverless is deployed as a private `SEARCH` collection with encryption, network, and data access policies; Gremlin query roles have both OpenSearch data-policy read access and IAM `aoss:APIAccessAll`, and replication roles can write only the configured index.
-- The Neptune CSV workflow accepts all three input shapes in §5.4.1 and produces a `workflow-summaries/<executionId>/<phase>/item-<itemIndex>.json` for every successful item.
-- The lexicon `indexes` contract is consumed from the canonical lexicon: callers cannot write derived index properties directly, Persist builds an `IndexCatalog`, and index values are validated against their declared scalar schema before writes.
-- `PersistIndexRebuildWorkflow` can dry-run and write selected debt indexes, stores S3 summaries, captures a stream watermark, and uses a STANDARD durable workflow with Distributed Map shard processing.
-- `IndexStreamPoller` consumes Neptune Streams from the stored checkpoint, matches PG_JSON label records to `change_trigger`, recomputes `subject_query` / `value_query`, writes affected properties idempotently, and advances the checkpoint only after successful transaction processing.
-- If the stream checkpoint is missing or older than the Neptune Streams retention window, production fails closed and requires a rebuild rather than silently skipping to `LATEST`.
-- `PersistOpenSearchBackfillWorkflow` can dry-run and write the OpenSearch FTS index, captures a stream watermark, validates sample parity against Gremlin reads, and records the checkpoint used by continuous OpenSearch replication.
-- `OpenSearchStreamPoller` consumes Neptune Streams from `SearchSyncStateTable`, writes/deletes OpenSearch documents idempotently using the model in §3.8, and advances the checkpoint only after successful OpenSearch writes.
-- If the OpenSearch checkpoint is missing, older than the Neptune Streams retention window, or sample parity fails after rebuild, Gremlin FTS fails closed and the runbook requires an OpenSearch rebuild rather than silently using stale search results.
-- OpenSearch outages or lag do not block GraphSON ingest, CSV ingest, derived-index maintenance, or non-FTS Gremlin reads.
-- `POST /persist/graphql` executes read-only queries against a schema generated deterministically from the canonical lexicon; two loads of the same lexicon + resolution map produce byte-identical SDL, and `GET /persist/graphql/schema` reports the matching `sdlHash` and `resolutionMapHash`.
-- Field-to-source routing comes exclusively from the validated Persist-owned resolution map; unknown types/fields, malformed key templates, and non-whitelisted Interprose operations fail the map load closed (`GraphQlResolutionMapError`), and callers can neither see nor select data sources.
-- Queries selecting only graph-backed fields never call Interprose or DynamoDB (verified via resolver-client spies); mixed queries batch per source per execution level with no per-item fan-out.
-- An Interprose or DynamoDB source failure nulls only the affected fields and appends `errors[].extensions.source`, returning HTTP 200 with all graph-backed data intact; mutations, subscriptions, and depth/complexity violations are rejected before any data-source call.
-- `PersistGraphQlHandler` IAM allows only Neptune reader query actions, resolution-map/lexicon S3 reads, the mapped DynamoDB tables, and the Interprose credentials secret — no write actions of any kind.
-- The GraphQL runtime is GraphQL Yoga inside `PersistGraphQlHandler` (no AppSync, no standalone server), and the resolver layer honours the §4.5.1 ports-and-adapters contract: every data source is a `SourceResolver` adapter behind the registry, field behaviour is driven entirely by the resolution map through the generic field resolver, adding a source requires no executor/planner/schema-generator changes, and every adapter passes the shared contract test suite.
-- Loaders treat `created_at` `SINGLE_CARDINALITY_VIOLATION` as effective success only when no other error mix is present.
-- Async ingest never leaves a job stuck in `QUEUED`: failure to enqueue is followed by a best-effort `FAILED` terminal write; failure to validate happens **before** any S3 PUT or SQS send.
-- Lexicon TTL cache (300 s) is reused across requests on the same router and refreshed on expiry; refresh failures fail closed.
-- All Lambdas use `nodejs24.x`, ARM64, ESM bundling, and the `createRequire` banner so `gremlin`/`gremlin-aws-sigv4` work at runtime.
-- IAM permissions follow least-privilege per §2.4.6.
-- All structured logs include the relevant `requestId` / `executionId` / `loadId` / `taskToken` so an operator can trace a single ingestion end-to-end via CloudWatch Logs Insights.
+[`operations-playbook.md`](./operations-playbook.md) §8 collects the service-wide criteria and points to the acceptance section of every reference file.
