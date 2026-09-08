@@ -239,6 +239,19 @@ publication:
     representative_property_permit_count: 12
 
 enrichment:
+  avm:
+    status: awaiting-licensed-source
+    observed_coverage: 0_percent
+    column: avm_value
+    source_policy: appraisal market_value is not an AVM and cannot populate this field
+    requested_delivery: folio-keyed licensed bulk AVM extract
+    publication_requirement: durable public Filebase/IPFS redistribution rights
+    request_template: skills/use-oracle/runtime/docs/duval-avm-source-request.md
+    candidate_providers:
+      - ATTOM AVM bulk
+      - Clear Capital ClearAVM bulk/API
+    blocker_owner: Oracle Data Partnerships
+    blocker: provider, credentials, immutable extract, and publication rights are not yet supplied
   bbb:
     status: published-and-donphan-verified
     source_access_status: accessible
