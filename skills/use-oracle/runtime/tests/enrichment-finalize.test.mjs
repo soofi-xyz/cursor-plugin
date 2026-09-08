@@ -35,6 +35,7 @@ describe("enrichment artifact finalization", () => {
           has_bbb_contractor: false,
           has_permits: false,
           hoa_flag: true,
+          avm_value: 250_000,
         },
         {
           property_id: "property-2",
@@ -81,6 +82,12 @@ describe("enrichment artifact finalization", () => {
           },
           {
             county: "duval",
+            source: "avm",
+            ingested_count: 1,
+            linked_property_count: 1,
+          },
+          {
+            county: "duval",
             source: "hoa",
             ingested_count: 1,
             linked_property_count: 1,
@@ -118,6 +125,7 @@ describe("enrichment artifact finalization", () => {
       permitPropertyCount: 1,
       hoaKnownPropertyCount: 1,
       hoaPositivePropertyCount: 1,
+      avmPropertyCount: 1,
     });
     expect(artifacts.artifactIntegrity.queryTable.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(

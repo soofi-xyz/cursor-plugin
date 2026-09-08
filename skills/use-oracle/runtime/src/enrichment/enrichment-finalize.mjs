@@ -74,6 +74,7 @@ export async function finalizeEnrichmentArtifacts({
   const sunbiz = requireCoverageDataset(coverage, "sunbiz");
   const bbb = requireCoverageDataset(coverage, "bbb");
   const hoa = coverage.datasets?.find((entry) => entry?.source === "hoa");
+  const avm = coverage.datasets?.find((entry) => entry?.source === "avm");
   const permits = coverage.datasets?.find(
     (entry) => entry?.source === "permits",
   );
@@ -86,6 +87,7 @@ export async function finalizeEnrichmentArtifacts({
   let permitPropertyCount = 0;
   let hoaKnownPropertyCount = 0;
   let hoaPositivePropertyCount = 0;
+  let avmPropertyCount = 0;
   try {
     const cursor = reader.getCursor([
       "property_id",
@@ -93,6 +95,7 @@ export async function finalizeEnrichmentArtifacts({
       "has_bbb_contractor",
       "has_permits",
       "hoa_flag",
+      "avm_value",
     ]);
     let row = await cursor.next();
     while (row) {
@@ -119,6 +122,13 @@ export async function finalizeEnrichmentArtifacts({
       if (row.hoa_flag === true || row.hoa_flag === false) {
         hoaKnownPropertyCount += 1;
         if (row.hoa_flag === true) hoaPositivePropertyCount += 1;
+      }
+      if (
+        row.avm_value !== null &&
+        row.avm_value !== undefined &&
+        Number.isFinite(Number(row.avm_value))
+      ) {
+        avmPropertyCount += 1;
       }
       row = await cursor.next();
     }
@@ -167,6 +177,14 @@ export async function finalizeEnrichmentArtifacts({
       `HOA positive coverage mismatch: ${hoaPositivePropertyCount} flagged properties vs ${hoa.positive_membership_count}`,
     );
   }
+  if (
+    avm?.linked_property_count !== undefined &&
+    avmPropertyCount !== avm.linked_property_count
+  ) {
+    throw new Error(
+      `AVM coverage mismatch: ${avmPropertyCount} valued properties vs ${avm.linked_property_count}`,
+    );
+  }
 
   const [queryTableIntegrity, coverageIntegrity] = await Promise.all([
     fileIntegrity(parquetPath),
@@ -193,6 +211,7 @@ export async function finalizeEnrichmentArtifacts({
     permitPropertyCount,
     hoaKnownPropertyCount,
     hoaPositivePropertyCount,
+    avmPropertyCount,
     artifactIntegrity: {
       queryTable: queryTableIntegrity,
       coverage: coverageIntegrity,
