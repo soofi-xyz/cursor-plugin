@@ -94,7 +94,8 @@ Hoopa owns intake, portal spec, repo creation, stage order, stop rules, and the 
 | Figma design extraction and frontend adaptation | Figma MCP + `sylveon` patterns | `skills/figma-to-code/` |
 | Responsive design tests across breakpoints | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template, secrets, IAM, logs, metrics, alarms | `skills/build-portals/rules/02-deterministic-lambda-template.md` | — |
-| Persist / Gremlin / Lexicon queries | **User-provided Hoothoot query** (do not spawn `hoothoot` in this version) | Target-repo persist client plus `skills/build-persist-service/` |
+| Persist / Lexicon platform | `conkeldurr` | Target-repo persist client plus `skills/build-persist-service/` |
+| Persist/Neptune Gremlin queries | **User-provided Hoothoot query** (do not spawn `hoothoot` in this version) | — |
 | Full-flow user-behavior tests on preview | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
 Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. On increments, follow the existing API style in the repo even if it is Express rather than the greenfield template. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time. Reuse sibling identifiers already in the target repo.
