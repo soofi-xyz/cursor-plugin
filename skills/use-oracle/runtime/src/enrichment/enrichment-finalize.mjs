@@ -73,6 +73,7 @@ export async function finalizeEnrichmentArtifacts({
   const appraisal = requireCoverageDataset(coverage, "appraisal");
   const sunbiz = requireCoverageDataset(coverage, "sunbiz");
   const bbb = requireCoverageDataset(coverage, "bbb");
+  const avm = coverage.datasets?.find((entry) => entry?.source === "avm");
   const permits = coverage.datasets?.find(
     (entry) => entry?.source === "permits",
   );
@@ -83,12 +84,14 @@ export async function finalizeEnrichmentArtifacts({
   let sunbizPropertyCount = 0;
   let bbbContractorPropertyCount = 0;
   let permitPropertyCount = 0;
+  let avmPropertyCount = 0;
   try {
     const cursor = reader.getCursor([
       "property_id",
       "has_sunbiz_tenant",
       "has_bbb_contractor",
       "has_permits",
+      "avm_value",
     ]);
     let row = await cursor.next();
     while (row) {
@@ -112,6 +115,13 @@ export async function finalizeEnrichmentArtifacts({
         bbbContractorPropertyCount += 1;
       }
       if (row.has_permits === true) permitPropertyCount += 1;
+      if (
+        row.avm_value !== null &&
+        row.avm_value !== undefined &&
+        Number.isFinite(Number(row.avm_value))
+      ) {
+        avmPropertyCount += 1;
+      }
       row = await cursor.next();
     }
   } finally {
@@ -143,6 +153,14 @@ export async function finalizeEnrichmentArtifacts({
       `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permitPropertyCoverageCount}`,
     );
   }
+  if (
+    avm?.linked_property_count !== undefined &&
+    avmPropertyCount !== avm.linked_property_count
+  ) {
+    throw new Error(
+      `AVM coverage mismatch: ${avmPropertyCount} valued properties vs ${avm.linked_property_count}`,
+    );
+  }
 
   const [queryTableIntegrity, coverageIntegrity] = await Promise.all([
     fileIntegrity(parquetPath),
@@ -167,6 +185,7 @@ export async function finalizeEnrichmentArtifacts({
     bbbContractorPropertyCount,
     bbbProfileCount: bbb.ingested_count,
     permitPropertyCount,
+    avmPropertyCount,
     artifactIntegrity: {
       queryTable: queryTableIntegrity,
       coverage: coverageIntegrity,

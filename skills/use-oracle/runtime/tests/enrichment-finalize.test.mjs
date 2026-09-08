@@ -34,6 +34,7 @@ describe("enrichment artifact finalization", () => {
           has_sunbiz_tenant: true,
           has_bbb_contractor: false,
           has_permits: false,
+          avm_value: 250_000,
         },
         {
           property_id: "property-2",
@@ -78,6 +79,12 @@ describe("enrichment artifact finalization", () => {
             linked_property_count: 3,
             properties_with_permits: 1,
           },
+          {
+            county: "duval",
+            source: "avm",
+            ingested_count: 1,
+            linked_property_count: 1,
+          },
         ],
       }),
     );
@@ -108,6 +115,7 @@ describe("enrichment artifact finalization", () => {
       sunbizPropertyCount: 1,
       bbbContractorPropertyCount: 1,
       permitPropertyCount: 1,
+      avmPropertyCount: 1,
     });
     expect(artifacts.artifactIntegrity.queryTable.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(
