@@ -14,7 +14,7 @@
         "PUBLISHED_COUNTY_CATALOG_URL": "https://raw.githubusercontent.com/soofi-xyz/soofi-xyz-team-kit/main/skills/use-oracle/runtime/catalog/published-counties.json",
         "PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS": "{\"duval\":\"QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ\"}",
         "PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS": "{\"duval\":\"QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62\"}",
-        "DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS": "{\"duval\":\"QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm\"}",
+        "DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS": "{\"duval\":\"QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y\"}",
         "ORACLE_OPEN_DATA_IPNS_MAP": "{\"lee\":\"k51qzi5uqu5dlzgslzedrnk4whtd7ip69l0pmd3zxelz8hwjorbeyy0pyyeu4m\",\"palm-beach\":\"k51qzi5uqu5dgjnt84x8vnj2c9uwxomkpykwdvmf6xg43wwcxsifo6w1sp1wwh\",\"miami-dade\":\"k51qzi5uqu5dk9i59xxm579a5bziprxpygv8wyi01n2ivd5kj9h5u90g1tzn1d\",\"orange\":\"k51qzi5uqu5dm1g8re6sb3kv9yfh1xtcuohwhrvuklp7ky6l5gj62yrf1potyz\"}",
         "ORACLE_OPEN_DATA_DEFAULT_COUNTY": "lee",
         "ORACLE_GEO_INDEX_IPNS": "k51qzi5uqu5djo3756w73x3swtt63g9y7igj7tvv1gs4skjk3haj3fuk7qosdi"

@@ -126,12 +126,14 @@ export async function finalizeEnrichmentArtifacts({
       `BBB coverage mismatch: ${bbbContractorPropertyCount} flagged properties vs ${bbb.linked_property_count}`,
     );
   }
+  const permitPropertyCoverageCount =
+    permits?.properties_with_permits ?? permits?.linked_property_count;
   if (
-    permits?.linked_property_count !== undefined &&
-    permitPropertyCount !== permits.linked_property_count
+    permitPropertyCoverageCount !== undefined &&
+    permitPropertyCount !== permitPropertyCoverageCount
   ) {
     throw new Error(
-      `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permits.linked_property_count}`,
+      `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permitPropertyCoverageCount}`,
     );
   }
 

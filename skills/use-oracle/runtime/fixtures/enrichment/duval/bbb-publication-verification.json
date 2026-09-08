@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "elephant.bbb-publication-verification.v1",
+  "county": "duval",
+  "verifiedAt": "2026-09-08T10:00:00.000Z",
+  "ipnsRecordVerifiedAt": "2026-09-08T10:05:00.000Z",
+  "elephantMcpVersion": "1.12.1",
+  "immutableCoverageCid": "QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y",
+  "immutableCoverageSha256": "236303ec7e8b8fd82ef45377cad487d1c9e9f08b0b5341c6cbc95931ff70fedf",
+  "ipnsRecord": {
+    "label": "oracle-dataset-coverage-duval",
+    "name": "k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w",
+    "cid": "QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y",
+    "enabled": true
+  },
+  "donphan": {
+    "tool": "getOracleDatasetInfo",
+    "county": "Duval",
+    "stateCode": "FL",
+    "propertyCount": 403885,
+    "propertyDatasetAvailable": true,
+    "source": "query-table",
+    "countSource": "catalog-bound-dataset-coverage",
+    "exportedAt": "2026-09-08T05:24:23.068Z",
+    "publicationScope": {
+      "level": "full",
+      "denominatorBasis": "county_total"
+    },
+    "bbbDataset": {
+      "ingestedCount": 476,
+      "expectedCount": null,
+      "firstLoadedAt": "2026-09-06T02:50:49.887Z",
+      "lastLoadedAt": "2026-09-08T05:24:23.068Z"
+    }
+  }
+}

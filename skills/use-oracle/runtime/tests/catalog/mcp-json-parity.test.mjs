@@ -351,6 +351,6 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
         written.mcpServers.elephant.env
           .DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS,
       ).duval,
-    ).toBe("QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm");
+    ).toBe("QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y");
   });
 });
