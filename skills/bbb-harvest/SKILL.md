@@ -106,10 +106,12 @@ node bin/elephant-county.mjs bbb-link \
 The linker automatically accepts unique exact license, phone, and normalized-name
 matches. Jaro-Winkler matches are review candidates only and must not set public property
 flags without explicit review. Preserve accepted links and review candidates as private
-audit artifacts, reconcile property flags against coverage, then follow the normal
-exact-byte publication approval. The flag links the current BBB snapshot to historical
-permit contractor identities; it does not claim that a contractor held BBB accreditation
-when an older permit was issued.
+audit artifacts. The linker must reproduce the permit publication's exclusions and
+deduplication, reconcile source/published/linked/excluded permit counts exactly, and prove
+that every BBB-flagged property also has `has_permits = true` before exact-byte publication
+approval. The flag links the current BBB snapshot to historical permit contractor
+identities; it does not claim that a contractor held BBB accreditation when an older
+permit was issued.
 
 For a reviewed 403 outcome, submit browser-free zero-profile artifacts and reconciliation:
 
@@ -129,7 +131,14 @@ and `incomplete_reason: http_403_source_block`.
 When matching BBB contractor profiles to municipal permit records or Sunbiz business entities, apply a strict 3-tier cascade:
 1. **Tier 1 — State License Number Match**: Match exact state license strings (e.g. `CCC1328456`, `CAC1815924`). Highest confidence (1.0).
 2. **Tier 2 — Standardized Phone Number Match**: Normalize 10-digit phone strings (strip punctuation and country code `+1`). High confidence (0.95).
-3. **Tier 3 — Cleaned Business Name Match**: Strip corporate suffixes (`LLC`, `INC`, `CORP`, `SERVICES`, `ROOFING`), trim whitespace, and match normalized names with Jaro-Winkler similarity ≥ 0.90. Medium confidence (0.80).
+3. **Tier 3 — Unique Exact Normalized Business Name**: Normalize punctuation and legal
+   suffixes (`LLC`, `INC`, `CORP`) while retaining trade words such as `ROOFING` and
+   `SERVICES`; automatically link only when the exact normalized name identifies one BBB
+   business. Medium confidence (0.80).
+
+Jaro-Winkler similarity ≥ 0.90 is a separate review-candidate ranking step. Its looser
+cleanup may remove generic trade words to prioritize review, but it never sets a public
+property flag automatically.
 
 The crawler module has vitest tests in `skills/use-oracle/runtime` — keep them passing if it is
 modified. Category lists, run notes, and any

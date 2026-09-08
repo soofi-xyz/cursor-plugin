@@ -19,6 +19,15 @@ import {
 } from "../src/enrichment/query-table-bbb.mjs";
 
 const temporaryDirectories = [];
+const testPermitSourceAdapter = {
+  ...duvalBbbPermitSourceAdapter,
+  key: "synthetic-duval-permits",
+  validateFeature(feature) {
+    return {
+      property_improvement_id: `permit-${feature.attributes.RecordID}`,
+    };
+  },
+};
 
 afterEach(async () => {
   await Promise.all(
@@ -107,16 +116,25 @@ describe("BBB permit-contractor property linkage", () => {
           property_id: "property-1",
           parcel_identifier: "123456-0000",
           has_bbb_contractor: false,
+          has_permits: true,
         },
         {
           property_id: "property-2",
           parcel_identifier: "123456-0001",
           has_bbb_contractor: false,
+          has_permits: true,
         },
         {
           property_id: "property-3",
           parcel_identifier: "123456-0002",
           has_bbb_contractor: false,
+          has_permits: true,
+        },
+        {
+          property_id: "property-4",
+          parcel_identifier: "123456-0003",
+          has_bbb_contractor: false,
+          has_permits: false,
         },
       ],
     });
@@ -126,7 +144,7 @@ describe("BBB permit-contractor property linkage", () => {
         county: "duval",
         exportedAt: "2026-09-08T10:00:00.000Z",
         datasets: [
-          { county: "duval", source: "appraisal", ingested_count: 3 },
+          { county: "duval", source: "appraisal", ingested_count: 4 },
           {
             county: "duval",
             source: "bbb",
@@ -134,6 +152,15 @@ describe("BBB permit-contractor property linkage", () => {
             linked_property_count: 0,
             valid_unlinked_count: 5,
             property_linkage_status: "not_linked",
+          },
+          {
+            county: "duval",
+            source: "permits",
+            ingested_count: 6,
+            expected_count: 7,
+            linked_property_count: 6,
+            valid_unlinked_permit_count: 0,
+            excluded_source_record_count: 1,
           },
         ],
       })}\n`,
@@ -243,6 +270,15 @@ describe("BBB permit-contractor property linkage", () => {
           FullPermitNumber: "R-6",
         },
       },
+      {
+        attributes: {
+          RecordID: 7,
+          RE: "123456 0003",
+          CompanyID: 10,
+          CompanyName: "Apex Roofing Inc.",
+          FullPermitNumber: "R-7",
+        },
+      },
     ];
     const permitBody = gzipSync(`${JSON.stringify({ offset: 0, features })}\n`);
     await writeFile(permitSourcePath, permitBody);
@@ -265,7 +301,7 @@ describe("BBB permit-contractor property linkage", () => {
 
     const { summary, coverage } = await linkBbbContractorsToProperties({
       countyKey: "duval",
-      permitSourceAdapter: duvalBbbPermitSourceAdapter,
+      permitSourceAdapter: testPermitSourceAdapter,
       expectedCategoryKeys: ["roofing-contractors"],
       schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
       inputParquet,
@@ -283,9 +319,13 @@ describe("BBB permit-contractor property linkage", () => {
     });
 
     expect(summary).toMatchObject({
-      inputPropertyCount: 3,
-      outputPropertyCount: 3,
-      permitFeatureCount: 6,
+      inputPropertyCount: 4,
+      outputPropertyCount: 4,
+      permitFeatureCount: 7,
+      publishedPermitCount: 6,
+      propertyLinkedPermitCount: 6,
+      excludedPermitCount: 1,
+      permitsOnIneligibleProperty: 1,
       bbbProfileCount: 5,
       bbbBusinessCount: 4,
       linkedBbbBusinessCount: 1,
@@ -295,10 +335,10 @@ describe("BBB permit-contractor property linkage", () => {
       acceptedContractorMatchCount: 3,
       reviewCandidateCount: 2,
       sourceVerification: {
-        permitSourceAdapter: "duval-jaxepics-bid-map",
+        permitSourceAdapter: "synthetic-duval-permits",
         bbbReconciliationManifestVerified: true,
         permitArtifactManifestVerified: true,
-        expectedPermitFeatureCount: 6,
+        expectedPermitFeatureCount: 7,
       },
     });
     expect(
@@ -306,11 +346,19 @@ describe("BBB permit-contractor property linkage", () => {
     ).toMatchObject({
       linked_property_count: 2,
       linked_permit_count: 4,
+      matched_permit_count: 4,
       linked_business_count: 1,
       total_business_count: 4,
+      provider_business_count: 4,
+      linked_provider_business_count: 1,
+      valid_unlinked_provider_business_count: 3,
       linked_profile_count: 2,
       valid_unlinked_count: 3,
       property_linkage_status: "linked_via_permit_contractor",
+      linkage_complete_within_scope: true,
+      review_candidate_count: 2,
+      ambiguous_candidate_count: 1,
+      contractor_evidence_privacy: "private",
       linkage_temporal_basis:
         "current_bbb_snapshot_to_historical_permit_contractor_identity",
       asserts_bbb_status_at_permit_time: false,
@@ -324,6 +372,7 @@ describe("BBB permit-contractor property linkage", () => {
       "property-1": true,
       "property-2": true,
       "property-3": false,
+      "property-4": false,
     });
     expect(
       (await readFile(linksPath, "utf8")).trim().split("\n"),

@@ -351,12 +351,12 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
         written.mcpServers.elephant.env
           .DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS,
       ).duval,
-    ).toBe("QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN");
+    ).toBe("QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy");
     expect(
       JSON.parse(
         written.mcpServers.elephant.env
           .PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS,
       ).duval,
-    ).toBe("Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw");
+    ).toBe("QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS");
   });
 });

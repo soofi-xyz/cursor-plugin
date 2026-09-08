@@ -103,7 +103,14 @@ export async function finalizeEnrichmentArtifacts({
       }
       propertyIds.add(row.property_id);
       if (row.has_sunbiz_tenant === true) sunbizPropertyCount += 1;
-      if (row.has_bbb_contractor === true) bbbContractorPropertyCount += 1;
+      if (row.has_bbb_contractor === true) {
+        if (row.has_permits !== true) {
+          throw new Error(
+            `BBB contractor property ${row.property_id} is not permit-linked`,
+          );
+        }
+        bbbContractorPropertyCount += 1;
+      }
       if (row.has_permits === true) permitPropertyCount += 1;
       row = await cursor.next();
     }

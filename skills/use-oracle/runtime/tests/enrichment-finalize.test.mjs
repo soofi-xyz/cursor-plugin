@@ -114,4 +114,70 @@ describe("enrichment artifact finalization", () => {
       JSON.parse(await readFile(path.join(inputDir, "manifest.json"), "utf8")),
     ).toEqual(artifacts);
   });
+
+  it("rejects a BBB contractor flag on a property without permits", async () => {
+    const inputDir = await mkdtemp(
+      path.join(tmpdir(), "enrichment-finalize-bbb-without-permit-"),
+    );
+    temporaryDirectories.push(inputDir);
+    await writeQueryTableParquet({
+      parquetPath: path.join(inputDir, "query-table.parquet"),
+      schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+      rows: [
+        {
+          property_id: "property-1",
+          has_sunbiz_tenant: false,
+          has_bbb_contractor: true,
+          has_permits: false,
+        },
+      ],
+    });
+    await writeFile(
+      path.join(inputDir, "dataset-coverage.json"),
+      JSON.stringify({
+        county: "duval",
+        datasets: [
+          {
+            county: "duval",
+            source: "appraisal",
+            ingested_count: 1,
+            expected_count: 1,
+          },
+          {
+            county: "duval",
+            source: "sunbiz",
+            ingested_count: 0,
+            linked_property_count: 0,
+          },
+          {
+            county: "duval",
+            source: "bbb",
+            ingested_count: 1,
+            linked_property_count: 1,
+          },
+          {
+            county: "duval",
+            source: "permits",
+            ingested_count: 0,
+            properties_with_permits: 0,
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      finalizeEnrichmentArtifacts({
+        inputDir,
+        profile: duvalEnrichmentProfile,
+        provenance: {
+          requestSha256: "a".repeat(64),
+          enrichmentProfileSha256:
+            enrichmentProfileDigest(duvalEnrichmentProfile),
+          gitCommit: "b".repeat(40),
+          treeDigest: "c".repeat(64),
+          runtimeImageProvenance: "job-definition:test:1",
+        },
+      }),
+    ).rejects.toThrow(/BBB contractor property property-1 is not permit-linked/);
+  });
 });

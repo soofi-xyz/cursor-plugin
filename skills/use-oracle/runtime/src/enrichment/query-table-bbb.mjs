@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 import { toParquetRecord } from "../core/query-table.mjs";
+import { normalizeJaxPermitMapFeature } from "../permits/adapters/jaxepics-map.mjs";
 import { normalizeDuvalParcelIdentifier } from "../permits/normalization.mjs";
 
 const require = createRequire(import.meta.url);
@@ -395,7 +396,11 @@ async function buildPropertyIndex(inputParquet, normalizeParcelIdentifier) {
   const reader = await ParquetReader.openFile(inputParquet);
   let rowCount = 0;
   try {
-    const cursor = reader.getCursor(["property_id", "parcel_identifier"]);
+    const cursor = reader.getCursor([
+      "property_id",
+      "parcel_identifier",
+      "has_permits",
+    ]);
     let row = await cursor.next();
     while (row) {
       rowCount += 1;
@@ -405,16 +410,19 @@ async function buildPropertyIndex(inputParquet, normalizeParcelIdentifier) {
       }
       let parcel;
       try {
-            parcel = normalizeParcelIdentifier(row.parcel_identifier);
+        parcel = normalizeParcelIdentifier(row.parcel_identifier);
       } catch {
         row = await cursor.next();
         continue;
       }
       const existing = byParcel.get(parcel);
-      if (existing && existing !== propertyId) {
+      if (existing && existing.propertyId !== propertyId) {
         throw new Error(`Parcel ${parcel} maps to multiple property IDs`);
       }
-      byParcel.set(parcel, propertyId);
+      byParcel.set(parcel, {
+        propertyId,
+        hasPermits: row.has_permits === true,
+      });
       row = await cursor.next();
     }
   } finally {
@@ -457,6 +465,12 @@ export const duvalBbbPermitSourceAdapter = Object.freeze({
   key: "duval-jaxepics-bid-map",
   artifactPath: "private/jaxepics-bid-map.jsonl.gz",
   normalizeParcelIdentifier: normalizeDuvalParcelIdentifier,
+  validateFeature(feature, { parcelIdentifier, propertyId }) {
+    return normalizeJaxPermitMapFeature(feature, {
+      requestedParcelIdentifier: parcelIdentifier,
+      requestedPropertyId: propertyId,
+    });
+  },
   parseFeature(feature) {
     const attributes = feature?.attributes ?? feature ?? {};
     return {
@@ -496,7 +510,8 @@ export async function linkBbbContractorsToProperties({
     !permitSourceAdapter?.key ||
     !permitSourceAdapter?.artifactPath ||
     typeof permitSourceAdapter?.normalizeParcelIdentifier !== "function" ||
-    typeof permitSourceAdapter?.parseFeature !== "function"
+    typeof permitSourceAdapter?.parseFeature !== "function" ||
+    typeof permitSourceAdapter?.validateFeature !== "function"
   ) {
     throw new Error("BBB linker requires a permit-source adapter");
   }
@@ -564,6 +579,19 @@ export async function linkBbbContractorsToProperties({
     }
     expectedPermitFeatureCount = sourceReceipt.rowCount;
   }
+  const coverage = JSON.parse(await readFile(inputCoverage, "utf8"));
+  if (coverage.county !== countyKey) {
+    throw new Error(`BBB coverage county mismatch: ${coverage.county ?? "missing"}`);
+  }
+  const existingBbb = coverage.datasets?.find(
+    (dataset) => dataset?.source === "bbb",
+  );
+  const existingPermits = coverage.datasets?.find(
+    (dataset) => dataset?.source === "permits",
+  );
+  if (!existingPermits) {
+    throw new Error("BBB linker requires permit dataset coverage");
+  }
   await Promise.all([
     mkdir(path.dirname(outputParquet), { recursive: true }),
     mkdir(path.dirname(outputCoverage), { recursive: true }),
@@ -577,11 +605,15 @@ export async function linkBbbContractorsToProperties({
   const contractorMatches = new Map();
   const contractorCandidates = new Map();
   const matchCache = new Map();
+  const seenPermitIds = new Set();
   const links = createWriteStream(linksPath, { encoding: "utf8" });
   let linkedPermitCount = 0;
   let permitsWithoutProperty = 0;
+  let permitsOnIneligibleProperty = 0;
   let permitsWithoutContractor = 0;
   let invalidParcelCount = 0;
+  let malformedPermitCount = 0;
+  let duplicatePermitCount = 0;
 
   const permitFeatureCount = await forEachPermitFeature(
     permitSourcePath,
@@ -593,6 +625,7 @@ export async function linkBbbContractorsToProperties({
           linkedPropertyCount: linkedPropertyIds.size,
           acceptedContractorMatchCount: contractorMatches.size,
           reviewCandidateCount: contractorCandidates.size,
+          permitsOnIneligibleProperty,
         });
       }
       const sourcePermit = permitSourceAdapter.parseFeature(feature);
@@ -606,11 +639,31 @@ export async function linkBbbContractorsToProperties({
         invalidParcelCount += 1;
         return;
       }
-      const propertyId = propertyIndex.byParcel.get(parcelIdentifier);
-      if (!propertyId) {
+      const property = propertyIndex.byParcel.get(parcelIdentifier);
+      if (property && !property.hasPermits) {
+        permitsOnIneligibleProperty += 1;
+        return;
+      }
+      let normalizedPermit;
+      try {
+        normalizedPermit = permitSourceAdapter.validateFeature(feature, {
+          parcelIdentifier,
+          propertyId: property?.propertyId ?? null,
+        });
+      } catch {
+        malformedPermitCount += 1;
+        return;
+      }
+      if (seenPermitIds.has(normalizedPermit.property_improvement_id)) {
+        duplicatePermitCount += 1;
+        return;
+      }
+      seenPermitIds.add(normalizedPermit.property_improvement_id);
+      if (!property) {
         permitsWithoutProperty += 1;
         return;
       }
+      const propertyId = property.propertyId;
       const contractor = permitContractorIdentity(attributes);
       if (!contractor.businessName || !contractor.strictName) {
         permitsWithoutContractor += 1;
@@ -674,8 +727,8 @@ export async function linkBbbContractorsToProperties({
         county: countyKey,
         property_id: propertyId,
         parcel_identifier: parcelIdentifier,
-            permit_source_record_id: sourcePermit.sourceRecordId,
-            permit_number: sourcePermit.permitNumber,
+        permit_source_record_id: sourcePermit.sourceRecordId,
+        permit_number: sourcePermit.permitNumber,
         permit_company_id: contractor.sourceCompanyId,
         permit_contractor_name: contractor.businessName,
         bbb_business_id: match.bbbBusinessId,
@@ -694,6 +747,23 @@ export async function linkBbbContractorsToProperties({
     throw new Error(
       `BBB linker expected ${expectedPermitFeatureCount} permit features, received ${permitFeatureCount}`,
     );
+  }
+  const excludedPermitCount =
+    invalidParcelCount +
+    permitsOnIneligibleProperty +
+    malformedPermitCount +
+    duplicatePermitCount;
+  const publishedPermitCount = permitFeatureCount - excludedPermitCount;
+  const propertyLinkedPermitCount =
+    publishedPermitCount - permitsWithoutProperty;
+  if (
+    existingPermits.expected_count !== permitFeatureCount ||
+    existingPermits.ingested_count !== publishedPermitCount ||
+    existingPermits.linked_property_count !== propertyLinkedPermitCount ||
+    existingPermits.valid_unlinked_permit_count !== permitsWithoutProperty ||
+    existingPermits.excluded_source_record_count !== excludedPermitCount
+  ) {
+    throw new Error("BBB linker failed permit-publication reconciliation");
   }
 
   const candidateBody = [...contractorCandidates.values()]
@@ -737,13 +807,19 @@ export async function linkBbbContractorsToProperties({
     );
   }
 
-  const coverage = JSON.parse(await readFile(inputCoverage, "utf8"));
-  if (coverage.county !== countyKey) {
-    throw new Error(`BBB coverage county mismatch: ${coverage.county ?? "missing"}`);
+  const matchMethodCounts = {};
+  for (const match of contractorMatches.values()) {
+    const counts = matchMethodCounts[match.method] ?? {
+      contractor_identity_count: 0,
+      permit_count: 0,
+    };
+    counts.contractor_identity_count += 1;
+    counts.permit_count += match.permitCount;
+    matchMethodCounts[match.method] = counts;
   }
-  const existingBbb = coverage.datasets?.find(
-    (dataset) => dataset?.source === "bbb",
-  );
+  const ambiguousCandidateCount = [...contractorCandidates.values()].filter(
+    (candidate) => candidate.status === "ambiguous",
+  ).length;
   const updatedCoverage = upsertBbbCoverage(
     { ...coverage, exportedAt },
     {
@@ -751,17 +827,28 @@ export async function linkBbbContractorsToProperties({
       last_loaded_at: exportedAt,
       linked_property_count: linkedPropertyIds.size,
       linked_permit_count: linkedPermitCount,
+      matched_permit_count: linkedPermitCount,
       linked_business_count: linkedBbbBusinessIds.size,
       total_business_count: bbbIndex.businesses.size,
+      provider_business_count: bbbIndex.businesses.size,
+      linked_provider_business_count: linkedBbbBusinessIds.size,
+      valid_unlinked_provider_business_count:
+        bbbIndex.businesses.size - linkedBbbBusinessIds.size,
       linked_profile_count: linkedBbbProfileIds.size,
       valid_unlinked_count:
         bbbIndex.profiles.length - linkedBbbProfileIds.size,
       property_linkage_status: "linked_via_permit_contractor",
+      linkage_complete_within_scope: true,
+      review_candidate_count: contractorCandidates.size,
+      ambiguous_candidate_count: ambiguousCandidateCount,
+      match_method_counts: matchMethodCounts,
       match_policy:
         "license_then_phone_then_unique_exact_normalized_business_name",
       linkage_temporal_basis:
         "current_bbb_snapshot_to_historical_permit_contractor_identity",
       asserts_bbb_status_at_permit_time: false,
+      permit_source_sha256: permitIntegrity.sha256,
+      contractor_evidence_privacy: "private",
     },
   );
   await writeFile(
@@ -797,9 +884,15 @@ export async function linkBbbContractorsToProperties({
     inputPropertyCount: propertyIndex.rowCount,
     outputPropertyCount: outputRowCount,
     permitFeatureCount,
+    publishedPermitCount,
+    propertyLinkedPermitCount,
+    excludedPermitCount,
     permitsWithoutProperty,
+    permitsOnIneligibleProperty,
     permitsWithoutContractor,
     invalidParcelCount,
+    malformedPermitCount,
+    duplicatePermitCount,
     bbbProfileCount: bbbIndex.profiles.length,
     bbbBusinessCount: bbbIndex.businesses.size,
     linkedBbbBusinessCount: linkedBbbBusinessIds.size,
@@ -808,7 +901,9 @@ export async function linkBbbContractorsToProperties({
     linkedPropertyCount: linkedPropertyIds.size,
     acceptedContractorMatchCount: acceptedContractorMatches.length,
     reviewCandidateCount: contractorCandidates.size,
+    ambiguousCandidateCount,
     acceptedContractorMatches,
+    matchMethodCounts,
     matchPolicy: {
       cascade: [
         "exact_state_license",

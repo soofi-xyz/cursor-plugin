@@ -1,8 +1,15 @@
 {
   "schemaVersion": "elephant.bbb-publication-receipt.v1",
   "county": "duval",
-  "publishedAt": "2026-09-08T14:12:04.353Z",
+  "publishedAt": "2026-09-08T14:35:57.784Z",
   "bucket": "elephant-oracle-query-table",
+  "correction": {
+    "reason": "exclude permit rows omitted from the public permit dataset before BBB linkage",
+    "supersededQueryTableCid": "Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw",
+    "supersededCoverageCid": "QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN",
+    "removedPropertyFlags": 105,
+    "removedPermitLinks": 142
+  },
   "railway": {
     "serviceId": "fc99cc9f-a3f5-4de4-97f5-223e1cc31f19",
     "sourceRuntimeCommit": "ff68b0b6812598d07e0f4aaa322ddbfe230f20b9",
@@ -21,20 +28,20 @@
       "bbb-property-linkage/"
     ],
     "objectCount": 24,
-    "totalBytes": 440940482,
+    "totalBytes": 440867808,
     "reconciledProfilesVersionId": "m_CkwvsSpseEivGagkfr5pm8W5HGXyy8"
   },
   "artifacts": {
     "queryTable": {
       "bytes": 167302003,
-      "sha256": "e82d271df9916817b96ecc453d85f9cc19e4f649a06b568cf94a212e63b06cb5",
-      "cid": "Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw",
+      "sha256": "3f43ef083328d193ba55bee7ec4279f6a6ba371d8b6279ac6af01864419aa56a",
+      "cid": "QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS",
       "unchanged": false
     },
     "datasetCoverage": {
-      "bytes": 2487,
-      "sha256": "39bf8c0d65ad8036ddae6138611cdcf6a07bd7f7e2c319cc230a132ac0ad1ff2",
-      "cid": "QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN"
+      "bytes": 3108,
+      "sha256": "e97034a47a53f6c3a21df9cd0f425ab1cc0261488c2605500fe99b115c01c9c5",
+      "cid": "QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy"
     },
     "bbbProfiles": {
       "privacy": "private",
@@ -43,13 +50,13 @@
     },
     "bbbPropertyLinks": {
       "privacy": "private",
-      "bytes": 162616256,
-      "sha256": "8cb1d06e3915b0048be4267be64bf3b18c79e667b8826ddbf50c652ffa411da7"
+      "bytes": 162542561,
+      "sha256": "4227976393fe65a913b327e84e9f4c7223cab8be900aaa1c8279ce0b282efa1a"
     },
     "bbbLinkCandidates": {
       "privacy": "private",
       "bytes": 403282,
-      "sha256": "852edddea8ae7b3203520a38a2c352b8cf88e6626d067c09dd6b9341004dd122"
+      "sha256": "a4b9507949a5406387f3671df07e3a0994a8677aecaea6f16c0e3903247cb7bc"
     }
   },
   "ipns": {
@@ -68,14 +75,18 @@
     "uniqueProfileCount": 698,
     "duplicateProfileCount": 12,
     "permanentFailureCount": 0,
-    "linkedPropertyCount": 171239,
-    "linkedPermitCount": 314389,
+    "linkedPropertyCount": 171134,
+    "linkedPermitCount": 314247,
     "linkedBusinessCount": 282,
     "linkedProfileCount": 371,
     "validUnlinkedProfileCount": 327,
     "propertyLinkageStatus": "linked_via_permit_contractor",
     "sourceAccessStatus": "accessible",
-    "sourceAccessComplete": true
+    "sourceAccessComplete": true,
+    "permitSourceRecordCount": 3624986,
+    "permitPublishedRecordCount": 3415527,
+    "permitExcludedSourceRecordCount": 209459,
+    "independentMunicipalityPermitRecordCount": 1078
   },
   "exactByteApprovalRecorded": true
 }

@@ -1,23 +1,23 @@
 {
   "schemaVersion": "elephant.bbb-publication-verification.v1",
   "county": "duval",
-  "verifiedAt": "2026-09-08T14:16:54.262Z",
-  "ipnsRecordVerifiedAt": "2026-09-08T14:12:30.000Z",
+  "verifiedAt": "2026-09-08T14:40:56.006Z",
+  "ipnsRecordVerifiedAt": "2026-09-08T14:35:57.784Z",
   "elephantMcpVersion": "1.12.1",
-  "immutableQueryTableCid": "Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw",
-  "immutableQueryTableSha256": "e82d271df9916817b96ecc453d85f9cc19e4f649a06b568cf94a212e63b06cb5",
-  "immutableCoverageCid": "QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN",
-  "immutableCoverageSha256": "39bf8c0d65ad8036ddae6138611cdcf6a07bd7f7e2c319cc230a132ac0ad1ff2",
+  "immutableQueryTableCid": "QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS",
+  "immutableQueryTableSha256": "3f43ef083328d193ba55bee7ec4279f6a6ba371d8b6279ac6af01864419aa56a",
+  "immutableCoverageCid": "QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy",
+  "immutableCoverageSha256": "e97034a47a53f6c3a21df9cd0f425ab1cc0261488c2605500fe99b115c01c9c5",
   "ipnsRecord": {
     "label": "oracle-dataset-coverage-duval",
     "name": "k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w",
-    "cid": "QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN",
+    "cid": "QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy",
     "enabled": true
   },
   "queryTableIpnsRecord": {
     "label": "oracle-query-table-duval",
     "name": "k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4",
-    "cid": "Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw",
+    "cid": "QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS",
     "enabled": true
   },
   "donphan": {
@@ -28,7 +28,7 @@
     "propertyDatasetAvailable": true,
     "source": "query-table",
     "countSource": "catalog-bound-dataset-coverage",
-    "exportedAt": "2026-09-08T13:45:45.057Z",
+    "exportedAt": "2026-09-08T14:26:26.736Z",
     "publicationScope": {
       "level": "full",
       "denominatorBasis": "county_total"
@@ -37,12 +37,13 @@
       "ingestedCount": 698,
       "expectedCount": null,
       "firstLoadedAt": "2026-09-06T02:50:49.887Z",
-      "lastLoadedAt": "2026-09-08T13:45:45.057Z"
+      "lastLoadedAt": "2026-09-08T14:26:26.736Z"
     }
   },
   "rowLevelQuery": {
     "tool": "queryProperties",
     "propertyCount": 403885,
-    "propertiesWithBbbContractor": 171239
+    "propertiesWithBbbContractor": 171134,
+    "bbbContractorPropertiesWithoutPermits": 0
   }
 }
