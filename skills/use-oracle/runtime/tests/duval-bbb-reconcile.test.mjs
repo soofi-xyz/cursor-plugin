@@ -20,12 +20,35 @@ afterEach(async () => {
   );
 });
 
-async function writeHarvest(directory, category, profile) {
+async function writeHarvest(directory, category, profile, rawPage = null) {
   const relativePath = "profiles/profiles-part-0001.jsonl";
-  const body = `${JSON.stringify(profile)}\n`;
+  const evidencedProfile = {
+    ...profile,
+    bbbHarvest: profile.bbbHarvest ?? {
+      listing: { profileUrl: profile.profileUrl },
+      mainPage: { url: profile.profileUrl },
+      subpages: [],
+    },
+  };
+  const body = `${JSON.stringify(evidencedProfile)}\n`;
+  const categoryPagePath = "category-pages/category-pages.jsonl";
+  const categoryPageBody = `${JSON.stringify({
+    recordKind: "bbb_category_page",
+    categoryUrl: category.url,
+    pageNumber: 1,
+    totalResults: 1,
+    pageCount: 1,
+    profileListings: [{ profileUrl: profile.profileUrl }],
+    rawPage: rawPage ?? {
+      title: `Category | ${category.key}`,
+      text: `Showing: 1 result for ${category.key}`,
+    },
+  })}\n`;
   await mkdir(path.join(directory, "profiles"), { recursive: true });
+  await mkdir(path.join(directory, "category-pages"), { recursive: true });
   await mkdir(path.join(directory, "manifest"), { recursive: true });
   await writeFile(path.join(directory, relativePath), body);
+  await writeFile(path.join(directory, categoryPagePath), categoryPageBody);
   await writeFile(
     path.join(directory, "manifest", "summary.json"),
     JSON.stringify({
@@ -34,12 +57,22 @@ async function writeHarvest(directory, category, profile) {
       county: "duval",
       categoryKey: category.key,
       categoryUrl: category.url,
+      categoryPagesVisited: 1,
+      profileUrlsDiscovered: 1,
       profilesSelected: 1,
       profilesHarvested: 1,
       profilesFailedPermanent: 0,
       completeWithinBounds: true,
       advertisedResultsAreCompletenessDenominator: false,
       failurePart: null,
+      categoryPagePart: {
+        relativePath: categoryPagePath,
+        recordCount: 1,
+        bytes: Buffer.byteLength(categoryPageBody),
+        sha256: createHash("sha256")
+          .update(categoryPageBody)
+          .digest("hex"),
+      },
       profileParts: [
         {
           relativePath,
@@ -55,9 +88,24 @@ async function writeHarvest(directory, category, profile) {
 async function writePermanentFailureHarvest(directory, category, failure) {
   const relativePath = "failures/failed-profiles.jsonl";
   const body = `${JSON.stringify(failure)}\n`;
+  const categoryPagePath = "category-pages/category-pages.jsonl";
+  const categoryPageBody = `${JSON.stringify({
+    recordKind: "bbb_category_page",
+    categoryUrl: category.url,
+    pageNumber: 1,
+    totalResults: 1,
+    pageCount: 1,
+    profileListings: [{ profileUrl: failure.profileUrl }],
+    rawPage: {
+      title: `Category | ${category.key}`,
+      text: `Showing: 1 result for ${category.key}`,
+    },
+  })}\n`;
   await mkdir(path.join(directory, "failures"), { recursive: true });
+  await mkdir(path.join(directory, "category-pages"), { recursive: true });
   await mkdir(path.join(directory, "manifest"), { recursive: true });
   await writeFile(path.join(directory, relativePath), body);
+  await writeFile(path.join(directory, categoryPagePath), categoryPageBody);
   await writeFile(
     path.join(directory, "manifest", "summary.json"),
     JSON.stringify({
@@ -66,12 +114,22 @@ async function writePermanentFailureHarvest(directory, category, failure) {
       county: "duval",
       categoryKey: category.key,
       categoryUrl: category.url,
+      categoryPagesVisited: 1,
+      profileUrlsDiscovered: 1,
       profilesSelected: 1,
       profilesHarvested: 0,
       profilesFailedPermanent: 1,
       completeWithinBounds: true,
       advertisedResultsAreCompletenessDenominator: false,
       profileParts: [],
+      categoryPagePart: {
+        relativePath: categoryPagePath,
+        recordCount: 1,
+        bytes: Buffer.byteLength(categoryPageBody),
+        sha256: createHash("sha256")
+          .update(categoryPageBody)
+          .digest("hex"),
+      },
       failurePart: {
         relativePath,
         recordCount: 1,
@@ -92,7 +150,7 @@ describe("Duval BBB harvest reconciliation", () => {
       harvestDirs.push(directory);
       await writeHarvest(directory, category, {
         recordKind: "bbb_business_profile",
-        providerProfileId: index < 2 ? "0403:shared" : "0403:unique",
+        providerProfileId: index < 2 ? "0403:1" : "0403:2",
         profileUrl:
           index < 2
             ? "https://www.bbb.org/us/fl/jacksonville/profile/example/shared-0403-1"
@@ -150,6 +208,49 @@ describe("Duval BBB harvest reconciliation", () => {
       valid_unlinked_count: 2,
       property_linkage_status: "not_linked",
     });
+  });
+
+  it("rejects a completed category whose stored evidence is BBB's page-not-found response", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "duval-bbb-not-found-"));
+    temporaryDirectories.push(root);
+    const harvestDirs = [];
+    for (const [index, category] of BBB_CATEGORIES.entries()) {
+      const directory = path.join(root, category.key);
+      harvestDirs.push(directory);
+      await writeHarvest(
+        directory,
+        category,
+        {
+          recordKind: "bbb_business_profile",
+          providerProfileId: `0403:${index}`,
+          profileUrl: `https://www.bbb.org/us/fl/jacksonville/profile/example/example-0403-${index}`,
+          name: `Example ${index}`,
+        },
+        index === 1
+          ? {
+              title: "Page not found | Better Business Bureau®",
+              text: "Whoops! Page not found!",
+            }
+          : null,
+      );
+    }
+    const inputCoverage = path.join(root, "coverage-input.json");
+    await writeFile(
+      inputCoverage,
+      JSON.stringify({ county: "duval", datasets: [] }),
+    );
+
+    await expect(
+      reconcileBbbHarvests({
+        countyKey: "duval",
+        categories: BBB_CATEGORIES,
+        harvestDirs,
+        inputCoverage,
+        outputCoverage: path.join(root, "coverage-output.json"),
+        outputProfiles: path.join(root, "bbb-profiles.jsonl"),
+        outputManifest: path.join(root, "bbb-manifest.json"),
+      }),
+    ).rejects.toThrow(/page-not-found response: solar-energy-contractors/);
   });
 
   it("retains explicit incomplete 403 coverage for a zero-profile blocked source", async () => {
@@ -246,7 +347,7 @@ describe("Duval BBB harvest reconciliation", () => {
         access_complete: false,
         blocked_category_keys: ["roofing-contractors"],
         not_attempted_category_keys: [
-          "solar-energy-system-contractors",
+          "solar-energy-contractors",
           "heating-and-air-conditioning",
         ],
       },
@@ -275,7 +376,7 @@ describe("Duval BBB harvest reconciliation", () => {
     );
     await writeHarvest(harvestDirs[0], BBB_CATEGORIES[0], {
       recordKind: "bbb_business_profile",
-      providerProfileId: "0403:retained",
+      providerProfileId: "0403:3",
       profileUrl:
         "https://www.bbb.org/us/fl/jacksonville/profile/example/retained-0403-3",
       name: "Retained Contractor",
@@ -366,7 +467,7 @@ describe("Duval BBB harvest reconciliation", () => {
       } else {
         await writeHarvest(directory, category, {
           recordKind: "bbb_business_profile",
-          providerProfileId: `0403:complete-${index}`,
+          providerProfileId: `0403:${index}`,
           profileUrl:
             `https://www.bbb.org/us/fl/jacksonville/profile/example/complete-${index}-0403-${index}`,
           name: `Complete Contractor ${index}`,
@@ -411,7 +512,7 @@ describe("Duval BBB harvest reconciliation", () => {
       harvestDirs.push(directory);
       await writeHarvest(directory, category, {
         recordKind: "bbb_business_profile",
-        providerProfileId: `0403:${category.key}`,
+        providerProfileId: "0403:5",
         profileUrl:
           `https://www.bbb.org/us/fl/jacksonville/profile/example/${category.key}-0403-5`,
       });

@@ -8,14 +8,14 @@
   "artifacts": {
     "queryTable": {
       "bytes": 167302003,
-      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb"
+      "sha256": "e82d271df9916817b96ecc453d85f9cc19e4f649a06b568cf94a212e63b06cb5"
     },
     "coverage": {
-      "bytes": 2094,
-      "sha256": "236303ec7e8b8fd82ef45377cad487d1c9e9f08b0b5341c6cbc95931ff70fedf"
+      "bytes": 2487,
+      "sha256": "39bf8c0d65ad8036ddae6138611cdcf6a07bd7f7e2c319cc230a132ac0ad1ff2"
     }
   },
   "approved": true,
   "approvedBy": "Nelson Boralli",
-  "approvedAt": "2026-09-08T05:30:00.000Z"
+  "approvedAt": "2026-09-08T14:11:35.284Z"
 }

@@ -34,6 +34,10 @@ import { prepareSunbizArchive } from "../src/enrichment/sunbiz-archive.mjs";
 import { enrichQueryTableWithSunbiz } from "../src/enrichment/query-table-sunbiz.mjs";
 import { harvestBbbCategory } from "../src/enrichment/bbb.mjs";
 import { reconcileBbbHarvests } from "../src/enrichment/bbb-reconcile.mjs";
+import {
+  duvalBbbPermitSourceAdapter,
+  linkBbbContractorsToProperties,
+} from "../src/enrichment/query-table-bbb.mjs";
 import { finalizeEnrichmentArtifacts } from "../src/enrichment/enrichment-finalize.mjs";
 import { requirePermitProfile } from "../src/counties/permit-profiles.mjs";
 import { permitProfileDigest } from "../src/counties/permit-profile.mjs";
@@ -463,6 +467,64 @@ async function runBbbReconcileCommand(argv) {
   console.log(JSON.stringify({ event: "bbb_reconcile_complete", summary }, null, 2));
 }
 
+async function runBbbLinkCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const permitSourceAdapter =
+    profile.countyKey === "duval" ? duvalBbbPermitSourceAdapter : null;
+  if (!permitSourceAdapter) {
+    throw new Error(
+      `No BBB permit-source adapter is registered for ${profile.countyKey}`,
+    );
+  }
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const result = await linkBbbContractorsToProperties({
+    countyKey: profile.countyKey,
+    permitSourceAdapter,
+    expectedCategoryKeys: profile.bbb.categories.map(
+      (category) => category.key,
+    ),
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    bbbProfilesPath: requireStringFlag(flags, "bbb-profiles"),
+    bbbReconciliationManifestPath: requireStringFlag(
+      flags,
+      "bbb-reconciliation-manifest",
+    ),
+    permitSourcePath: requireStringFlag(flags, "permit-source"),
+    permitArtifactManifestPath: requireStringFlag(
+      flags,
+      "permit-artifact-manifest",
+    ),
+    linksPath: path.join(
+      outputDir,
+      "private",
+      "bbb-property-links.jsonl",
+    ),
+    candidatesPath: path.join(
+      outputDir,
+      "private",
+      "bbb-contractor-link-candidates.jsonl",
+    ),
+    manifestPath: path.join(
+      outputDir,
+      "bbb-property-linkage-manifest.json",
+    ),
+    progress: (progress) =>
+      console.error(
+        JSON.stringify({ event: "bbb_property_linkage_progress", ...progress }),
+      ),
+  });
+  console.log(
+    JSON.stringify({ event: "bbb_property_linkage_complete", ...result }, null, 2),
+  );
+}
+
 async function runEnrichmentFinalizeCommand(argv) {
   const flags = parseFlags(argv);
   const profile = requireEnrichmentProfile(
@@ -749,6 +811,7 @@ async function main() {
   if (command === "sunbiz-enrich") return runSunbizEnrichCommand(rest);
   if (command === "bbb-harvest") return runBbbHarvestCommand(rest);
   if (command === "bbb-reconcile") return runBbbReconcileCommand(rest);
+  if (command === "bbb-link") return runBbbLinkCommand(rest);
   if (command === "enrichment-finalize") {
     return runEnrichmentFinalizeCommand(rest);
   }
@@ -770,7 +833,7 @@ async function main() {
     return runPermitPublishCommand(rest);
   }
   console.error(
-    "Usage: elephant-county <ingest|export|publish|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|bbb-harvest|bbb-reconcile|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
+    "Usage: elephant-county <ingest|export|publish|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
       "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
@@ -781,6 +844,7 @@ async function main() {
       "  sunbiz-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --sunbiz-extract <dir> --output-dir <dir>\n" +
       "  bbb-harvest --county <profile-key> --category <reviewed-key> --job-id <id> --max-pages N --max-profiles N --max-requests N --max-duration-minutes N --output <dir>\n" +
       "  bbb-reconcile --county <profile-key> --harvest-root <category-dirs-root> --input-coverage <json> --output-dir <dir>\n" +
+      "  bbb-link --county duval --input-parquet <query-table.parquet> --input-coverage <dataset-coverage.json> --bbb-profiles <bbb-profiles.jsonl> --bbb-reconciliation-manifest <json> --permit-source <jaxepics-bid-map.jsonl.gz> --permit-artifact-manifest <json> --output-dir <dir>\n" +
       "  enrichment-finalize --county <profile-key> --input <publish-dir>\n" +
       "  permit-probe --county <profile-key>\n" +
       "  permit-bounded-harvest --county <profile-key> --job-id <id> --input-parquet <parquet> --limit N --output <dir>\n" +

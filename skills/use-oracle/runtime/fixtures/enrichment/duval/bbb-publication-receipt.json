@@ -1,40 +1,55 @@
 {
   "schemaVersion": "elephant.bbb-publication-receipt.v1",
   "county": "duval",
-  "publishedAt": "2026-09-08T09:57:35.000Z",
+  "publishedAt": "2026-09-08T14:12:04.353Z",
   "bucket": "elephant-oracle-query-table",
   "railway": {
     "serviceId": "fc99cc9f-a3f5-4de4-97f5-223e1cc31f19",
     "sourceRuntimeCommit": "ff68b0b6812598d07e0f4aaa322ddbfe230f20b9",
     "deployments": {
       "roofing-contractors": "7f5b8a73-dc0a-48a8-a532-84ad86785d3e",
-      "solar-energy-system-contractors": "391e4633-76cd-4214-a681-fa398c7c153f",
+      "solar-energy-contractors": "c898eadc-451f-449e-9891-61206203a9ac",
       "heating-and-air-conditioning": "e4c46b83-b603-4fbe-8bc8-5591903a4a7f"
     }
   },
   "privateArchive": {
     "bucket": "duvaltask8batchstack-artifactbucket7410c9ef-ilumpehfi0sf",
     "prefix": "runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/",
-    "objectCount": 25,
-    "totalBytes": 47172770,
-    "reconciledProfilesVersionId": "0OOkTxP08MLGMwDtdySmxB_wAcmaM8UI"
+    "finalEvidencePrefixes": [
+      "bbb-solar-energy-contractors/",
+      "reconciliation-v2/bbb/",
+      "bbb-property-linkage/"
+    ],
+    "objectCount": 24,
+    "totalBytes": 440940482,
+    "reconciledProfilesVersionId": "m_CkwvsSpseEivGagkfr5pm8W5HGXyy8"
   },
   "artifacts": {
     "queryTable": {
       "bytes": 167302003,
-      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb",
-      "cid": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ",
-      "unchanged": true
+      "sha256": "e82d271df9916817b96ecc453d85f9cc19e4f649a06b568cf94a212e63b06cb5",
+      "cid": "Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw",
+      "unchanged": false
     },
     "datasetCoverage": {
-      "bytes": 2094,
-      "sha256": "236303ec7e8b8fd82ef45377cad487d1c9e9f08b0b5341c6cbc95931ff70fedf",
-      "cid": "QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y"
+      "bytes": 2487,
+      "sha256": "39bf8c0d65ad8036ddae6138611cdcf6a07bd7f7e2c319cc230a132ac0ad1ff2",
+      "cid": "QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN"
     },
     "bbbProfiles": {
       "privacy": "private",
-      "bytes": 45733416,
-      "sha256": "712703128995d16ab76153cf1172cf8c11a5846e6165d11f8050f4033cf6f89d"
+      "bytes": 65888423,
+      "sha256": "69bc490dfd7d9783d4ee9ecff308b13a7c7d8f430f04ffcc82bade4573097e4f"
+    },
+    "bbbPropertyLinks": {
+      "privacy": "private",
+      "bytes": 162616256,
+      "sha256": "8cb1d06e3915b0048be4267be64bf3b18c79e667b8826ddbf50c652ffa411da7"
+    },
+    "bbbLinkCandidates": {
+      "privacy": "private",
+      "bytes": 403282,
+      "sha256": "852edddea8ae7b3203520a38a2c352b8cf88e6626d067c09dd6b9341004dd122"
     }
   },
   "ipns": {
@@ -49,12 +64,16 @@
   },
   "reconciliation": {
     "categoryCount": 3,
-    "rawProfileCount": 477,
-    "uniqueProfileCount": 476,
-    "duplicateProfileCount": 1,
+    "rawProfileCount": 710,
+    "uniqueProfileCount": 698,
+    "duplicateProfileCount": 12,
     "permanentFailureCount": 0,
-    "linkedPropertyCount": 0,
-    "propertyLinkageStatus": "not_linked",
+    "linkedPropertyCount": 171239,
+    "linkedPermitCount": 314389,
+    "linkedBusinessCount": 282,
+    "linkedProfileCount": 371,
+    "validUnlinkedProfileCount": 327,
+    "propertyLinkageStatus": "linked_via_permit_contractor",
     "sourceAccessStatus": "accessible",
     "sourceAccessComplete": true
   },

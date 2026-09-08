@@ -213,17 +213,17 @@ destination:
 
 publication:
   status: published-and-donphan-verified
-  completed_at: "2026-09-08T09:57:35.000Z"
+  completed_at: "2026-09-08T14:12:04.353Z"
   bucket: elephant-oracle-query-table
   property_query_table_ipns_label: oracle-query-table-duval
   property_query_table_ipns_name: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
-  property_query_table_cid: QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ
+  property_query_table_cid: Qma761yJ7QbX9GZannCXsbn3aUdFDT4kyAjZw7v5kTwDCw
   permit_table_ipns_label: oracle-permit-table-duval
   permit_table_ipns_name: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
   permit_table_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
   coverage_ipns_label: oracle-dataset-coverage-duval
   coverage_ipns_name: k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w
-  coverage_cid: QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y
+  coverage_cid: QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN
   permit_coverage_cid: Qme3r6LCKSZZc5aCdEqW7RNcnsg5BntFLvP6wDGse38NxG
   privacy_approval_required: true
   exact_byte_approval_recorded: true
@@ -242,28 +242,36 @@ enrichment:
   bbb:
     status: published-and-donphan-verified
     source_access_status: accessible
-    completed_at: "2026-09-08T09:57:35.000Z"
+    completed_at: "2026-09-08T14:12:04.353Z"
     reviewed_categories:
       - category_key: roofing-contractors
         profiles_harvested: 242
         profiles_failed: 0
-      - category_key: solar-energy-system-contractors
-        profiles_harvested: 0
+      - category_key: solar-energy-contractors
+        profiles_harvested: 233
         profiles_failed: 0
       - category_key: heating-and-air-conditioning
         profiles_harvested: 235
         profiles_failed: 0
-    raw_profile_count: 477
-    unique_profile_count: 476
-    duplicate_profile_count: 1
-    linked_property_count: 0
-    valid_unlinked_count: 476
-    property_linkage_status: not_linked
+    raw_profile_count: 710
+    unique_profile_count: 698
+    duplicate_profile_count: 12
+    linked_business_count: 282
+    linked_profile_count: 371
+    linked_permit_count: 314389
+    linked_property_count: 171239
+    valid_unlinked_count: 327
+    property_linkage_status: linked_via_permit_contractor
+    property_linkage_semantics: current BBB snapshot business identity appears as contractor on a linked historical permit; does not assert BBB status at permit time
     private_profile_artifact:
-      bytes: 45733416
-      sha256: 712703128995d16ab76153cf1172cf8c11a5846e6165d11f8050f4033cf6f89d
+      bytes: 65888423
+      sha256: 69bc490dfd7d9783d4ee9ecff308b13a7c7d8f430f04ffcc82bade4573097e4f
       archive_bucket: duvaltask8batchstack-artifactbucket7410c9ef-ilumpehfi0sf
-      archive_prefix: runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/reconciliation/bbb/
-    public_coverage_cid: QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y
+      archive_prefix: runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/reconciliation-v2/bbb/
+    private_linkage_artifact:
+      bytes: 162616256
+      sha256: 8cb1d06e3915b0048be4267be64bf3b18c79e667b8826ddbf50c652ffa411da7
+      archive_prefix: runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/bbb-property-linkage/private/
+    public_coverage_cid: QmcXC1k3RgKmcTPTfoiTCeTgFYhT2fcbbFck1WGkduWcNN
 
 approved_exceptions: []

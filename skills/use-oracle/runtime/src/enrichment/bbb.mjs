@@ -361,6 +361,13 @@ function isChallenge(title, text) {
   );
 }
 
+function isPermanentNotFound(title, text) {
+  return (
+    /Page not found \| Better Business Bureau/i.test(title) ||
+    /Whoops!\s*Page not found!/i.test(text)
+  );
+}
+
 async function gotoAccessiblePage(page, url, options, budget) {
   let result = {
     ok: false,
@@ -412,12 +419,16 @@ async function gotoAccessiblePage(page, url, options, budget) {
       const status = response?.status() ?? null;
       const statusValid =
         status !== null && status >= 200 && status < 400;
+      const permanentNotFound =
+        status === 404 ||
+        status === 410 ||
+        isPermanentNotFound(title, text);
       const failureReason =
         status === 403
           ? "blocked"
           : status === 429
             ? "rate_limited"
-            : status === 404 || status === 410
+            : permanentNotFound
               ? "permanent_not_found"
               : status !== null && status >= 500
                 ? "server_error"
@@ -429,7 +440,11 @@ async function gotoAccessiblePage(page, url, options, budget) {
                       ? "network"
                       : "http_error";
       result = {
-        ok: statusValid && finalHostValid && !isChallenge(title, text),
+        ok:
+          statusValid &&
+          finalHostValid &&
+          !isChallenge(title, text) &&
+          !permanentNotFound,
         status,
         title,
         text,

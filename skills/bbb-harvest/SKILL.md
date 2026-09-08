@@ -61,7 +61,7 @@ subdir there):
    categories for permit contractor matching).
    - **Multi-Trade Harvesting**: Expand contractor collection across all high-value building trades:
      - Roofing Contractors (`roofing-contractors`)
-     - Solar Energy Contractors (`solar-energy-system-contractors`)
+     - Solar Energy Contractors (`solar-energy-contractors`)
      - Heating and Air Conditioning / HVAC (`heating-and-air-conditioning`)
 2. Run a small probe (`maxPages: 2`, scratch output subdir). If BBB returns 403, stop
    without further requests and retain the status, URL, timestamp, category, request
@@ -85,6 +85,31 @@ node bin/elephant-county.mjs bbb-reconcile \
   --input-coverage <dataset-coverage.json> \
   --output-dir <reconciled-dir>
 ```
+
+After permits are available, link BBB businesses to properties through the retained
+private permit-contractor source. Do not join a BBB office address directly to a property:
+`has_bbb_contractor` means that the BBB business appears as contractor on a permit already
+linked to that property.
+
+```bash
+node bin/elephant-county.mjs bbb-link \
+  --county duval \
+  --input-parquet <query-table.parquet> \
+  --input-coverage <dataset-coverage.json> \
+  --bbb-profiles <bbb-profiles.jsonl> \
+  --bbb-reconciliation-manifest <bbb-reconciliation-manifest.json> \
+  --permit-source <private/jaxepics-bid-map.jsonl.gz> \
+  --permit-artifact-manifest <permit-artifact-manifest.json> \
+  --output-dir <linked-dir>
+```
+
+The linker automatically accepts unique exact license, phone, and normalized-name
+matches. Jaro-Winkler matches are review candidates only and must not set public property
+flags without explicit review. Preserve accepted links and review candidates as private
+audit artifacts, reconcile property flags against coverage, then follow the normal
+exact-byte publication approval. The flag links the current BBB snapshot to historical
+permit contractor identities; it does not claim that a contractor held BBB accreditation
+when an older permit was issued.
 
 For a reviewed 403 outcome, submit browser-free zero-profile artifacts and reconciliation:
 
