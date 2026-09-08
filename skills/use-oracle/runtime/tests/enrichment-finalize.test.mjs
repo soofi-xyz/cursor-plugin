@@ -34,6 +34,7 @@ describe("enrichment artifact finalization", () => {
           has_sunbiz_tenant: true,
           has_bbb_contractor: false,
           has_permits: false,
+          hoa_flag: true,
           avm_value: 250_000,
         },
         {
@@ -85,6 +86,13 @@ describe("enrichment artifact finalization", () => {
             ingested_count: 1,
             linked_property_count: 1,
           },
+          {
+            county: "duval",
+            source: "hoa",
+            ingested_count: 1,
+            linked_property_count: 1,
+            positive_membership_count: 1,
+          },
         ],
       }),
     );
@@ -115,6 +123,8 @@ describe("enrichment artifact finalization", () => {
       sunbizPropertyCount: 1,
       bbbContractorPropertyCount: 1,
       permitPropertyCount: 1,
+      hoaKnownPropertyCount: 1,
+      hoaPositivePropertyCount: 1,
       avmPropertyCount: 1,
     });
     expect(artifacts.artifactIntegrity.queryTable.sha256).toMatch(/^[a-f0-9]{64}$/);

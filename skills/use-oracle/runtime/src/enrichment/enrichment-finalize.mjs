@@ -73,6 +73,7 @@ export async function finalizeEnrichmentArtifacts({
   const appraisal = requireCoverageDataset(coverage, "appraisal");
   const sunbiz = requireCoverageDataset(coverage, "sunbiz");
   const bbb = requireCoverageDataset(coverage, "bbb");
+  const hoa = coverage.datasets?.find((entry) => entry?.source === "hoa");
   const avm = coverage.datasets?.find((entry) => entry?.source === "avm");
   const permits = coverage.datasets?.find(
     (entry) => entry?.source === "permits",
@@ -84,6 +85,8 @@ export async function finalizeEnrichmentArtifacts({
   let sunbizPropertyCount = 0;
   let bbbContractorPropertyCount = 0;
   let permitPropertyCount = 0;
+  let hoaKnownPropertyCount = 0;
+  let hoaPositivePropertyCount = 0;
   let avmPropertyCount = 0;
   try {
     const cursor = reader.getCursor([
@@ -91,6 +94,7 @@ export async function finalizeEnrichmentArtifacts({
       "has_sunbiz_tenant",
       "has_bbb_contractor",
       "has_permits",
+      "hoa_flag",
       "avm_value",
     ]);
     let row = await cursor.next();
@@ -115,6 +119,10 @@ export async function finalizeEnrichmentArtifacts({
         bbbContractorPropertyCount += 1;
       }
       if (row.has_permits === true) permitPropertyCount += 1;
+      if (row.hoa_flag === true || row.hoa_flag === false) {
+        hoaKnownPropertyCount += 1;
+        if (row.hoa_flag === true) hoaPositivePropertyCount += 1;
+      }
       if (
         row.avm_value !== null &&
         row.avm_value !== undefined &&
@@ -154,6 +162,22 @@ export async function finalizeEnrichmentArtifacts({
     );
   }
   if (
+    hoa?.linked_property_count !== undefined &&
+    hoaKnownPropertyCount !== hoa.linked_property_count
+  ) {
+    throw new Error(
+      `HOA coverage mismatch: ${hoaKnownPropertyCount} known properties vs ${hoa.linked_property_count}`,
+    );
+  }
+  if (
+    hoa?.positive_membership_count !== undefined &&
+    hoaPositivePropertyCount !== hoa.positive_membership_count
+  ) {
+    throw new Error(
+      `HOA positive coverage mismatch: ${hoaPositivePropertyCount} flagged properties vs ${hoa.positive_membership_count}`,
+    );
+  }
+  if (
     avm?.linked_property_count !== undefined &&
     avmPropertyCount !== avm.linked_property_count
   ) {
@@ -185,6 +209,8 @@ export async function finalizeEnrichmentArtifacts({
     bbbContractorPropertyCount,
     bbbProfileCount: bbb.ingested_count,
     permitPropertyCount,
+    hoaKnownPropertyCount,
+    hoaPositivePropertyCount,
     avmPropertyCount,
     artifactIntegrity: {
       queryTable: queryTableIntegrity,
