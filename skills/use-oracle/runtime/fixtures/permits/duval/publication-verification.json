@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "elephant.permit-publication-verification.v1",
+  "countyKey": "duval",
+  "verifiedAt": "2026-09-06T12:10:24.475Z",
+  "ipnsVerifiedAt": "2026-09-06T12:16:23.295Z",
+  "publicationScope": {
+    "level": "full",
+    "denominatorBasis": "county_total",
+    "resolution": "registry_match"
+  },
+  "artifacts": {
+    "permitTable": {
+      "ipnsName": "k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1",
+      "cid": "QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62",
+      "bytes": 1108488548,
+      "sha256": "6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e"
+    },
+    "queryTable": {
+      "ipnsName": "k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4",
+      "cid": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ",
+      "bytes": 167302003,
+      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb"
+    },
+    "datasetCoverage": {
+      "ipnsName": "k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w",
+      "cid": "QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm",
+      "bytes": 3171,
+      "sha256": "4bef885a67cb22d2520873039f6c5eaa8d7b9134594e750921d39ba38feb75a3"
+    },
+    "permitCoverage": {
+      "cid": "Qme3r6LCKSZZc5aCdEqW7RNcnsg5BntFLvP6wDGse38NxG",
+      "bytes": 2186,
+      "sha256": "70d6cd1f4bfc0d585f828515c53e81176a3feaca45f60feb8fa6eb3804e526b2"
+    }
+  },
+  "donphan": {
+    "freshProcess": true,
+    "immutableCidFallbacks": true,
+    "propertyCount": 403885,
+    "permitSchemaColumnCount": 20,
+    "permitSource": "duval_jaxepics_bid_map",
+    "permitCount": 3415527,
+    "linkedPermitCount": 3353717,
+    "validUnlinkedPermitCount": 61810,
+    "propertiesWithPermits": 336451,
+    "typedRoofPermitCount": 375267,
+    "completionDateRange": {
+      "first": "1985-01-14",
+      "last": "2026-09-05"
+    },
+    "representativeParcel": {
+      "parcelIdentifier": "164634-0000",
+      "propertyId": "146108fcb20391c44b2d9583462eb3a4",
+      "propertyPermitCount": 12,
+      "hasPermits": true,
+      "permits": [
+        {
+          "permitNumber": "E-95-24104.000",
+          "improvementType": "Electrical Permit",
+          "permitIssueDate": "1995-05-25",
+          "completionDate": "1995-05-30"
+        },
+        {
+          "permitNumber": "R-21-422915.000",
+          "improvementType": "Roofing Permit",
+          "permitIssueDate": "2021-07-06",
+          "completionDate": "2021-12-30"
+        }
+      ]
+    }
+  }
+}

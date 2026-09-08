@@ -80,16 +80,18 @@ describe("print-mcp-env-maps", () => {
     ).toThrow(/Duplicate countyKey "lee"/);
   });
 
-  it("matches the tracked bundled catalog keys (12 counties, no santa-clara)", async () => {
+  it("matches the tracked bundled catalog keys (13 counties, no santa-clara)", async () => {
     const catalog = JSON.parse(await readFile(trackedCatalogPath, "utf8"));
     const maps = mcpEnvMapsFromCatalog(catalog);
     const countyKeys = catalog.counties.map((county) => county.countyKey);
 
-    expect(countyKeys).toHaveLength(12);
+    expect(countyKeys).toHaveLength(13);
     expect(Object.keys(maps.PROPERTY_QUERY_TABLE_MAP)).toEqual(countyKeys);
     expect(Object.keys(maps.DATASET_COVERAGE_MAP)).toEqual(countyKeys);
     expect(maps.PERMIT_QUERY_TABLE_MAP).toEqual({
       broward: catalog.counties.find((c) => c.countyKey === "broward")
+        .permitQueryTableUrl,
+      duval: catalog.counties.find((c) => c.countyKey === "duval")
         .permitQueryTableUrl,
       montgomery: catalog.counties.find((c) => c.countyKey === "montgomery")
         .permitQueryTableUrl,
@@ -97,6 +99,16 @@ describe("print-mcp-env-maps", () => {
         .permitQueryTableUrl,
     });
     expect(Object.keys(maps.PERMIT_QUERY_TABLE_MAP)).not.toContain("santa-clara");
+    expect(maps.PERMIT_QUERY_TABLE_MAP.duval).toBe(
+      catalog.counties.find((c) => c.countyKey === "duval")
+        .permitQueryTableUrl,
+    );
+    expect(maps.PROPERTY_QUERY_TABLE_MAP.duval).toBe(
+      catalog.counties.find((c) => c.countyKey === "duval").queryTableUrl,
+    );
+    expect(maps.DATASET_COVERAGE_MAP.duval).toBe(
+      catalog.counties.find((c) => c.countyKey === "duval").datasetCoverageUrl,
+    );
     expect(maps.PROPERTY_QUERY_TABLE_MAP.polk).toMatch(/^https:/);
   });
 

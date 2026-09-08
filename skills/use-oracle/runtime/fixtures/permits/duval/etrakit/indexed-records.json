@@ -1,0 +1,50 @@
+{
+  "fixtureKind": "public_search_index_extract",
+  "livePortalStatus": "blocked",
+  "capturedAt": "2026-09-06T05:00:00.000Z",
+  "records": [
+    {
+      "permitNumber": "RES23-0133",
+      "sourceUrl": "https://atlb-trk.aspgov.com/etrakit/Search/permit.aspx?activityNo=RES23-0133",
+      "status": "FINALED",
+      "relatedRecords": [
+        "GSRS25-0007",
+        "IRR25-0004",
+        "GSRS24-0053",
+        "SOLR24-0005",
+        "ACRS24-0079",
+        "ROOF24-0013",
+        "ROOF24-0012",
+        "TEMP23-0025",
+        "ERES23-0291",
+        "PLRS23-0174",
+        "DEMO23-0006"
+      ],
+      "inspections": [
+        {
+          "type": "ROOF SHEATHING",
+          "status": "PASSED",
+          "scheduledDate": "2024-01-29"
+        },
+        {
+          "type": "ROOF DRY IN",
+          "status": "CANCELLED",
+          "scheduledDate": "2024-12-19"
+        },
+        {
+          "type": "BUILDING FINAL",
+          "status": "PASSED",
+          "scheduledDate": "2025-02-26",
+          "resultDate": "2025-02-26"
+        }
+      ]
+    },
+    {
+      "permitNumber": "ROOF24-0013",
+      "sourceUrl": "https://atlb-trk.aspgov.com/etrakit/Search/permit.aspx?activityNo=RES23-0133",
+      "type": "ROOF NON SHINGLE",
+      "status": "FINALED",
+      "fixtureRole": "roof_permit"
+    }
+  ]
+}

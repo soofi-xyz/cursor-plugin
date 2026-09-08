@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globals: false,
     environment: "node",
-    include: ["tests/**/*.test.mjs"],
+    include: ["tests/**/*.test.{mjs,ts}"],
     exclude: ["**/node_modules/**"],
     testTimeout: 30000,
     // `core/transform-runner.mjs` uses `process.chdir` (process-global) while

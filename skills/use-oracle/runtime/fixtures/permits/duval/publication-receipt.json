@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "elephant.filebase-permit-publication-receipt.v1",
+  "county": "duval",
+  "bucket": "elephant-oracle-query-table",
+  "approvedBy": "Nelson Boralli",
+  "approvedAt": "2026-09-06T11:45:00.000Z",
+  "artifacts": {
+    "permitTable": {
+      "bytes": 1108488548,
+      "sha256": "6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e"
+    },
+    "queryTable": {
+      "bytes": 167302003,
+      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb"
+    },
+    "coverage": {
+      "bytes": 3171,
+      "sha256": "4bef885a67cb22d2520873039f6c5eaa8d7b9134594e750921d39ba38feb75a3"
+    },
+    "permitCoverage": {
+      "bytes": 2186,
+      "sha256": "70d6cd1f4bfc0d585f828515c53e81176a3feaca45f60feb8fa6eb3804e526b2"
+    }
+  },
+  "uploads": {
+    "permitTable": {
+      "key": "duval/permit-table.parquet",
+      "cid": "QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62"
+    },
+    "queryTable": {
+      "key": "duval/query-table.parquet",
+      "cid": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ"
+    },
+    "coverage": {
+      "key": "duval/dataset-coverage.json",
+      "cid": "QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm"
+    },
+    "permitCoverage": {
+      "key": "duval/permit-coverage.json",
+      "cid": "Qme3r6LCKSZZc5aCdEqW7RNcnsg5BntFLvP6wDGse38NxG"
+    }
+  },
+  "names": {
+    "permitTable": {
+      "enabled": true,
+      "label": "oracle-permit-table-duval",
+      "network_key": "k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1",
+      "cid": "QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62",
+      "sequence": 1,
+      "published_at": null,
+      "created_at": "2026-09-06T07:46:54.559-04:00",
+      "updated_at": "2026-09-06T07:46:54.559-04:00"
+    },
+    "queryTable": {
+      "cid": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ",
+      "enabled": true,
+      "network_key": "k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4",
+      "label": "oracle-query-table-duval",
+      "sequence": 3,
+      "published_at": "2026-09-05T23:14:13.106-04:00",
+      "created_at": "2026-09-04T14:43:44.893-04:00",
+      "updated_at": "2026-09-06T07:46:55.012-04:00"
+    },
+    "coverage": {
+      "cid": "QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm",
+      "enabled": true,
+      "network_key": "k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w",
+      "label": "oracle-dataset-coverage-duval",
+      "sequence": 3,
+      "published_at": "2026-09-05T23:14:13.510-04:00",
+      "created_at": "2026-09-04T14:43:45.716-04:00",
+      "updated_at": "2026-09-06T07:46:55.412-04:00"
+    }
+  },
+  "status": "complete",
+  "completedAt": "2026-09-06T11:46:55.444Z"
+}

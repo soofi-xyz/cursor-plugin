@@ -477,7 +477,7 @@ describe("runReplay (in-process pipeline)", () => {
       expect(replay.artifacts.expectedCount).toBe(1);
       expect(replay.publishResult).toEqual({
         dryRun: true,
-        bucket: "elephant-oracle-query-table-duval",
+        bucket: "elephant-oracle-query-table",
         queryTableIpnsLabel: "oracle-query-table-duval",
         coverageIpnsLabel: "oracle-dataset-coverage-duval",
       });
@@ -514,7 +514,7 @@ describe("elephant-county replay (public CLI, subprocess)", () => {
       expect(summary.county).toBe("duval");
       expect(summary.manifest.results[0].transformSuccess).toBe(true);
 
-      expect(summary.artifacts.bucket).toBe("elephant-oracle-query-table-duval");
+      expect(summary.artifacts.bucket).toBe("elephant-oracle-query-table");
       expect(summary.artifacts.queryTableIpnsLabel).toBe("oracle-query-table-duval");
       expect(summary.artifacts.coverageIpnsLabel).toBe("oracle-dataset-coverage-duval");
       expect(summary.artifacts.rowCount).toBe(1);
@@ -522,7 +522,7 @@ describe("elephant-county replay (public CLI, subprocess)", () => {
 
       expect(summary.publishResult).toEqual({
         dryRun: true,
-        bucket: "elephant-oracle-query-table-duval",
+        bucket: "elephant-oracle-query-table",
         queryTableIpnsLabel: "oracle-query-table-duval",
         coverageIpnsLabel: "oracle-dataset-coverage-duval",
       });

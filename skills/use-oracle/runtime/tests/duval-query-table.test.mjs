@@ -13,13 +13,10 @@ import {
   pickLatestSale,
   formatOwnerName,
   mapTransformedFilesToQueryTableRow,
-  QUERY_TABLE_SCHEMA_FIELDS,
-  QUERY_TABLE_BUCKET,
-  QUERY_TABLE_IPNS_LABEL,
-  COVERAGE_IPNS_LABEL,
   COUNTY_KEY,
   COUNTY_NAME,
 } from "../src/counties/duval/query-table.mjs";
+import { duvalEnrichmentProfile } from "../src/counties/duval/enrichment-profile.mjs";
 import { duvalAdapter } from "../src/counties/duval/adapter.mjs";
 
 const require = createRequire(import.meta.url);
@@ -29,6 +26,8 @@ const RUNTIME_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..
 const FIXTURE_DIR = path.join(RUNTIME_ROOT, "fixtures", "duval-replay");
 const PARCEL_ID = "0969250000";
 const RE_NUMBER = "0969250000R";
+const QUERY_TABLE_SCHEMA_FIELDS =
+  duvalEnrichmentProfile.queryTable.schemaFields;
 
 describe("Duval query-table row mapping (Gate B fixture)", () => {
   it("derives a stable id from a canonical DOR parcel id", () => {
@@ -60,9 +59,15 @@ describe("Duval query-table row mapping (Gate B fixture)", () => {
   });
 
   it("exposes the Duval Filebase destination constants", () => {
-    expect(QUERY_TABLE_BUCKET).toBe("elephant-oracle-query-table-duval");
-    expect(QUERY_TABLE_IPNS_LABEL).toBe("oracle-query-table-duval");
-    expect(COVERAGE_IPNS_LABEL).toBe("oracle-dataset-coverage-duval");
+    expect(duvalEnrichmentProfile.publication.bucket).toBe(
+      "elephant-oracle-query-table",
+    );
+    expect(duvalEnrichmentProfile.publication.queryTableIpnsLabel).toBe(
+      "oracle-query-table-duval",
+    );
+    expect(duvalEnrichmentProfile.publication.coverageIpnsLabel).toBe(
+      "oracle-dataset-coverage-duval",
+    );
     expect(COUNTY_KEY).toBe("duval");
     expect(COUNTY_NAME).toBe("Duval");
     expect(Object.keys(QUERY_TABLE_SCHEMA_FIELDS)).toContain("property_id");

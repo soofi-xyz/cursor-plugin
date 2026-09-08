@@ -34,17 +34,20 @@ import { readTransformedZipJsonFiles, writeQueryTableParquet, buildCoverageSnaps
 import { classifyFailure, appendFailure } from "../../core/run-state.mjs";
 import {
   mapTransformedFilesToQueryTableRow,
-  QUERY_TABLE_SCHEMA_FIELDS,
-  QUERY_TABLE_BUCKET,
-  QUERY_TABLE_IPNS_LABEL,
-  COVERAGE_IPNS_LABEL,
   COUNTY_KEY,
   COUNTY_NAME,
 } from "./query-table.mjs";
+import { duvalEnrichmentProfile } from "./enrichment-profile.mjs";
 import { buildSeed as buildDuvalSeedFiles, COJ_DETAIL_URL, toCojDetailUrl, toCanonicalReDisplay, toText } from "./seed.mjs";
 import { collectGeometryPoints, assertGeometryInCounty, assertManifestReconciled, assertUniqueParcelIds } from "./validate.mjs";
 
 const RUNTIME_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const QUERY_TABLE_SCHEMA_FIELDS = duvalEnrichmentProfile.queryTable.schemaFields;
+const {
+  bucket: QUERY_TABLE_BUCKET,
+  queryTableIpnsLabel: QUERY_TABLE_IPNS_LABEL,
+  coverageIpnsLabel: COVERAGE_IPNS_LABEL,
+} = duvalEnrichmentProfile.publication;
 export const TRANSFORMS_DIR = path.join(RUNTIME_ROOT, "counties", "duval", "transforms");
 export const FLOW_PATH = path.join(RUNTIME_ROOT, "counties", "duval", "flow.json");
 export const STATIC_PARTS_PATH = path.join(RUNTIME_ROOT, "counties", "duval", "static-parts.csv");

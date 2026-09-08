@@ -5,31 +5,43 @@ metadata: {"author":"elephant-xyz"}
 ---
 # BBB Harvest
 
-National data source — county-agnostic. The harvester is the `BbbHarvest` Restate
-workflow (key = jobId) in `skills/use-oracle/runtime/services/enrichment.ts`, wrapping a local
-Puppeteer crawler. `BbbHarvest` is authored per `durable-workflow-builder`; the
-parameters and output layout below are its contract, not existing code. Output feeds the `bbb_*` tables in `elephant-query-db` (contractor
-reputation/quality scores joined to permits via contractor names).
+National data source — county-agnostic. The executable harvester is
+`skills/use-oracle/runtime/src/enrichment/bbb.mjs`, exposed by the
+`elephant-county bbb-harvest` command and the AWS Batch worker. County market and
+category URLs must come from a validated enrichment profile. Output feeds
+contractor reputation/quality enrichment and is joined to permits in a later stage.
+
+BBB's `robots.txt` disallows general crawler access to query-string URLs (`/*?`), which
+includes category pagination. Treat HTTP 403 as a source-access boundary: stop all
+remaining BBB requests, preserve the exact evidence, and request approved access through
+the official BBB API at `https://developer.bbb.org/`. Do not change egress, proxies,
+browser fingerprints, or challenge behavior to evade the block.
 
 ## Run
 
 ```bash
-curl localhost:8080/restate/send/BbbHarvest/<jobId>/run \
-  --json '{"jobId":"<jobId>","categoryUrl":"https://www.bbb.org/us/category/<category>","maxPages":50,"pageDelayMs":2000,"profileDelayMs":1500}'
+cd skills/use-oracle/runtime
+node bin/elephant-county.mjs bbb-harvest \
+  --county duval \
+  --category roofing-contractors \
+  --job-id duval-roofing-probe \
+  --max-pages 2 --max-profiles 5 --max-requests 100 \
+  --max-duration-minutes 30 --output downloads/bbb/duval-roofing-probe
 ```
 
-Input parameters (all optional except `categoryUrl` and `jobId` — `jobId` is required
-and must match the workflow key in the URL):
+Production runs use an approved immutable Batch request whose county and category keys
+resolve to the same reviewed enrichment profile.
 
-- `maxPages` / `maxProfiles` — crawl bounds
+Important bounds:
+
+- `maxPages` / `maxProfiles` / `maxRequests` / `maxDurationMinutes` — hard crawl bounds
 - `profileSubpages` (array) — capture extra tabs per profile
-- `challengeAttempts` / `challengeCheckIntervalMs` — bot-challenge retry tuning
-- `headless: false` (+ a Chromium executable path) — when challenges need a real browser
-- `html: false` — skip raw HTML capture (keep HTML by default; raw-first principle)
+- `pageDelayMs` / `profileDelayMs` — conservative pacing
+- `includeHtml` — retain source HTML when access is permitted
 
-Each page and profile is its own `ctx.run` step, so the crawl is durable: a crash or
-restart resumes exactly where it stopped — no manual start-page bookkeeping. A step that
-exhausts retries pauses visibly in the Web UI (`:9070`); fix, then resume.
+AWS Batch writes immutable content-addressed artifacts and a handoff per category.
+Checkpoints permit an exact resume after transient infrastructure failure. Permanent
+source blocks are not retried.
 
 ## Output layout
 
@@ -39,9 +51,8 @@ subdir there):
 - `profiles/profiles-part-NNNN.jsonl` — extracted profile records (chunked)
 - `failures/failed-profiles.jsonl` — only classified PERMANENT profile failures are
   recorded here (rather than aborting the crawl); re-run with the failed URLs after a
-  challenge-tuning change. TRANSIENT failures (challenge/network) retry inside their
-  `ctx.run` and, if retries are exhausted, fail/pause the workflow — never silently
-  record a transient failure as done
+  reviewed source-access change. TRANSIENT failures (network/5xx) never silently count
+  as complete; the Batch job fails and its checkpoint remains available for exact resume
 - `manifest/summary.json` — counters for reconciliation
 
 ## Workflow
@@ -50,29 +61,84 @@ subdir there):
    categories for permit contractor matching).
    - **Multi-Trade Harvesting**: Expand contractor collection across all high-value building trades:
      - Roofing Contractors (`roofing-contractors`)
-     - Solar Energy Contractors (`solar-energy-system-contractors`)
+     - Solar Energy Contractors (`solar-energy-contractors`)
      - Heating and Air Conditioning / HVAC (`heating-and-air-conditioning`)
-2. Run a small probe (`maxPages: 2`, scratch output subdir) to confirm challenge handling
-   works from the current network; BBB serves bot challenges that the crawler retries
-   through, but datacenter IPs may need `headless: false` or a different egress. If
-   pages come back 403/blocked, check the egress country (`curl -s ipinfo.io/country`)
-   — a US VPN/proxy exit may be required before anything else is worth debugging.
+2. Run a small probe (`maxPages: 2`, scratch output subdir). If BBB returns 403, stop
+   without further requests and retain the status, URL, timestamp, category, request
+   digest, and Batch job ID as source-access evidence.
 3. Estimate total crawl time from probe latency, page/profile counts, delays, retries,
    and safe concurrency. If the estimate is more than 48 hours, ask whether to download
    BBB artifacts anyway, ingest them into the query DB, or retrieve BBB profile data at
    runtime from the owning app/service. For runtime retrieval, capture the expected API
    or scrape path, cache/freshness needs, and failure behavior. Stop here if the
    operator chose ingest-only or runtime retrieval — do not proceed to step 4.
-4. Run the full category with conservative delays; the journal keeps it resumable.
+4. Run the full category with conservative delays only when the bounded probe is allowed.
 5. Reconcile `summary.json` counts vs profiles parts, retry failures.
 6. Load into the `bbb_*` tables per the `query-db-loading-matching` skill.
+
+Reconcile a completed profile-category directory set using the profile's category keys:
+
+```bash
+node bin/elephant-county.mjs bbb-reconcile \
+  --county duval \
+  --harvest-root <root-containing-category-key-directories> \
+  --input-coverage <dataset-coverage.json> \
+  --output-dir <reconciled-dir>
+```
+
+After permits are available, link BBB businesses to properties through the retained
+private permit-contractor source. Do not join a BBB office address directly to a property:
+`has_bbb_contractor` means that the BBB business appears as contractor on a permit already
+linked to that property.
+
+```bash
+node bin/elephant-county.mjs bbb-link \
+  --county duval \
+  --input-parquet <query-table.parquet> \
+  --input-coverage <dataset-coverage.json> \
+  --bbb-profiles <bbb-profiles.jsonl> \
+  --bbb-reconciliation-manifest <bbb-reconciliation-manifest.json> \
+  --permit-source <private/jaxepics-bid-map.jsonl.gz> \
+  --permit-artifact-manifest <permit-artifact-manifest.json> \
+  --output-dir <linked-dir>
+```
+
+The linker automatically accepts unique exact license, phone, and normalized-name
+matches. Jaro-Winkler matches are review candidates only and must not set public property
+flags without explicit review. Preserve accepted links and review candidates as private
+audit artifacts. The linker must reproduce the permit publication's exclusions and
+deduplication, reconcile source/published/linked/excluded permit counts exactly, and prove
+that every BBB-flagged property also has `has_permits = true` before exact-byte publication
+approval. The flag links the current BBB snapshot to historical permit contractor
+identities; it does not claim that a contractor held BBB accreditation when an older
+permit was issued.
+
+For a reviewed 403 outcome, submit browser-free zero-profile artifacts and reconciliation:
+
+```bash
+npm run batch:recover-blocked -- \
+  --config <request.json> \
+  --receipt <prior-submission.json> \
+  --evidence <blocked-evidence.json>
+```
+
+The evidence must match the exact run, request digest, category, and failed Batch job.
+Coverage must remain `source_access_status: blocked`, `source_access_complete: false`,
+and `incomplete_reason: http_403_source_block`.
 
 ### 3-Tier Multi-Source CRM Cross-Matching Cascade
 
 When matching BBB contractor profiles to municipal permit records or Sunbiz business entities, apply a strict 3-tier cascade:
 1. **Tier 1 — State License Number Match**: Match exact state license strings (e.g. `CCC1328456`, `CAC1815924`). Highest confidence (1.0).
 2. **Tier 2 — Standardized Phone Number Match**: Normalize 10-digit phone strings (strip punctuation and country code `+1`). High confidence (0.95).
-3. **Tier 3 — Cleaned Business Name Match**: Strip corporate suffixes (`LLC`, `INC`, `CORP`, `SERVICES`, `ROOFING`), trim whitespace, and match normalized names with Jaro-Winkler similarity ≥ 0.90. Medium confidence (0.80).
+3. **Tier 3 — Unique Exact Normalized Business Name**: Normalize punctuation and legal
+   suffixes (`LLC`, `INC`, `CORP`) while retaining trade words such as `ROOFING` and
+   `SERVICES`; automatically link only when the exact normalized name identifies one BBB
+   business. Medium confidence (0.80).
+
+Jaro-Winkler similarity ≥ 0.90 is a separate review-candidate ranking step. Its looser
+cleanup may remove generic trade words to prioritize review, but it never sets a public
+property flag automatically.
 
 The crawler module has vitest tests in `skills/use-oracle/runtime` — keep them passing if it is
 modified. Category lists, run notes, and any
