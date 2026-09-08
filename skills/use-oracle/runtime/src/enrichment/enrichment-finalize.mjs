@@ -73,6 +73,7 @@ export async function finalizeEnrichmentArtifacts({
   const appraisal = requireCoverageDataset(coverage, "appraisal");
   const sunbiz = requireCoverageDataset(coverage, "sunbiz");
   const bbb = requireCoverageDataset(coverage, "bbb");
+  const hoa = coverage.datasets?.find((entry) => entry?.source === "hoa");
   const permits = coverage.datasets?.find(
     (entry) => entry?.source === "permits",
   );
@@ -83,12 +84,15 @@ export async function finalizeEnrichmentArtifacts({
   let sunbizPropertyCount = 0;
   let bbbContractorPropertyCount = 0;
   let permitPropertyCount = 0;
+  let hoaKnownPropertyCount = 0;
+  let hoaPositivePropertyCount = 0;
   try {
     const cursor = reader.getCursor([
       "property_id",
       "has_sunbiz_tenant",
       "has_bbb_contractor",
       "has_permits",
+      "hoa_flag",
     ]);
     let row = await cursor.next();
     while (row) {
@@ -112,6 +116,10 @@ export async function finalizeEnrichmentArtifacts({
         bbbContractorPropertyCount += 1;
       }
       if (row.has_permits === true) permitPropertyCount += 1;
+      if (row.hoa_flag === true || row.hoa_flag === false) {
+        hoaKnownPropertyCount += 1;
+        if (row.hoa_flag === true) hoaPositivePropertyCount += 1;
+      }
       row = await cursor.next();
     }
   } finally {
@@ -143,6 +151,22 @@ export async function finalizeEnrichmentArtifacts({
       `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permitPropertyCoverageCount}`,
     );
   }
+  if (
+    hoa?.linked_property_count !== undefined &&
+    hoaKnownPropertyCount !== hoa.linked_property_count
+  ) {
+    throw new Error(
+      `HOA coverage mismatch: ${hoaKnownPropertyCount} known properties vs ${hoa.linked_property_count}`,
+    );
+  }
+  if (
+    hoa?.positive_membership_count !== undefined &&
+    hoaPositivePropertyCount !== hoa.positive_membership_count
+  ) {
+    throw new Error(
+      `HOA positive coverage mismatch: ${hoaPositivePropertyCount} flagged properties vs ${hoa.positive_membership_count}`,
+    );
+  }
 
   const [queryTableIntegrity, coverageIntegrity] = await Promise.all([
     fileIntegrity(parquetPath),
@@ -167,6 +191,8 @@ export async function finalizeEnrichmentArtifacts({
     bbbContractorPropertyCount,
     bbbProfileCount: bbb.ingested_count,
     permitPropertyCount,
+    hoaKnownPropertyCount,
+    hoaPositivePropertyCount,
     artifactIntegrity: {
       queryTable: queryTableIntegrity,
       coverage: coverageIntegrity,

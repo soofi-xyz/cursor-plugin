@@ -239,6 +239,23 @@ publication:
     representative_property_permit_count: 12
 
 enrichment:
+  hoa:
+    status: records-request-required
+    observed_coverage: 0_percent
+    column: hoa_flag
+    source_policy: subdivision names, neighborhood associations, and CDD boundaries are not mandatory HOA membership
+    requested_delivery: authoritative parcel-level association membership export
+    request_template: skills/use-oracle/runtime/docs/duval-hoa-records-request.md
+    request_routes:
+      - Duval County Property Appraiser records custodian
+      - Duval Clerk Official Records/Public Records department
+    evaluated_sources:
+      - Florida DBPR condominium and managing-entity records
+      - City of Jacksonville subdivision property search
+      - City of Jacksonville neighborhood-association GIS
+      - Duval Clerk Official Records search
+    blocker_owner: Oracle Data Partnerships
+    blocker: no reviewed parcel-level membership export or authoritative negative coverage has been supplied
   bbb:
     status: published-and-donphan-verified
     source_access_status: accessible

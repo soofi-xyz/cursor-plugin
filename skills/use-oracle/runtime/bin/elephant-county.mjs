@@ -32,6 +32,7 @@ import {
 } from "../src/enrichment/sunbiz.mjs";
 import { prepareSunbizArchive } from "../src/enrichment/sunbiz-archive.mjs";
 import { enrichQueryTableWithSunbiz } from "../src/enrichment/query-table-sunbiz.mjs";
+import { enrichQueryTableWithHoa } from "../src/enrichment/query-table-hoa.mjs";
 import { harvestBbbCategory } from "../src/enrichment/bbb.mjs";
 import { reconcileBbbHarvests } from "../src/enrichment/bbb-reconcile.mjs";
 import {
@@ -328,6 +329,26 @@ async function runSunbizEnrichCommand(argv) {
     manifestPath: path.join(outputDir, "sunbiz-enrichment-manifest.json"),
   });
   console.log(JSON.stringify({ event: "sunbiz_enrich_complete", summary }, null, 2));
+}
+
+async function runHoaEnrichCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const summary = await enrichQueryTableWithHoa({
+    countyKey: profile.countyKey,
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    recordsPath: requireStringFlag(flags, "records"),
+    sourceManifestPath: requireStringFlag(flags, "source-manifest"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    manifestPath: path.join(outputDir, "hoa-enrichment-manifest.json"),
+  });
+  console.log(JSON.stringify({ event: "hoa_enrich_complete", summary }, null, 2));
 }
 
 async function runBbbHarvestCommand(argv) {
@@ -809,6 +830,7 @@ async function main() {
   if (command === "sunbiz-filter") return runSunbizFilterCommand(rest);
   if (command === "sunbiz-transform") return runSunbizTransformCommand(rest);
   if (command === "sunbiz-enrich") return runSunbizEnrichCommand(rest);
+  if (command === "hoa-enrich") return runHoaEnrichCommand(rest);
   if (command === "bbb-harvest") return runBbbHarvestCommand(rest);
   if (command === "bbb-reconcile") return runBbbReconcileCommand(rest);
   if (command === "bbb-link") return runBbbLinkCommand(rest);
@@ -833,7 +855,7 @@ async function main() {
     return runPermitPublishCommand(rest);
   }
   console.error(
-    "Usage: elephant-county <ingest|export|publish|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
+    "Usage: elephant-county <ingest|export|publish|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
       "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
@@ -842,6 +864,7 @@ async function main() {
       "  sunbiz-filter --county <profile-key> --quarter <YYYYQn> --source-dir <expanded-dir> --output <dir> [--max-source-records N]\n" +
       "  sunbiz-transform --input <extract-dir> --output <dir> [--part-record-limit N]\n" +
       "  sunbiz-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --sunbiz-extract <dir> --output-dir <dir>\n" +
+      "  hoa-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --records <hoa-memberships.jsonl> --source-manifest <json> --output-dir <dir>\n" +
       "  bbb-harvest --county <profile-key> --category <reviewed-key> --job-id <id> --max-pages N --max-profiles N --max-requests N --max-duration-minutes N --output <dir>\n" +
       "  bbb-reconcile --county <profile-key> --harvest-root <category-dirs-root> --input-coverage <json> --output-dir <dir>\n" +
       "  bbb-link --county duval --input-parquet <query-table.parquet> --input-coverage <dataset-coverage.json> --bbb-profiles <bbb-profiles.jsonl> --bbb-reconciliation-manifest <json> --permit-source <jaxepics-bid-map.jsonl.gz> --permit-artifact-manifest <json> --output-dir <dir>\n" +
@@ -878,6 +901,7 @@ export {
   runSunbizFilterCommand,
   runSunbizTransformCommand,
   runSunbizEnrichCommand,
+  runHoaEnrichCommand,
   runBbbHarvestCommand,
   runBbbReconcileCommand,
   runEnrichmentFinalizeCommand,
