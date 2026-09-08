@@ -13,6 +13,15 @@ const require = createRequire(import.meta.url);
 const { ParquetReader } = require("@dsnp/parquetjs");
 const SOURCE_MANIFEST_SCHEMA = "elephant.hoa-membership-source-manifest.v1";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ASSOCIATION_SCOPE = "florida_chapter_720_mandatory_hoa";
+const ASSOCIATION_TYPE = "chapter_720_hoa";
+const ACTIVE_INSTRUMENT_ACTIONS = new Set([
+  "annexation",
+  "declaration",
+  "preservation",
+  "revival",
+]);
+const APPROVED_HOA_SOURCE_PROFILES = new Map();
 
 function normalizeFolio(value) {
   const compact = String(value ?? "")
@@ -37,7 +46,16 @@ function nonEmptyString(value, field) {
   return value.trim();
 }
 
-function validateSourceManifest(value, countyKey) {
+function validIsoDate(value) {
+  if (!ISO_DATE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    Number.isFinite(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+}
+
+function validateSourceManifest(value, countyKey, approvedSourceProfiles) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("HOA source manifest must be a JSON object");
   }
@@ -73,8 +91,17 @@ function validateSourceManifest(value, countyKey) {
   if (!/^[a-f0-9]{64}$/.test(value.recordsSha256 ?? "")) {
     throw new Error("HOA source manifest requires recordsSha256");
   }
-  return {
+  const manifest = {
     ...value,
+    sourceProfileId: nonEmptyString(
+      value.sourceProfileId,
+      "sourceProfileId",
+    ),
+    associationScope: nonEmptyString(
+      value.associationScope,
+      "associationScope",
+    ),
+    asOfDate: nonEmptyString(value.asOfDate, "asOfDate"),
     authority: nonEmptyString(value.authority, "authority"),
     extractId: nonEmptyString(value.extractId, "extractId"),
     sourceRetrievedAt: nonEmptyString(
@@ -90,6 +117,38 @@ function validateSourceManifest(value, countyKey) {
       "scopeDescription",
     ),
   };
+  if (manifest.associationScope !== ASSOCIATION_SCOPE) {
+    throw new Error(
+      `HOA source manifest associationScope must be ${ASSOCIATION_SCOPE}`,
+    );
+  }
+  if (!validIsoDate(manifest.asOfDate)) {
+    throw new Error("HOA source manifest requires a valid asOfDate");
+  }
+  const approvedProfile = approvedSourceProfiles.get(manifest.sourceProfileId);
+  if (approvedProfile === undefined) {
+    throw new Error(
+      `HOA source profile ${manifest.sourceProfileId} is not approved`,
+    );
+  }
+  for (const field of [
+    "county",
+    "authority",
+    "recordsRequestReference",
+    "associationScope",
+  ]) {
+    if (approvedProfile[field] !== manifest[field]) {
+      throw new Error(
+        `HOA source profile ${manifest.sourceProfileId} does not approve manifest ${field}`,
+      );
+    }
+  }
+  if (approvedProfile.publicationPermitted !== true) {
+    throw new Error(
+      `HOA source profile ${manifest.sourceProfileId} does not permit publication`,
+    );
+  }
+  return manifest;
 }
 
 function validateRecord(value, lineNumber, sourceManifest) {
@@ -114,8 +173,59 @@ function validateRecord(value, lineNumber, sourceManifest) {
     );
   }
   const effectiveOn = String(value.effective_on ?? "");
-  if (!ISO_DATE.test(effectiveOn)) {
+  if (!validIsoDate(effectiveOn)) {
     throw new Error(`HOA record ${lineNumber} has an invalid effective_on`);
+  }
+  if (effectiveOn > sourceManifest.asOfDate) {
+    throw new Error(
+      `HOA record ${lineNumber} has future evidence after the source asOfDate`,
+    );
+  }
+  if (value.association_type !== ASSOCIATION_TYPE) {
+    throw new Error(
+      `HOA record ${lineNumber} association_type must be ${ASSOCIATION_TYPE}`,
+    );
+  }
+  const membershipStatus = nonEmptyString(
+    value.membership_status,
+    `record ${lineNumber} membership_status`,
+  );
+  const instrumentAction = nonEmptyString(
+    value.instrument_action,
+    `record ${lineNumber} instrument_action`,
+  );
+  if (value.membership === true) {
+    if (membershipStatus !== "active") {
+      throw new Error(
+        `HOA record ${lineNumber} membership_status must be active for a positive membership`,
+      );
+    }
+    if (!ACTIVE_INSTRUMENT_ACTIONS.has(instrumentAction)) {
+      throw new Error(
+        `HOA record ${lineNumber} has an inactive or unsupported instrument_action`,
+      );
+    }
+  } else if (
+    membershipStatus !== "not_member" ||
+    instrumentAction !== "custodian_negative"
+  ) {
+    throw new Error(
+      `HOA record ${lineNumber} negative membership must be an explicit custodian_negative`,
+    );
+  }
+  const inactiveOn =
+    value.inactive_on === null || value.inactive_on === undefined
+      ? null
+      : String(value.inactive_on);
+  if (inactiveOn !== null) {
+    if (!validIsoDate(inactiveOn)) {
+      throw new Error(`HOA record ${lineNumber} has an invalid inactive_on`);
+    }
+    if (inactiveOn <= sourceManifest.asOfDate) {
+      throw new Error(
+        `HOA record ${lineNumber} is inactive as of the source asOfDate`,
+      );
+    }
   }
   return {
     folio,
@@ -125,6 +235,9 @@ function validateRecord(value, lineNumber, sourceManifest) {
       `record ${lineNumber} association_id`,
     ),
     effectiveOn,
+    inactiveOn,
+    instrumentAction,
+    membershipStatus,
     evidenceReference: nonEmptyString(
       value.evidence_reference,
       `record ${lineNumber} evidence_reference`,
@@ -148,15 +261,24 @@ async function loadMembershipRecords(recordsPath, sourceManifest) {
         recordCount,
         sourceManifest,
       );
-      const existing = byFolio.get(record.folio);
-      if (existing !== undefined && existing.membership !== record.membership) {
+      const byAssociation = byFolio.get(record.folio) ?? new Map();
+      const existing = byAssociation.get(record.associationId);
+      if (
+        existing !== undefined &&
+        existing.effectiveOn === record.effectiveOn &&
+        JSON.stringify(existing) !== JSON.stringify(record)
+      ) {
         throw new Error(
-          `HOA source contains conflicting membership for folio ${record.folio}`,
+          `HOA source contains ambiguous tied evidence for folio ${record.folio} association ${record.associationId}`,
         );
       }
-      if (existing === undefined || record.effectiveOn > existing.effectiveOn) {
-        byFolio.set(record.folio, record);
+      if (
+        existing === undefined ||
+        record.effectiveOn > existing.effectiveOn
+      ) {
+        byAssociation.set(record.associationId, record);
       }
+      byFolio.set(record.folio, byAssociation);
     }
   } finally {
     lines.close();
@@ -183,6 +305,7 @@ export async function enrichQueryTableWithHoa({
   outputCoverage,
   recordsPath,
   sourceManifestPath,
+  approvedSourceProfiles = APPROVED_HOA_SOURCE_PROFILES,
   exportedAt = new Date().toISOString(),
   manifestPath = `${outputParquet}.manifest.json`,
 }) {
@@ -196,6 +319,7 @@ export async function enrichQueryTableWithHoa({
   const sourceManifest = validateSourceManifest(
     JSON.parse(await readFile(sourceManifestPath, "utf8")),
     countyKey,
+    approvedSourceProfiles,
   );
   const recordsSha256 = await sha256File(recordsPath);
   if (recordsSha256 !== sourceManifest.recordsSha256) {
@@ -235,6 +359,7 @@ export async function enrichQueryTableWithHoa({
   let linkedPropertyCount = 0;
   let positiveMembershipCount = 0;
   let authoritativeNegativeCount = 0;
+  let activeAssociationMembershipCount = 0;
   const matchedFolios = new Set();
   try {
     const cursor = reader.getCursor();
@@ -242,8 +367,21 @@ export async function enrichQueryTableWithHoa({
     while (row) {
       inputRowCount += 1;
       const folio = normalizeFolio(row.parcel_identifier);
-      const record = folio === null ? undefined : source.byFolio.get(folio);
-      const hoaFlag = record?.membership ?? null;
+      const memberships =
+        folio === null ? undefined : source.byFolio.get(folio);
+      const activeMemberships =
+        memberships === undefined
+          ? []
+          : [...memberships.values()].filter(
+              (record) => record.membership === true,
+            );
+      const hoaFlag =
+        activeMemberships.length > 0
+          ? true
+          : memberships !== undefined &&
+              sourceManifest.authoritativeNegativeCoverage === true
+            ? false
+            : null;
       await writer.appendRow(
         toParquetRecord({
           ...row,
@@ -251,10 +389,11 @@ export async function enrichQueryTableWithHoa({
         }),
       );
       outputRowCount += 1;
-      if (record !== undefined) {
+      if (memberships !== undefined) {
         linkedPropertyCount += 1;
-        matchedFolios.add(record.folio);
-        if (record.membership) positiveMembershipCount += 1;
+        matchedFolios.add(folio);
+        activeAssociationMembershipCount += activeMemberships.length;
+        if (hoaFlag === true) positiveMembershipCount += 1;
         else authoritativeNegativeCount += 1;
       }
       row = await cursor.next();
@@ -292,6 +431,8 @@ export async function enrichQueryTableWithHoa({
       source_folio_count: source.byFolio.size,
       linked_property_count: linkedPropertyCount,
       positive_membership_count: positiveMembershipCount,
+      active_association_membership_count:
+        activeAssociationMembershipCount,
       authoritative_negative_count: authoritativeNegativeCount,
       unknown_property_count: unknownPropertyCount,
       valid_unlinked_count: validUnlinkedFolioCount,
@@ -299,6 +440,9 @@ export async function enrichQueryTableWithHoa({
       extract_id: sourceManifest.extractId,
       source_retrieved_at: sourceManifest.sourceRetrievedAt,
       records_request_reference: sourceManifest.recordsRequestReference,
+      source_profile_id: sourceManifest.sourceProfileId,
+      association_scope: sourceManifest.associationScope,
+      as_of_date: sourceManifest.asOfDate,
       authoritative_negative_coverage:
         sourceManifest.authoritativeNegativeCoverage,
       publication_permitted: true,
@@ -323,6 +467,7 @@ export async function enrichQueryTableWithHoa({
     sourceFolioCount: source.byFolio.size,
     linkedPropertyCount,
     positiveMembershipCount,
+    activeAssociationMembershipCount,
     authoritativeNegativeCount,
     unknownPropertyCount,
     validUnlinkedFolioCount,

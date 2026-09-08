@@ -13,6 +13,18 @@ import { enrichQueryTableWithHoa } from "../src/enrichment/query-table-hoa.mjs";
 const require = createRequire(import.meta.url);
 const { ParquetReader } = require("@dsnp/parquetjs");
 const temporaryDirectories = [];
+const approvedSourceProfiles = new Map([
+  [
+    "duval-clerk-test-v1",
+    {
+      county: "duval",
+      authority: "Duval official records custodian",
+      recordsRequestReference: "public-records-request:test",
+      associationScope: "florida_chapter_720_mandatory_hoa",
+      publicationPermitted: true,
+    },
+  ],
+]);
 
 afterEach(async () => {
   await Promise.all(
@@ -27,6 +39,8 @@ async function fixture({
   authoritativeNegativeCoverage = false,
   includeUnsupportedNegative = false,
   corruptDigest = false,
+  firstRecordOverrides = {},
+  includeSecondAssociation = false,
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "duval-hoa-"));
   temporaryDirectories.push(directory);
@@ -74,22 +88,44 @@ async function fixture({
       parcel_identifier: "164634-0000",
       membership: true,
       association_id: "association-1",
+      association_type: "chapter_720_hoa",
+      membership_status: "active",
+      instrument_action: "declaration",
       effective_on: "2026-08-01",
       evidence_reference: "duval-clerk:instrument-123",
+      ...firstRecordOverrides,
     },
     {
       parcel_identifier: "9999999999",
       membership: true,
       association_id: "association-unmatched",
+      association_type: "chapter_720_hoa",
+      membership_status: "active",
+      instrument_action: "declaration",
       effective_on: "2026-08-01",
       evidence_reference: "duval-clerk:instrument-456",
     },
   ];
+  if (includeSecondAssociation) {
+    records.push({
+      parcel_identifier: "164634-0000",
+      membership: true,
+      association_id: "association-master",
+      association_type: "chapter_720_hoa",
+      membership_status: "active",
+      instrument_action: "annexation",
+      effective_on: "2026-08-02",
+      evidence_reference: "duval-clerk:instrument-789",
+    });
+  }
   if (includeUnsupportedNegative) {
     records.push({
       parcel_identifier: "0969250000",
       membership: false,
       association_id: "association-2",
+      association_type: "chapter_720_hoa",
+      membership_status: "not_member",
+      instrument_action: "custodian_negative",
       effective_on: "2026-08-01",
       evidence_reference: "custodian-export:negative-2",
     });
@@ -104,6 +140,9 @@ async function fixture({
     `${JSON.stringify({
       schemaVersion: "elephant.hoa-membership-source-manifest.v1",
       county: "duval",
+      sourceProfileId: "duval-clerk-test-v1",
+      associationScope: "florida_chapter_720_mandatory_hoa",
+      asOfDate: "2026-09-08",
       authority: "Duval official records custodian",
       extractId: "duval-hoa-2026-08",
       sourceRetrievedAt: "2026-09-08T16:00:00.000Z",
@@ -139,6 +178,7 @@ describe("authoritative HOA membership enrichment", () => {
       inputCoverage: input.inputCoverage,
       recordsPath: input.recordsPath,
       sourceManifestPath: input.sourceManifestPath,
+      approvedSourceProfiles,
       outputParquet: path.join(input.outputDir, "query-table.parquet"),
       outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       manifestPath: path.join(input.outputDir, "hoa-enrichment-manifest.json"),
@@ -151,6 +191,7 @@ describe("authoritative HOA membership enrichment", () => {
       sourceRecordCount: 2,
       linkedPropertyCount: 1,
       positiveMembershipCount: 1,
+      activeAssociationMembershipCount: 1,
       authoritativeNegativeCount: 0,
       validUnlinkedFolioCount: 1,
       unknownPropertyCount: 1,
@@ -207,6 +248,7 @@ describe("authoritative HOA membership enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
@@ -223,6 +265,7 @@ describe("authoritative HOA membership enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
@@ -239,6 +282,7 @@ describe("authoritative HOA membership enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
@@ -255,9 +299,71 @@ describe("authoritative HOA membership enrichment", () => {
         inputCoverage: input.inputCoverage,
         recordsPath: input.recordsPath,
         sourceManifestPath: input.sourceManifestPath,
+        approvedSourceProfiles,
         outputParquet: path.join(input.outputDir, "query-table.parquet"),
         outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
       }),
     ).rejects.toThrow(/digest/i);
+  });
+
+  it("rejects source self-assertions that are not approved in code", async () => {
+    const input = await fixture();
+    await expect(
+      enrichQueryTableWithHoa({
+        countyKey: "duval",
+        schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+        inputParquet: input.inputParquet,
+        inputCoverage: input.inputCoverage,
+        recordsPath: input.recordsPath,
+        sourceManifestPath: input.sourceManifestPath,
+        outputParquet: path.join(input.outputDir, "query-table.parquet"),
+        outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+      }),
+    ).rejects.toThrow(/not approved/i);
+  });
+
+  it("rejects condominium scope, future evidence, and inactive membership", async () => {
+    for (const [overrides, expectedError] of [
+      [{ association_type: "chapter_718_condominium" }, /association_type/i],
+      [{ effective_on: "2026-10-01" }, /future/i],
+      [{ membership_status: "released" }, /membership_status/i],
+    ]) {
+      const input = await fixture({ firstRecordOverrides: overrides });
+      await expect(
+        enrichQueryTableWithHoa({
+          countyKey: "duval",
+          schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+          inputParquet: input.inputParquet,
+          inputCoverage: input.inputCoverage,
+          recordsPath: input.recordsPath,
+          sourceManifestPath: input.sourceManifestPath,
+          approvedSourceProfiles,
+          outputParquet: path.join(input.outputDir, "query-table.parquet"),
+          outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+        }),
+      ).rejects.toThrow(expectedError);
+    }
+  });
+
+  it("preserves multiple active master and sub-association memberships", async () => {
+    const input = await fixture({ includeSecondAssociation: true });
+    const result = await enrichQueryTableWithHoa({
+      countyKey: "duval",
+      schemaFields: duvalEnrichmentProfile.queryTable.schemaFields,
+      inputParquet: input.inputParquet,
+      inputCoverage: input.inputCoverage,
+      recordsPath: input.recordsPath,
+      sourceManifestPath: input.sourceManifestPath,
+      approvedSourceProfiles,
+      outputParquet: path.join(input.outputDir, "query-table.parquet"),
+      outputCoverage: path.join(input.outputDir, "dataset-coverage.json"),
+    });
+    expect(result).toMatchObject({
+      sourceRecordCount: 3,
+      sourceFolioCount: 2,
+      linkedPropertyCount: 1,
+      positiveMembershipCount: 1,
+      activeAssociationMembershipCount: 2,
+    });
   });
 });

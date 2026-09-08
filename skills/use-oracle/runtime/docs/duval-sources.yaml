@@ -243,19 +243,24 @@ enrichment:
     status: records-request-required
     observed_coverage: 0_percent
     column: hoa_flag
-    source_policy: subdivision names, neighborhood associations, and CDD boundaries are not mandatory HOA membership
-    requested_delivery: authoritative parcel-level association membership export
+    semantics: effective mandatory homeowners association membership governed by Florida Chapter 720
+    excluded_semantics: Chapter 718 condominiums, Chapter 719 cooperatives, CDDs, voluntary civic organizations, and subdivision inference
+    source_policy: subdivision names, neighborhood associations, association-owned common parcels, and CDD boundaries are candidate signals only
+    requested_delivery: authoritative parcel-level Chapter 720 membership export preserving master and sub-associations
+    approved_source_profiles: []
     request_template: skills/use-oracle/runtime/docs/duval-hoa-records-request.md
     request_routes:
-      - Duval County Property Appraiser records custodian
-      - Duval Clerk Official Records/Public Records department
+      - Duval County Property Appraiser records custodian at pacustserv@coj.net or 904-255-5900
+      - Duval Clerk Public Records Department at 904-255-1828
+      - Duval Clerk Official Records and Research at 904-255-2025
+      - COJ Public Records Center at https://jacksonvillefl.govqa.us/WEBAPP/_rs/
     evaluated_sources:
       - Florida DBPR condominium and managing-entity records
       - City of Jacksonville subdivision property search
       - City of Jacksonville neighborhood-association GIS
       - Duval Clerk Official Records search
     blocker_owner: Oracle Data Partnerships
-    blocker: no reviewed parcel-level membership export or authoritative negative coverage has been supplied
+    blocker: no reviewed parcel-level membership export, code-approved source profile, effectiveness history, publication permission, or authoritative negative coverage has been supplied
   bbb:
     status: published-and-donphan-verified
     source_access_status: accessible
