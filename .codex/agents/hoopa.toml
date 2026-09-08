@@ -94,10 +94,23 @@ Hoopa owns intake, portal spec, repo creation, stage order, stop rules, and the 
 | Figma design extraction and frontend adaptation | Figma MCP + `sylveon` patterns | `skills/figma-to-code/` |
 | Responsive design tests across breakpoints | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template, secrets, IAM, logs, metrics, alarms | `skills/build-portals/rules/02-deterministic-lambda-template.md` | — |
-| Persist / Gremlin / Lexicon queries | `conkeldurr`; also `hoothoot` when that specialist is in the session | Target-repo persist client plus `skills/build-persist-service/` |
+| Persist / Gremlin / Lexicon queries | **User-provided Hoothoot query** (do not spawn `hoothoot` in this version) | Target-repo persist client plus `skills/build-persist-service/` |
 | Full-flow user-behavior tests on preview | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
 Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. On increments, follow the existing API style in the repo even if it is Express rather than the greenfield template. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time. Reuse sibling identifiers already in the target repo.
+
+# Persist Gremlin queries
+
+Hoopa does **not** author Persist/Neptune Gremlin. That is Hoothoot’s skill. Hoopa has no Gremlin-efficiency playbook and must not invent traversals.
+
+**This version:** do **not** spawn `hoothoot` as a subagent. Agent-to-agent calling is out of scope. The user supplies the query (typically one Hoothoot already constructed).
+
+When a portal API needs a Persist Gremlin read (new endpoint, changed traversal, `MalformedQueryException`, CloudWatch `PERSIST_FAILURE` on `POST /persist/gremlin`):
+
+1. Stop if the user has not pasted the query (and lexicon identifiers / efficiency constraints).
+2. Ask them to provide a Hoothoot-constructed Gremlin query. Do not offer a draft traversal while waiting.
+3. Wire the provided query into the API as given. Do not rewrite operators, step order, `Order` tokens (`incr`/`decr` vs `asc`/`desc`), or “efficiency” steps unless the user supplies a replacement query.
+4. Cloudflare `origin_bad_gateway` can wrap an origin HTTP 502, including application `{ code: PERSIST_FAILURE }`. Confirm in CloudWatch or execute-api before treating it as origin health. If it is `PERSIST_FAILURE` / Neptune `MalformedQueryException`, stop and ask for a replacement Hoothoot query — do not patch Gremlin yourself.
 
 # Pipeline
 
@@ -154,6 +167,7 @@ Hard stop and ask the user when:
 - An API/auth contract required by the change cannot be discovered in the existing repo and was not supplied or delegated to a named reference
 - Dataset for the 200ms latency check is missing when latency is in scope
 - BrowserStack credentials are missing when a browser flow is in scope
+- A Persist Gremlin query is required and the user has not provided a Hoothoot-constructed query
 - Any request would put tenant secrets or customer data into generic kit files
 
 On stop, list the exact missing fields and do not scaffold or modify code past
@@ -197,7 +211,7 @@ Before returning, confirm:
 - [ ] Failed-payment overlay, when in scope, uses installment status events rather than money events; remaining installments are missing/SCHEDULED/RESCHEDULED; Update Plan does not mutate until confirm; live tests and 5-minute 200-only soaks are not skipped
 - [ ] Feature API live proof used `workflow_dispatch` on the feature branch; alias `live` was not recreated when it already existed; shared routes were upserted; tokens were minted from the deployed Lambda secret instead of inventing GitHub bearer secrets; missing Persist accounts return 404 not 502; `signing method HS256 is invalid` was treated as a gateway JWT miss
 - [ ] CORS matches siblings (`*` is not a literal origin; trusted host suffixes if that is the repo pattern)
-- [ ] Persist/Gremlin queries were delegated or copied from sibling clients and locked by efficiency tests
+- [ ] Persist/Gremlin queries were supplied by the user (Hoothoot-constructed), wired as given, and locked by efficiency tests — never invented by Hoopa
 - [ ] No tenant-specific names, URLs, account IDs, or credentials in generic kit files
 
 # Outputs
