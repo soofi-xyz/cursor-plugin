@@ -202,6 +202,7 @@ function buildCoverage({
 function mergeDatasetCoverage({
   input,
   permitCoverage,
+  propertiesWithPermits,
   sourceCount,
   publishedCount,
   excludedCount,
@@ -229,6 +230,7 @@ function mergeDatasetCoverage({
         cid: null,
         ipns_label: profile.publication.permitTableIpnsLabel,
         linked_property_count: permitCoverage.linkedPermits,
+        properties_with_permits: propertiesWithPermits,
         valid_unlinked_permit_count:
           permitCoverage.validUnlinkedPermits,
         excluded_source_record_count: excludedCount,
@@ -463,6 +465,7 @@ export async function exportJaxPermitBulkArtifacts({
   const datasetCoverage = mergeDatasetCoverage({
     input: inputCoverage,
     permitCoverage,
+    propertiesWithPermits: permitCounts.size,
     sourceCount: snapshot.count,
     publishedCount: counters.publishedRows,
     excludedCount:

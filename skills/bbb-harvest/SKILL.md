@@ -61,7 +61,7 @@ subdir there):
    categories for permit contractor matching).
    - **Multi-Trade Harvesting**: Expand contractor collection across all high-value building trades:
      - Roofing Contractors (`roofing-contractors`)
-     - Solar Energy Contractors (`solar-energy-system-contractors`)
+     - Solar Energy Contractors (`solar-energy-contractors`)
      - Heating and Air Conditioning / HVAC (`heating-and-air-conditioning`)
 2. Run a small probe (`maxPages: 2`, scratch output subdir). If BBB returns 403, stop
    without further requests and retain the status, URL, timestamp, category, request
@@ -86,6 +86,33 @@ node bin/elephant-county.mjs bbb-reconcile \
   --output-dir <reconciled-dir>
 ```
 
+After permits are available, link BBB businesses to properties through the retained
+private permit-contractor source. Do not join a BBB office address directly to a property:
+`has_bbb_contractor` means that the BBB business appears as contractor on a permit already
+linked to that property.
+
+```bash
+node bin/elephant-county.mjs bbb-link \
+  --county duval \
+  --input-parquet <query-table.parquet> \
+  --input-coverage <dataset-coverage.json> \
+  --bbb-profiles <bbb-profiles.jsonl> \
+  --bbb-reconciliation-manifest <bbb-reconciliation-manifest.json> \
+  --permit-source <private/jaxepics-bid-map.jsonl.gz> \
+  --permit-artifact-manifest <permit-artifact-manifest.json> \
+  --output-dir <linked-dir>
+```
+
+The linker automatically accepts unique exact license, phone, and normalized-name
+matches. Jaro-Winkler matches are review candidates only and must not set public property
+flags without explicit review. Preserve accepted links and review candidates as private
+audit artifacts. The linker must reproduce the permit publication's exclusions and
+deduplication, reconcile source/published/linked/excluded permit counts exactly, and prove
+that every BBB-flagged property also has `has_permits = true` before exact-byte publication
+approval. The flag links the current BBB snapshot to historical permit contractor
+identities; it does not claim that a contractor held BBB accreditation when an older
+permit was issued.
+
 For a reviewed 403 outcome, submit browser-free zero-profile artifacts and reconciliation:
 
 ```bash
@@ -104,7 +131,14 @@ and `incomplete_reason: http_403_source_block`.
 When matching BBB contractor profiles to municipal permit records or Sunbiz business entities, apply a strict 3-tier cascade:
 1. **Tier 1 — State License Number Match**: Match exact state license strings (e.g. `CCC1328456`, `CAC1815924`). Highest confidence (1.0).
 2. **Tier 2 — Standardized Phone Number Match**: Normalize 10-digit phone strings (strip punctuation and country code `+1`). High confidence (0.95).
-3. **Tier 3 — Cleaned Business Name Match**: Strip corporate suffixes (`LLC`, `INC`, `CORP`, `SERVICES`, `ROOFING`), trim whitespace, and match normalized names with Jaro-Winkler similarity ≥ 0.90. Medium confidence (0.80).
+3. **Tier 3 — Unique Exact Normalized Business Name**: Normalize punctuation and legal
+   suffixes (`LLC`, `INC`, `CORP`) while retaining trade words such as `ROOFING` and
+   `SERVICES`; automatically link only when the exact normalized name identifies one BBB
+   business. Medium confidence (0.80).
+
+Jaro-Winkler similarity ≥ 0.90 is a separate review-candidate ranking step. Its looser
+cleanup may remove generic trade words to prioritize review, but it never sets a public
+property flag automatically.
 
 The crawler module has vitest tests in `skills/use-oracle/runtime` — keep them passing if it is
 modified. Category lists, run notes, and any

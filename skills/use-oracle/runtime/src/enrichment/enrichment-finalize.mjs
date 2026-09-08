@@ -73,6 +73,8 @@ export async function finalizeEnrichmentArtifacts({
   const appraisal = requireCoverageDataset(coverage, "appraisal");
   const sunbiz = requireCoverageDataset(coverage, "sunbiz");
   const bbb = requireCoverageDataset(coverage, "bbb");
+  const hoa = coverage.datasets?.find((entry) => entry?.source === "hoa");
+  const avm = coverage.datasets?.find((entry) => entry?.source === "avm");
   const permits = coverage.datasets?.find(
     (entry) => entry?.source === "permits",
   );
@@ -83,12 +85,17 @@ export async function finalizeEnrichmentArtifacts({
   let sunbizPropertyCount = 0;
   let bbbContractorPropertyCount = 0;
   let permitPropertyCount = 0;
+  let hoaKnownPropertyCount = 0;
+  let hoaPositivePropertyCount = 0;
+  let avmPropertyCount = 0;
   try {
     const cursor = reader.getCursor([
       "property_id",
       "has_sunbiz_tenant",
       "has_bbb_contractor",
       "has_permits",
+      "hoa_flag",
+      "avm_value",
     ]);
     let row = await cursor.next();
     while (row) {
@@ -103,8 +110,26 @@ export async function finalizeEnrichmentArtifacts({
       }
       propertyIds.add(row.property_id);
       if (row.has_sunbiz_tenant === true) sunbizPropertyCount += 1;
-      if (row.has_bbb_contractor === true) bbbContractorPropertyCount += 1;
+      if (row.has_bbb_contractor === true) {
+        if (row.has_permits !== true) {
+          throw new Error(
+            `BBB contractor property ${row.property_id} is not permit-linked`,
+          );
+        }
+        bbbContractorPropertyCount += 1;
+      }
       if (row.has_permits === true) permitPropertyCount += 1;
+      if (row.hoa_flag === true || row.hoa_flag === false) {
+        hoaKnownPropertyCount += 1;
+        if (row.hoa_flag === true) hoaPositivePropertyCount += 1;
+      }
+      if (
+        row.avm_value !== null &&
+        row.avm_value !== undefined &&
+        Number.isFinite(Number(row.avm_value))
+      ) {
+        avmPropertyCount += 1;
+      }
       row = await cursor.next();
     }
   } finally {
@@ -126,12 +151,38 @@ export async function finalizeEnrichmentArtifacts({
       `BBB coverage mismatch: ${bbbContractorPropertyCount} flagged properties vs ${bbb.linked_property_count}`,
     );
   }
+  const permitPropertyCoverageCount =
+    permits?.properties_with_permits ?? permits?.linked_property_count;
   if (
-    permits?.linked_property_count !== undefined &&
-    permitPropertyCount !== permits.linked_property_count
+    permitPropertyCoverageCount !== undefined &&
+    permitPropertyCount !== permitPropertyCoverageCount
   ) {
     throw new Error(
-      `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permits.linked_property_count}`,
+      `Permit coverage mismatch: ${permitPropertyCount} flagged properties vs ${permitPropertyCoverageCount}`,
+    );
+  }
+  if (
+    hoa?.linked_property_count !== undefined &&
+    hoaKnownPropertyCount !== hoa.linked_property_count
+  ) {
+    throw new Error(
+      `HOA coverage mismatch: ${hoaKnownPropertyCount} known properties vs ${hoa.linked_property_count}`,
+    );
+  }
+  if (
+    hoa?.positive_membership_count !== undefined &&
+    hoaPositivePropertyCount !== hoa.positive_membership_count
+  ) {
+    throw new Error(
+      `HOA positive coverage mismatch: ${hoaPositivePropertyCount} flagged properties vs ${hoa.positive_membership_count}`,
+    );
+  }
+  if (
+    avm?.linked_property_count !== undefined &&
+    avmPropertyCount !== avm.linked_property_count
+  ) {
+    throw new Error(
+      `AVM coverage mismatch: ${avmPropertyCount} valued properties vs ${avm.linked_property_count}`,
     );
   }
 
@@ -158,6 +209,9 @@ export async function finalizeEnrichmentArtifacts({
     bbbContractorPropertyCount,
     bbbProfileCount: bbb.ingested_count,
     permitPropertyCount,
+    hoaKnownPropertyCount,
+    hoaPositivePropertyCount,
+    avmPropertyCount,
     artifactIntegrity: {
       queryTable: queryTableIntegrity,
       coverage: coverageIntegrity,

@@ -94,6 +94,109 @@ function summaryOutcome(summary, countyKey, categories) {
   return { kind: "complete", evidence: null };
 }
 
+function validateCompleteCategoryPages(summary, categoryPages) {
+  if (
+    categoryPages.length !== summary.categoryPagesVisited ||
+    categoryPages.some(
+      (page) =>
+        page.recordKind !== "bbb_category_page" ||
+        page.categoryUrl !== summary.categoryUrl ||
+        !Number.isSafeInteger(page.pageNumber) ||
+        page.pageNumber < 1,
+    )
+  ) {
+    throw new Error(
+      `Invalid BBB category-page evidence: ${summary.categoryKey}`,
+    );
+  }
+  for (const page of categoryPages) {
+    const title = String(page.rawPage?.title ?? "");
+    const text = String(page.rawPage?.text ?? "");
+    if (
+      /Page not found \| Better Business Bureau/i.test(title) ||
+      /Whoops!\s*Page not found!/i.test(text)
+    ) {
+      throw new Error(
+        `BBB category-page evidence is a page-not-found response: ${summary.categoryKey}`,
+      );
+    }
+  }
+  const profileUrls = new Set(
+    categoryPages.flatMap((page) =>
+      (page.profileListings ?? [])
+        .map((listing) => listing?.profileUrl)
+        .filter(Boolean),
+    ),
+  );
+  if (profileUrls.size !== summary.profileUrlsDiscovered) {
+    throw new Error(
+      `BBB category-page profile count mismatch: ${summary.categoryKey}`,
+    );
+  }
+  if (profileUrls.size === 0) {
+    const explicitEmptyResult = categoryPages.some((page) => {
+      const text = String(page.rawPage?.text ?? "");
+      return (
+        page.totalResults === 0 ||
+        /Showing:\s*0\s+results?/i.test(text) ||
+        /\bNo results\b/i.test(text)
+      );
+    });
+    if (!explicitEmptyResult) {
+      throw new Error(
+        `BBB zero-profile category lacks explicit empty-result evidence: ${summary.categoryKey}`,
+      );
+    }
+  }
+}
+
+function canonicalBbbProfileUrl(value) {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      !/(?:^|\.)bbb\.org$/i.test(url.hostname) ||
+      !/\/profile\//i.test(url.pathname)
+    ) {
+      return null;
+    }
+    return `https://www.bbb.org${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
+function bbbProfileIdentityFromUrl(value) {
+  const url = canonicalBbbProfileUrl(value);
+  if (!url) return null;
+  const match = new URL(url).pathname.match(
+    /-(\d{4})-(\d+)(?:\/addressId\/(\d+))?$/i,
+  );
+  return match ? [match[1], match[2], match[3]].filter(Boolean).join(":") : null;
+}
+
+function validateProfileEvidence(profile, summary) {
+  const profileUrl = canonicalBbbProfileUrl(profile.profileUrl);
+  const listingUrl = canonicalBbbProfileUrl(
+    profile.bbbHarvest?.listing?.profileUrl,
+  );
+  const profileIdentity = bbbProfileIdentityFromUrl(profileUrl);
+  const mainPageIdentity = bbbProfileIdentityFromUrl(
+    profile.bbbHarvest?.mainPage?.url,
+  );
+  if (
+    profile.recordKind !== "bbb_business_profile" ||
+    !profileUrl ||
+    listingUrl !== profileUrl ||
+    profileIdentity !== String(profile.providerProfileId ?? "") ||
+    mainPageIdentity !== profileIdentity
+  ) {
+    throw new Error(
+      `BBB profile navigation evidence mismatch: ${summary.categoryKey}`,
+    );
+  }
+}
+
 async function readVerifiedPart(harvestDir, part, expectedPrefix, label) {
   if (
     !part ||
@@ -169,8 +272,19 @@ export async function reconcileBbbHarvests({
     if (summary.categoryUrl !== category.url) {
       throw new Error(`Unexpected BBB category URL: ${summary.categoryKey}`);
     }
-    outcomes.push(summaryOutcome(summary, countyKey, reviewedCategories));
+    const outcome = summaryOutcome(summary, countyKey, reviewedCategories);
+    outcomes.push(outcome);
     summaries.push(summary);
+
+    if (outcome.kind === "complete") {
+      const categoryPages = await readVerifiedPart(
+        harvestDir,
+        summary.categoryPagePart,
+        "category-pages",
+        "category-page",
+      );
+      validateCompleteCategoryPages(summary, categoryPages);
+    }
 
     let summaryProfileCount = 0;
     for (const part of summary.profileParts ?? []) {
@@ -182,9 +296,7 @@ export async function reconcileBbbHarvests({
       );
       summaryProfileCount += profiles.length;
       for (const profile of profiles) {
-        if (profile.recordKind !== "bbb_business_profile") {
-          throw new Error(`Unexpected BBB record kind in ${part.relativePath}`);
-        }
+        validateProfileEvidence(profile, summary);
         rawProfileCount += 1;
         const identity = profileIdentity(profile);
         if (!profilesByIdentity.has(identity)) {

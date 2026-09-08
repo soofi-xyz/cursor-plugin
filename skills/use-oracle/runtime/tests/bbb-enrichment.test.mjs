@@ -51,8 +51,8 @@ describe("Duval BBB enrichment", () => {
         url: "https://www.bbb.org/us/fl/jacksonville/category/roofing-contractors",
       },
       {
-        key: "solar-energy-system-contractors",
-        url: "https://www.bbb.org/us/fl/jacksonville/category/solar-energy-system-contractors",
+        key: "solar-energy-contractors",
+        url: "https://www.bbb.org/us/fl/jacksonville/category/solar-energy-contractors",
       },
       {
         key: "heating-and-air-conditioning",
@@ -282,6 +282,50 @@ describe("Duval BBB enrichment", () => {
     expect(navigationCount).toBe(1);
   });
 
+  it("rejects a reviewed category URL that returns BBB's page-not-found response", async () => {
+    const outputDir = await mkdtemp(
+      path.join(tmpdir(), "bbb-duval-not-found-"),
+    );
+    temporaryDirectories.push(outputDir);
+    let navigationCount = 0;
+    const page = {
+      goto: async () => {
+        navigationCount += 1;
+        return { status: () => 200 };
+      },
+      title: async () => "Page not found | Better Business Bureau®",
+      evaluate: async () => "Whoops! Page not found!",
+    };
+
+    await expect(
+      harvestBbbCategoryInExistingPage(
+        {
+          countyKey: COUNTY_KEY,
+          reviewedCategory: BBB_CATEGORIES[1],
+          jobId: "bbb-duval-solar-not-found",
+          categoryKey: "solar-energy-contractors",
+          categoryUrl: BBB_CATEGORIES[1].url,
+          outputDir,
+          maxPages: 1,
+          maxProfiles: 1,
+          partRecordLimit: 1,
+          pageDelayMs: 0,
+          profileDelayMs: 0,
+          navigationTimeoutMs: 1_000,
+          challengeAttempts: 5,
+          challengeCheckIntervalMs: 0,
+          challengeChecksPerAttempt: 1,
+          maxRequests: 10,
+          maxDurationMs: 30_000,
+          includeHtml: false,
+          profileSubpages: [],
+        },
+        page,
+      ),
+    ).rejects.toThrow(/\[permanent_not_found\].*\(200\)/);
+    expect(navigationCount).toBe(1);
+  });
+
   it("writes zero-profile blocked artifacts without claiming completeness", async () => {
     const outputDir = await mkdtemp(
       path.join(tmpdir(), "bbb-duval-blocked-artifact-"),
@@ -332,7 +376,7 @@ describe("Duval BBB enrichment", () => {
     const notAttempted = buildBlockedBbbCategorySummary({
       ...options,
       reviewedCategory: BBB_CATEGORIES[1],
-      categoryKey: "solar-energy-system-contractors",
+      categoryKey: "solar-energy-contractors",
       categoryUrl: BBB_CATEGORIES[1].url,
     });
     expect(notAttempted.sourceAccessStatus).toBe(

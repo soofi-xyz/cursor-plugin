@@ -287,6 +287,14 @@ describe("permit public artifact export", () => {
       linkedPermits: 1,
       validUnlinkedPermits: 1,
     });
+    expect(
+      exported.datasetCoverage.datasets.find(
+        (dataset) => dataset.source === "permits",
+      ),
+    ).toMatchObject({
+      linked_property_count: 1,
+      properties_with_permits: 1,
+    });
     expect(exported.approval.status).toBe(
       "pending_human_approval",
     );

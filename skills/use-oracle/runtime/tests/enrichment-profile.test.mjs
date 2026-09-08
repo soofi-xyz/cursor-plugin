@@ -107,8 +107,8 @@ describe("county enrichment profiles", () => {
         url: "https://www.bbb.org/us/fl/jacksonville/category/roofing-contractors",
       },
       {
-        key: "solar-energy-system-contractors",
-        url: "https://www.bbb.org/us/fl/jacksonville/category/solar-energy-system-contractors",
+        key: "solar-energy-contractors",
+        url: "https://www.bbb.org/us/fl/jacksonville/category/solar-energy-contractors",
       },
       {
         key: "heating-and-air-conditioning",

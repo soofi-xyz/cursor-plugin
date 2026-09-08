@@ -213,17 +213,17 @@ destination:
 
 publication:
   status: published-and-donphan-verified
-  completed_at: "2026-09-06T11:46:55.444Z"
+  completed_at: "2026-09-08T14:35:57.784Z"
   bucket: elephant-oracle-query-table
   property_query_table_ipns_label: oracle-query-table-duval
   property_query_table_ipns_name: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
-  property_query_table_cid: QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ
+  property_query_table_cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
   permit_table_ipns_label: oracle-permit-table-duval
   permit_table_ipns_name: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
   permit_table_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
   coverage_ipns_label: oracle-dataset-coverage-duval
   coverage_ipns_name: k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w
-  coverage_cid: QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm
+  coverage_cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
   permit_coverage_cid: Qme3r6LCKSZZc5aCdEqW7RNcnsg5BntFLvP6wDGse38NxG
   privacy_approval_required: true
   exact_byte_approval_recorded: true
@@ -239,8 +239,81 @@ publication:
     representative_property_permit_count: 12
 
 enrichment:
+  avm:
+    status: awaiting-licensed-source
+    observed_coverage: 0_percent
+    column: avm_value
+    source_policy: appraisal market_value is not an AVM and cannot populate this field
+    requested_delivery: licensed bulk AVM extract keyed and validated by FIPS 12031 plus Duval folio/APN
+    required_value_contract: value, valuation date, model method, confidence score, high/low bounds, and stable vendor property ID
+    approved_source_profiles: []
+    publication_requirement: durable public Filebase/IPFS redistribution rights
+    request_template: skills/use-oracle/runtime/docs/duval-avm-source-request.md
+    candidate_providers:
+      - ATTOM AVM bulk
+      - Clear Capital ClearAVM bulk/API
+    blocker_owner: Oracle Data Partnerships
+    blocker: provider, credentials, immutable extract, code-reviewed source profile, and publication rights are not yet supplied
+  hoa:
+    status: records-request-required
+    observed_coverage: 0_percent
+    column: hoa_flag
+    semantics: effective mandatory homeowners association membership governed by Florida Chapter 720
+    excluded_semantics: Chapter 718 condominiums, Chapter 719 cooperatives, CDDs, voluntary civic organizations, and subdivision inference
+    source_policy: subdivision names, neighborhood associations, association-owned common parcels, and CDD boundaries are candidate signals only
+    requested_delivery: authoritative parcel-level Chapter 720 membership export preserving master and sub-associations
+    approved_source_profiles: []
+    request_template: skills/use-oracle/runtime/docs/duval-hoa-records-request.md
+    request_routes:
+      - Duval County Property Appraiser records custodian at pacustserv@coj.net or 904-255-5900
+      - Duval Clerk Public Records Department at 904-255-1828
+      - Duval Clerk Official Records and Research at 904-255-2025
+      - COJ Public Records Center at https://jacksonvillefl.govqa.us/WEBAPP/_rs/
+    evaluated_sources:
+      - Florida DBPR condominium and managing-entity records
+      - City of Jacksonville subdivision property search
+      - City of Jacksonville neighborhood-association GIS
+      - Duval Clerk Official Records search
+    blocker_owner: Oracle Data Partnerships
+    blocker: no reviewed parcel-level membership export, code-approved source profile, effectiveness history, publication permission, or authoritative negative coverage has been supplied
   bbb:
-    status: deferred
-    reason: Permit contractor artifacts are retained privately for later linkage; BBB access is not a permit-ingestion dependency
+    status: published-and-donphan-verified
+    source_access_status: accessible
+    completed_at: "2026-09-08T14:35:57.784Z"
+    reviewed_categories:
+      - category_key: roofing-contractors
+        profiles_harvested: 242
+        profiles_failed: 0
+      - category_key: solar-energy-contractors
+        profiles_harvested: 233
+        profiles_failed: 0
+      - category_key: heating-and-air-conditioning
+        profiles_harvested: 235
+        profiles_failed: 0
+    raw_profile_count: 710
+    unique_profile_count: 698
+    duplicate_profile_count: 12
+    linked_business_count: 282
+    linked_profile_count: 371
+    linked_permit_count: 314247
+    linked_property_count: 171134
+    valid_unlinked_count: 327
+    property_linkage_status: linked_via_permit_contractor
+    property_linkage_semantics: current BBB snapshot business identity appears as contractor on a linked historical permit; does not assert BBB status at permit time
+    permit_publication_reconciliation:
+      source_record_count: 3624986
+      published_record_count: 3415527
+      excluded_source_record_count: 209459
+      independent_municipality_record_count: 1078
+    private_profile_artifact:
+      bytes: 65888423
+      sha256: 69bc490dfd7d9783d4ee9ecff308b13a7c7d8f430f04ffcc82bade4573097e4f
+      archive_bucket: duvaltask8batchstack-artifactbucket7410c9ef-ilumpehfi0sf
+      archive_prefix: runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/reconciliation-v2/bbb/
+    private_linkage_artifact:
+      bytes: 162542561
+      sha256: 4227976393fe65a913b327e84e9f4c7223cab8be900aaa1c8279ce0b282efa1a
+      archive_prefix: runs/duval-task8-2026q3-ddaa7c4d-r2/artifacts/bbb-property-linkage/private/
+    public_coverage_cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
 
 approved_exceptions: []

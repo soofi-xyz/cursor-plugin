@@ -81,7 +81,7 @@ describe("published county catalog", () => {
       permitQueryTableUrl:
         "https://ipfs.filebase.io/ipns/k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1",
       placesTableUrl: null,
-      updatedAt: "2026-09-06T11:46:55.444Z",
+      updatedAt: "2026-09-08T14:12:04.353Z",
     });
   });
 
