@@ -1,8 +1,8 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
-  "description": "Self-contained Elephant county-ingestion runtime (seed, capture/transform, export, publish) bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval county adapters.",
+  "description": "Self-contained Elephant county-ingestion runtime (seed, capture/transform, export, publish, and coverage-only repair) bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval county adapters.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"

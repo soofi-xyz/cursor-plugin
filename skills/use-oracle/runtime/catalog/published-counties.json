@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-09-01T14:16:20.247Z",
+  "generatedAt": "2026-09-08T18:02:22.201Z",
   "counties": [
     {
       "countyKey": "broward",
@@ -12,7 +12,7 @@
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhx6yqczp6f9na3xa9g1iiizxtquer62x9wavh8gpbng524vrbp",
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhns9u4o0lot4w4808yi4gdsyo5qx136lgmrplmgqdhah5qj7lg",
       "placesTableUrl": null,
-      "updatedAt": "2026-09-02T20:59:31.937Z"
+      "updatedAt": "2026-09-08T18:02:22.201Z"
     },
     {
       "countyKey": "chester",
@@ -45,10 +45,10 @@
       "countyFips": "12071",
       "status": "published",
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djd4ohcf3qm87dhlt0e270xw8ejhkyia62edr76uj0u05hrf7m5",
-      "datasetCoverageUrl": "https://k51qzi5uqu5dimw0elyh4agbtqe7v2fzp0jcd7b1bcu8kxs0hml7yu1no0z0vd.ipns.dweb.link/",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dimw0elyh4agbtqe7v2fzp0jcd7b1bcu8kxs0hml7yu1no0z0vd",
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
-      "updatedAt": "2026-07-07T10:53:46.288Z"
+      "updatedAt": "2026-07-10T09:18:04.350Z"
     },
     {
       "countyKey": "miami-dade",
