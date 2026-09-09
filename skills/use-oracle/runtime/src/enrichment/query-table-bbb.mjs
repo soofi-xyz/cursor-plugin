@@ -188,6 +188,33 @@ async function readJsonLines(filePath) {
     .map((line) => JSON.parse(line));
 }
 
+function buildContractorIdentityIndex(businesses, profiles = []) {
+  const strictNameIndex = new Map();
+  const phoneIndex = new Map();
+  const licenseIndex = new Map();
+  const addIndex = (index, key, id) => {
+    const ids = index.get(key) ?? new Set();
+    ids.add(id);
+    index.set(key, ids);
+  };
+  for (const business of businesses.values()) {
+    for (const name of business.strictNames) {
+      addIndex(strictNameIndex, name, business.id);
+    }
+    for (const phone of business.phones) addIndex(phoneIndex, phone, business.id);
+    for (const license of business.licenses) {
+      addIndex(licenseIndex, license, business.id);
+    }
+  }
+  return {
+    profiles,
+    businesses,
+    strictNameIndex,
+    phoneIndex,
+    licenseIndex,
+  };
+}
+
 export async function loadBbbBusinessIndex(bbbProfilesPath) {
   const profiles = await readJsonLines(bbbProfilesPath);
   const businesses = new Map();
@@ -227,51 +254,90 @@ export async function loadBbbBusinessIndex(bbbProfilesPath) {
     if (profile.profileUrl) business.profileUrls.add(String(profile.profileUrl));
     businesses.set(id, business);
   }
-
-  const strictNameIndex = new Map();
-  const phoneIndex = new Map();
-  const licenseIndex = new Map();
-  const addIndex = (index, key, id) => {
-    const ids = index.get(key) ?? new Set();
-    ids.add(id);
-    index.set(key, ids);
-  };
-  for (const business of businesses.values()) {
-    for (const name of business.strictNames) {
-      addIndex(strictNameIndex, name, business.id);
-    }
-    for (const phone of business.phones) addIndex(phoneIndex, phone, business.id);
-    for (const license of business.licenses) {
-      addIndex(licenseIndex, license, business.id);
-    }
-  }
-  return {
-    profiles,
-    businesses,
-    strictNameIndex,
-    phoneIndex,
-    licenseIndex,
-  };
+  return buildContractorIdentityIndex(businesses, profiles);
 }
 
-function permitContractorIdentity(attributes) {
+function arrayValues(value) {
+  if (value === null || value === undefined) return [];
+  return Array.isArray(value) || value instanceof Set ? [...value] : [value];
+}
+
+export function createContractorCompanyIndex(companies) {
+  const businesses = new Map();
+  for (const company of companies) {
+    const id = String(company.companyId ?? company.id ?? "").trim();
+    if (!id) throw new Error("Contractor company index requires companyId");
+    if (businesses.has(id)) {
+      throw new Error(`Duplicate contractor company identity: ${id}`);
+    }
+    const names = [
+      company.name,
+      company.legalName,
+      ...arrayValues(company.names),
+      ...arrayValues(company.alternateNames),
+    ].filter(Boolean);
+    const strictNames = new Set(
+      names.map((name) => normalizeBusinessName(name)).filter(Boolean),
+    );
+    const looseNames = new Set(
+      names
+        .map((name) => normalizeBusinessName(name, { loose: true }))
+        .filter(Boolean),
+    );
+    const phones = new Set(
+      [company.phone, ...arrayValues(company.phones)]
+        .map(normalizePhone)
+        .filter(Boolean),
+    );
+    const licenses = new Set(
+      [company.licenseNumber, ...arrayValues(company.licenses)]
+        .map((license) =>
+          normalizeLicense(
+            typeof license === "string"
+              ? license
+              : license?.licenseNumber ?? license?.number,
+          ),
+        )
+        .filter(Boolean),
+    );
+    businesses.set(id, {
+      id,
+      names: new Set(names.map(String)),
+      strictNames,
+      looseNames,
+      phones,
+      licenses,
+      profileIds: new Set(),
+      profileUrls: new Set(),
+    });
+  }
+  return buildContractorIdentityIndex(businesses);
+}
+
+export function normalizePermitContractorIdentity(attributes) {
   const businessName = String(
-    attributes.CompanyName ??
+    attributes.businessName ??
+      attributes.CompanyName ??
       attributes.BusinessName ??
       attributes.ContractorName ??
       "",
   ).trim();
   const license = normalizeLicense(
-    attributes.LicenseNumber ??
+    attributes.license ??
+      attributes.licenseNumber ??
+      attributes.LicenseNumber ??
       attributes.ContractorLicenseNumber ??
       attributes.QALicenseNumber,
   );
   const phone = normalizePhone(
-    attributes.CompanyPhone ??
+    attributes.phone ??
+      attributes.CompanyPhone ??
       attributes.ContractorPhone ??
       attributes.Phone,
   );
   const stableSourceId =
+    attributes.sourceCompanyId ??
+    attributes.companyId ??
     attributes.CompanyID ??
     attributes.ContractorID ??
     attributes.QALicenseID ??
@@ -363,6 +429,32 @@ export function matchPermitContractor(
     confidence: 0.8,
     candidate: top,
     runnerUp: runnerUp ?? null,
+  };
+}
+
+export function matchContractorToCompany(
+  contractor,
+  companyIndex,
+  options = {},
+) {
+  const match = matchPermitContractor(
+    normalizePermitContractorIdentity(contractor),
+    companyIndex,
+    options,
+  );
+  if (match.status === "accepted") {
+    const { bbbBusinessId, ...rest } = match;
+    return { ...rest, companyId: bbbBusinessId };
+  }
+  const remapCandidate = (candidate) => {
+    if (!candidate) return candidate;
+    const { bbbBusinessId, ...rest } = candidate;
+    return { ...rest, companyId: bbbBusinessId };
+  };
+  return {
+    ...match,
+    candidate: remapCandidate(match.candidate),
+    runnerUp: remapCandidate(match.runnerUp),
   };
 }
 
@@ -664,7 +756,7 @@ export async function linkBbbContractorsToProperties({
         return;
       }
       const propertyId = property.propertyId;
-      const contractor = permitContractorIdentity(attributes);
+      const contractor = normalizePermitContractorIdentity(attributes);
       if (!contractor.businessName || !contractor.strictName) {
         permitsWithoutContractor += 1;
         return;

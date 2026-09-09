@@ -230,6 +230,8 @@ async function processProperty({
         observedAt: nowIso(clock),
       }),
     );
+  } finally {
+    await adapter.close?.();
   }
 
   const terminalClassification = failures[0]?.classification;
@@ -380,6 +382,8 @@ export async function probePermitSources({ profile, adapterOptions = {} }) {
         errorCode: classified.code,
         message: classified.message,
       });
+    } finally {
+      await adapter.close?.();
     }
   }
   return results;

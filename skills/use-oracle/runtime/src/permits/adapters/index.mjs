@@ -1,9 +1,11 @@
 import { createClick2GovAdapter } from "./click2gov.mjs";
 import { createJaxEpicsAdapter } from "./jaxepics.mjs";
+import { createTylerCivicAccessAdapter } from "./tyler-civic-access.mjs";
 
 const adapterFactories = Object.freeze({
   click2gov: createClick2GovAdapter,
   jaxepics: createJaxEpicsAdapter,
+  "tyler-civic-access": createTylerCivicAccessAdapter,
 });
 
 export function createPermitAdapter(jurisdiction, options = {}) {
