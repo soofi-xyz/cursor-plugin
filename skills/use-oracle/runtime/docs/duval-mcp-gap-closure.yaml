@@ -8,10 +8,11 @@ protected_publications:
   property_query_table:
     label: oracle-query-table-duval
     network_key: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
-    cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
-    sha256: 3f43ef083328d193ba55bee7ec4279f6a6ba371d8b6279ac6af01864419aa56a
-    bytes: 167302003
-    mutation_policy: one approved post-enrichment repoint only
+    input_cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
+    cid: QmeWMT7HWoSDX9PLahXDaRuWbXtktSpb5t2kZBvqTNRi5b
+    sha256: e2de98650d33d0280a666401b5778d8e4d8168ca420fd78ca6d167916a43fb29
+    bytes: 187692636
+    mutation_policy: approved post-enrichment repoint completed once
   permit_table:
     label: oracle-permit-table-duval
     network_key: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
@@ -191,13 +192,56 @@ execution_guard:
   aws_region: us-east-1
   aws_profile_policy: operator-selected verified profile; never hardcode a developer profile
   aws_auth_at_freeze: verified_after_sso_refresh
-  remote_writes_allowed: false
-  reasons:
-    - dedicated Filebase buckets and labels do not yet exist
-    - exact-byte privacy approval is required for consolidated property JSON and final query Parquet
+  remote_writes_allowed: true
+  approval_plan_sha256: 8ba5fb19f4f3dcb1713a2d97898d0790e3a781b7907f861e2b3238b2022cc050
+  approval_record_sha256: 650cf8d6490845c0d010420e125c3627c41e343d59c8b4f8360506e3c262a5ef
+  live_run_id: duval-mcp-gap-20260909-publish-r1
+  live_job_id: 8bbf36e0-6c1b-4321-a537-6d5b535fa76b
+  publication_completed_at: "2026-09-09T14:33:25.609Z"
   forbidden:
     - appraisal reingest
     - permit reingest
     - BBB submission or harvest
     - permit IPNS repoint
     - coverage IPNS repoint
+
+publication:
+  status: published
+  property_documents:
+    bucket: elephant-oracle-open-data-duval
+    label: oracle-open-data-duval
+    network_key: k51qzi5uqu5dilwt7bkcn08hx0ys1fr60yc89mfvk3vkohx0s5hllpcckrdnsn
+    index_cid: QmQuDQ4pHx9sYXccG3ZzLV4GQ6e99sARpCBsVi7uNqHkp4
+    manifest_cid: QmRbz3CGdCjK8YZJNNEMYtkagrbSNRLQ7x8ZWp3tf4qmaU
+    property_count: 403885
+    total_bytes: 2639899112
+  query_table:
+    bucket: elephant-oracle-query-table
+    label: oracle-query-table-duval
+    network_key: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
+    cid: QmeWMT7HWoSDX9PLahXDaRuWbXtktSpb5t2kZBvqTNRi5b
+    sha256: e2de98650d33d0280a666401b5778d8e4d8168ca420fd78ca6d167916a43fb29
+    bytes: 187692636
+  places:
+    bucket: elephant-oracle-open-data-duval-places
+    label: oracle-open-data-duval-places
+    network_key: k51qzi5uqu5dm3737urhv9d68outordu5bs5ie8bffidz6njp6hkklw47kpc9g
+    directory_cid: bafybeib3pm2cbmudpz3uumj4ev3jmsybgj7p6ztk4uyzw24ixsgmwwdmm4
+    table_cid: QmUKW7dTVRZbjdGQYrFSjNBrSpsJSHUBruFSjCchEWBmd3
+    table_sha256: 076ed6396e221e38d54cc26ce22c5816a9f5105fa9fd3c88ab832412da270faf
+    table_bytes: 6623705
+    row_count: 57574
+    overture_release: 2026-08-19.0
+    pii_gate: human-approved-contact-free
+  preserved_publications:
+    permit_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
+    coverage_cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
+  published_counts:
+    property_cid_non_null: 403885
+    owner_occupied_true: 212959
+    owner_occupied_false: 0
+    owner_occupied_null: 190926
+    properties_with_sunbiz: 42184
+    properties_with_permits: 336451
+    properties_with_bbb_contractor: 171134
+    bbb_properties_without_permits: 0

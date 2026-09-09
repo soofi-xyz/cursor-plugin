@@ -326,6 +326,12 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
     expect(written.mcpServers.elephant.env.ORACLE_OPEN_DATA_IPNS_MAP).toBe(
       originalParsed.mcpServers.elephant.env.ORACLE_OPEN_DATA_IPNS_MAP,
     );
+    expect(
+      JSON.parse(written.mcpServers.elephant.env.ORACLE_OPEN_DATA_IPNS_MAP)
+        .duval,
+    ).toBe(
+      "k51qzi5uqu5dilwt7bkcn08hx0ys1fr60yc89mfvk3vkohx0s5hllpcckrdnsn",
+    );
     expect(written.mcpServers.elephant.env.ORACLE_OPEN_DATA_DEFAULT_COUNTY).toBe(
       originalParsed.mcpServers.elephant.env.ORACLE_OPEN_DATA_DEFAULT_COUNTY,
     );
@@ -357,6 +363,6 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
         written.mcpServers.elephant.env
           .PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS,
       ).duval,
-    ).toBe("QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS");
+    ).toBe("QmeWMT7HWoSDX9PLahXDaRuWbXtktSpb5t2kZBvqTNRi5b");
   });
 });
