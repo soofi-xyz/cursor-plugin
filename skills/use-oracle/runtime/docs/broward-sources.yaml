@@ -370,12 +370,15 @@ permits:
       vendor: Citizenserve CAP Government
       portal_kind: historical-search
       portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+      configured_primary_status: unavailable-timeout-2026-09-09
+      operator_approved_fallback: https://www2.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+      official_canonical_confirmation: unconfirmed-no-direct-municipal-vendor-link
       historical_records: true
       anonymous_access: true
       adapter: citizenserve
       source_system: broward_southwest_ranches_citizenserve_permits
-      implementation_status: canonical-adapter-fixture-certified
-      contractor_detail_capability: public-detail-when-source-exposes-it
+      implementation_status: operator-approved-www2-listing-fallback-certified
+      contractor_detail_capability: not-exposed-on-www2-listing-fallback
     - jurisdiction: Sunrise
       key: sunrise
       status: supported

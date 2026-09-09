@@ -18,6 +18,13 @@ export const browardPermitProfile = validatePermitProfile({
       adapterConfig: {
         sourceSystem: "broward_southwest_ranches_citizenserve_permits",
         baseUrl: "https://www6.citizenserve.com/Portal",
+        fallbackBaseUrls: [
+          "https://www2.citizenserve.com/Portal",
+        ],
+        listingOnlyBaseUrls: [
+          "https://www2.citizenserve.com/Portal",
+        ],
+        pinConfiguredHost: true,
         apiBaseUrl: null,
         municipalityId: null,
         parcelFieldNames: ["parcelNumber"],
@@ -26,7 +33,7 @@ export const browardPermitProfile = validatePermitProfile({
         maximumDetailRecords: 25,
         installationId: 117,
         jurisdictionTokens: ["southwest ranches"],
-        contractorDetailCapability: "public-detail",
+        contractorDetailCapability: "unknown",
       },
       parcelSearchFormat: "digits-only",
       sources: [
@@ -34,10 +41,19 @@ export const browardPermitProfile = validatePermitProfile({
           key: "citizenserve-current",
           url: "https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0",
           role: "historical-search",
+          access: "unavailable",
+          historicalBoundary:
+            "Vendor-routed primary host for installation 117; unavailable during the bounded 2026-09-09 recovery.",
+          contractorDetailCapability: "unknown",
+        },
+        {
+          key: "citizenserve-www2-operator-fallback",
+          url: "https://www2.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0",
+          role: "historical-search",
           access: "public",
           historicalBoundary:
-            "Public installation exposes Southwest Ranches records, including legacy SWR permit numbers.",
-          contractorDetailCapability: "public-detail",
+            "Operator-approved fallback for installation 117. The public form identifies Southwest Ranches permits, but the Town does not directly link this host and public result rows expose listings without detail links.",
+          contractorDetailCapability: "not-exposed",
         },
       ],
       recordsRequest: {

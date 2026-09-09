@@ -44,6 +44,9 @@ const sourceSurfaceSchema = z
 const adapterConfigSchema = z
   .object({
     baseUrl: z.string().url(),
+    fallbackBaseUrls: z.array(z.string().url()).max(5).optional(),
+    listingOnlyBaseUrls: z.array(z.string().url()).max(5).optional(),
+    pinConfiguredHost: z.boolean().optional(),
     apiBaseUrl: z.string().url().nullable(),
         bulkLayerUrl: z.string().url().nullable().optional(),
         bulkPageSize: z.number().int().min(1).max(2000).nullable().optional(),
@@ -69,12 +72,32 @@ const adapterConfigSchema = z
   })
   .strict()
   .superRefine((config, context) => {
-    for (const key of ["baseUrl", "apiBaseUrl"]) {
-      if (config[key] && new URL(config[key]).protocol !== "https:") {
+    const configuredUrls = [
+      config.baseUrl,
+      config.apiBaseUrl,
+      ...(config.fallbackBaseUrls ?? []),
+      ...(config.listingOnlyBaseUrls ?? []),
+    ].filter(Boolean);
+    for (const configuredUrl of configuredUrls) {
+      if (new URL(configuredUrl).protocol !== "https:") {
         context.addIssue({
           code: "custom",
-          path: [key],
+          path: ["baseUrl"],
           message: "Permit adapter URLs must use HTTPS",
+        });
+      }
+    }
+    const sourceUrls = [
+      config.baseUrl,
+      ...(config.fallbackBaseUrls ?? []),
+    ];
+    for (const listingOnlyUrl of config.listingOnlyBaseUrls ?? []) {
+      if (!sourceUrls.includes(listingOnlyUrl)) {
+        context.addIssue({
+          code: "custom",
+          path: ["listingOnlyBaseUrls"],
+          message:
+            "Listing-only adapter URLs must also be configured source URLs",
         });
       }
     }
