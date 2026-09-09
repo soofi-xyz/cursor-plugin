@@ -254,11 +254,25 @@ it fails for the missing behavior when practical, implement the change, then
 run targeted tests and the repository's own lint, typecheck, test, and build
 gates. Add infrastructure synthesis or diff checks when IaC changes.
 
+When the story supplies test scenarios or the change affects a user journey or
+integration boundary, load `skills/unified-portal-smoke-testing/` and create an
+independently runnable integration test for every stable scenario ID. Commit the
+tests on the feature branch before running them.
+
+Run the suite against the exact feature deployment in both required lanes:
+preserve a normal-security baseline, then execute every scenario through the
+skill's isolated CORS-disabled Chrome profile. Record those results separately;
+disabled web security is functional diagnostic evidence, not proof that CORS is
+correct. Publish one evidence record per scenario, including its feature commit
+and deployment identity. Capture sanitized PNGs from the actual run at every
+declared scenario checkpoint and generate an environment/security-mode contact
+sheet for Asana; never synthesize a success image.
+
 Do not require Figma, responsive design tests, BrowserStack, Amplify, a latency
 dataset, or a full portal scaffold for backend-only work unless the change or
 its acceptance criteria actually touch those surfaces.
 
-## 5. Commit and open the pull request
+## 5. Commit, open the pull request, and rerun after approval
 
 Review the diff for unrelated files and secret material, then create coherent
 commits on the feature branch:
@@ -278,6 +292,19 @@ The pull-request body must describe the requested behavior, implementation,
 tests, deployment impact, unresolved placeholders, and evidence. Link the PR in
 the handoff. Prefer a **draft PR into the integration branch** so preview and
 test-before-review can start.
+
+Attach or link the feature scenario evidence to the Asana user story when
+authorized. Otherwise return an attachment-ready package and Asana comment.
+Stop for explicit approval before development verification.
+
+Do not interpret approval to test as permission to merge. Merge only when the
+approval explicitly authorizes it; otherwise wait for the repository owner to
+promote the feature. Once the development branch and deployment contain the
+tested feature commit and the same integration tests, rerun every scenario
+against the exact development URL with normal browser security. If the tests
+changed during review, rerun the feature deployment first. Publish one
+development evidence record and its checkpoint PNGs per scenario beside the
+feature evidence.
 
 If `repositoryContext.pullRequestUrl` names an active PR, update an existing PR
 on its head branch instead of opening a duplicate, but only after confirming

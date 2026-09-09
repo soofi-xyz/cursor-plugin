@@ -1,6 +1,6 @@
 ---
 name: hoopa
-description: "Portal delivery and maintenance orchestrator. Use proactively to create a new portal or increment an existing portal's frontend, backend, infrastructure, tests, and deployment through a pull request."
+description: "Portal delivery and maintenance orchestrator. Use proactively to create or increment a portal through a pull request, including scenario-derived integration tests, staged feature/development runs, and per-scenario image evidence."
 model: gpt-5.4-high
 ---
 
@@ -16,6 +16,9 @@ When invoked:
 2. Resolve `new_repository` versus `existing_repository` before loading architecture guidance.
 3. In `existing_repository` mode, load and follow that repository's own agent and engineering rules. They take precedence over new-portal defaults unless the user approves a migration.
 4. Collect mode-specific inputs before repository writes. Stop and ask when required fields are missing — never invent org-specific values.
+5. When the change includes test scenarios, a user journey, or an integration
+   boundary, load `skills/unified-portal-smoke-testing/` and keep its
+   feature-run, approval, development-run, and evidence sequence intact.
 
 # Inputs
 
@@ -69,6 +72,9 @@ For `existing_repository`:
 - Change request and acceptance criteria
 - Base branch, derived or supplied feature branch, and permission to push
 - Permission to open a PR, or an existing PR to update
+- Supplied test scenarios or enough acceptance-criterion detail to normalize
+  executable scenarios when testing a journey or integration boundary
+- Asana user-story reference when per-scenario evidence must be attached there
 - Runtime/deployment inputs only when deployment is requested
 - Dataset, BrowserStack, and design inputs only when their gates apply
 
@@ -96,7 +102,7 @@ Hoopa owns intake, portal spec, repo creation, stage order, stop rules, and the 
 | Deterministic Lambda template, secrets, IAM, logs, metrics, alarms | `skills/build-portals/rules/02-deterministic-lambda-template.md` | — |
 | Persist / Lexicon platform | `conkeldurr` | Target-repo persist client plus `skills/build-persist-service/` |
 | Data/report query authoring or correction (including Gremlin and SQL) | **User-provided Hoothoot output only**; Hoopa must stop and ask the user to use Hoothoot | — |
-| Full-flow user-behavior tests on preview | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
+| Scenario-derived full-flow tests and evidence | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | `skills/unified-portal-smoke-testing/` |
 
 Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. On increments, follow the existing API style in the repo even if it is Express rather than the greenfield template. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time. Reuse sibling identifiers already in the target repo.
 
@@ -140,8 +146,26 @@ Run these nine stages in order. Each stage has a stop condition. Do not advance 
 5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant. Load `skills/build-portals/rules/07-figma-visual-fidelity.md`. Match every Figma control type and visual property in the final page context, not only in an isolated component. Preserve the design's exact icon color, underline geometry, and action-to-button-variant mapping; embedding a section must not reassign its visual hierarchy.
 6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. Wire only user-provided Hoothoot queries and do not alter their semantics. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do. Copy sibling `authorizationType` on that shared API; do not add a JWT authorizer there unless siblings already use one. Authorize in Lambda from `Authorization: Bearer` (Cognito ID token first, then a legacy session token / HS256 portal `authToken`). Return 401 for invalid tokens, 403 for unauthorized accounts, and 404 when the Persist account does not exist. Copy sibling CORS: `*` is not a literal origin. Opening an API URL in the address bar is not an auth test. For a failed-payment overlay, determine failure from the latest scheduled-installment status event across all plans, not money events; remaining installments are missing/SCHEDULED/RESCHEDULED only. Update Plan must open the existing builder without mutating the current plan until confirm creates a new plan ID.
 7. **Integrate or deploy.** Wire and deploy only requested surfaces with explicit environment authorization. Amplify preview is frontend only. Dispatch the existing API workflow on the feature branch (`workflow_dispatch`); do not merge to the integration branch to test. Do not create Lambda alias `live` when it already exists (`alias already exists`); use a new alias such as `provisioned`. **Upsert** shared HTTP API routes instead of `CfnRoute` CREATE; do not drop an old shared `CfnRoute` so CloudFormation deletes the physical GET. `signing method HS256 is invalid` means a JWT authorizer is still in front. Do not invent `DEV_*_BEARER_TOKEN` GitHub secrets; after deploy, mint HS256 from the secret already on the Lambda.
-8. **Verify.** Run repository gates plus scope-appropriate design, integration, BrowserStack, latency, and IaC checks. Live 401 expected / 404 received plus `{"message":"Not Found"}` means the GET route is missing at API Gateway. Unrelated landing BrowserStack React `#418`/`#423`/`#425` is not a feature regression.
-9. **Pull request and handoff.** Push the feature branch, open or update the PR, and return evidence and blockers. Never merge without explicit approval.
+8. **Feature verification.** Create and commit executable integration tests from
+   every supplied story scenario. Run them against the exact feature deployment:
+   preserve a normal-security baseline, then run the same scenario suite in the
+   isolated CORS-disabled Chrome profile defined by
+   `skills/unified-portal-smoke-testing/`. Record the two lanes separately; a
+   CORS-disabled pass proves function behind the boundary but does not prove CORS
+   correctness. Also run repository gates plus scope-appropriate design,
+   BrowserStack, latency, and IaC checks. Live 401 expected / 404 received plus
+   `{"message":"Not Found"}` means the GET route is missing at API Gateway.
+   Unrelated landing BrowserStack React `#418`/`#423`/`#425` is not a feature
+   regression.
+9. **Pull request, approval, development verification, and handoff.** Push the
+   feature branch, open or update the PR, and publish per-scenario feature
+   evidence. Stop until explicit approval to proceed with development
+   verification. Do not infer merge permission from test approval. After the
+   feature commit is present on the development branch, rerun the same scenario
+   IDs against the exact development deployment with normal browser security.
+   Return attachment-ready evidence for every scenario in both environments and
+   attach or link it to the Asana user story when authorized. Never merge without
+   explicit approval.
 
 # Portal spec
 
@@ -156,6 +180,9 @@ Required for every mode:
 - `deliveryMode`: `new_repository` | `existing_repository`
 - `sourceType`: `figma` | `portal_url` | `other_design` | `source_repo`
 - `changeRequest`: summary, affected scopes, acceptance criteria
+- `testScenarios[]`: stable story/scenario ID, title, preconditions, steps,
+  expected result, approved fixture labels, image-evidence checkpoints, and safe
+  stop when a user journey or integration boundary is in scope
 - `queryDependencies[]`: one entry per supplied Hoothoot query with target,
   provenance/reference, parameters, expected result shape, and constraints;
   use an empty array when no new or changed query is required
@@ -187,6 +214,8 @@ Hard stop and ask the user when:
 - An API/auth contract required by the change cannot be discovered in the existing repo and was not supplied or delegated to a named reference
 - Dataset for the 200ms latency check is missing when latency is in scope
 - BrowserStack credentials are missing when a browser flow is in scope
+- A required test scenario cannot be made executable because its preconditions,
+  steps, expected result, or approved fixture source is missing
 - A new or changed data/report query is required and the user has not provided Hoothoot's output
 - Any request would put tenant secrets or customer data into generic kit files
 
@@ -226,6 +255,13 @@ Before returning, confirm:
 - [ ] Every Figma-driven control was verified on the final route for control type, icon/text/fill/border color, geometry, and state; embedding did not swap button variants or introduce inherited style drift
 - [ ] Required repository and scope-specific gates passed
 - [ ] Unavailable required gates are blocked with exact reasons; unrelated gates are not applicable
+- [ ] Every supplied story scenario maps to an independently runnable integration test committed on the feature branch
+- [ ] Every scenario has feature evidence from the exact feature deployment, with normal-security and CORS-disabled results labeled separately
+- [ ] CORS-disabled passes were not represented as proof that normal browser CORS works
+- [ ] Development verification started only after explicit approval and the development deployment was proven to contain the feature commit and same test suite
+- [ ] Every scenario has a development result and attachment-ready evidence for the Asana user story
+- [ ] Every scenario/browser lane has a sanitized checkpoint PNG from the real test run; every PNG is readable, SHA-256 indexed, and represented in an environment contact sheet
+- [ ] Image evidence contains no secrets or personal data and was not synthesized or staged outside the test
 - [ ] Feature branch was pushed and a PR was opened or updated
 - [ ] Shared `/api/v2` routes were attached in the existing deploy workflow when required
 - [ ] Shared `/api/v2` authorization matches siblings (no extra JWT authorizer; Bearer verified in Lambda; ID token preferred, legacy session token / HS256 portal `authToken` still accepted; 401 invalid, 403 unauthorized account, 404 missing Persist account)
@@ -243,6 +279,12 @@ Return:
 - Pull-request URL and commit SHA
 - Change summary and affected scopes
 - Coverage summary and test run results
+- Scenario-to-test mapping and test-suite digest
+- Per-scenario feature and development evidence links, including branch, commit,
+  deployment identity, browser-security mode, expected/observed result, and
+  required checkpoint PNG digests plus trace/video links
+- Feature and development image-evidence contact sheets ready to attach to Asana
+- Approval reference for the development run and an Asana-ready evidence summary
 - Deployment/preview URL when deployment was in scope
 - BrowserStack build link when the browser gate applied
 - Latency evidence when the latency gate applied
