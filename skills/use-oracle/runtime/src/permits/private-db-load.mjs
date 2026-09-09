@@ -338,7 +338,7 @@ export async function verifyTylerPrivateLoad({ bundle, store }) {
   };
 }
 
-export async function loadTylerPrivateDatabase({ bundle, store }) {
+export function assertBrowardTylerSampleBundle(bundle) {
   if (
     bundle.manifest.countyKey !== "broward" ||
     bundle.permits.length !== EXPECTED_SAMPLE_PERMITS.size ||
@@ -360,6 +360,10 @@ export async function loadTylerPrivateDatabase({ bundle, store }) {
       "Loader accepts only the six-record bounded Broward Tyler bundle",
     );
   }
+}
+
+export async function loadTylerPrivateDatabase({ bundle, store }) {
+  assertBrowardTylerSampleBundle(bundle);
   let transactionStarted = false;
   try {
     await store.begin();
