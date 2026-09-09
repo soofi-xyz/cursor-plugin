@@ -74,6 +74,8 @@ export const duvalPermitProfile = validatePermitProfile({
           url: "https://jakb-egov.aspgov.com/Click2GovBP/index.html",
           role: "historical-search",
           access: "blocked",
+          blockerType: "source-unavailable",
+          enumerationStatus: "blocked",
         },
       ],
       recordsRequest: {
@@ -101,12 +103,16 @@ export const duvalPermitProfile = validatePermitProfile({
           url: "https://bsaonline.com/?uid=3261",
           role: "historical-search",
           access: "manual-only",
+          blockerType: "adapter-unavailable",
+          enumerationStatus: "blocked",
         },
         {
           key: "etrakit-history",
           url: "https://atlb-trk.aspgov.com/eTRAKiT/Search/permit.aspx",
           role: "historical-search",
           access: "blocked",
+          blockerType: "captcha",
+          enumerationStatus: "blocked",
         },
       ],
       recordsRequest: {
@@ -134,6 +140,8 @@ export const duvalPermitProfile = validatePermitProfile({
           url: "https://www.nbfl.gov/planning-community-development",
           role: "records-information",
           access: "unavailable",
+          blockerType: "custodian-only",
+          enumerationStatus: "blocked",
         },
       ],
       recordsRequest: {
@@ -160,6 +168,8 @@ export const duvalPermitProfile = validatePermitProfile({
           url: "https://baldwinfl.govoffice2.com/?SEC=989BD37A-6DA4-49F8-A566-4D52BFF1E945",
           role: "records-information",
           access: "unavailable",
+          blockerType: "custodian-only",
+          enumerationStatus: "blocked",
         },
       ],
       recordsRequest: {

@@ -8,7 +8,7 @@ import {
 } from "./contracts.mjs";
 import { classifyPermitError, PermitSourceError } from "./errors.mjs";
 import {
-  normalizeDuvalParcelIdentifier,
+  normalizePermitParcelIdentifier,
   routePermitJurisdiction,
 } from "./normalization.mjs";
 import {
@@ -16,6 +16,7 @@ import {
   atomicWriteJson,
   readJson,
 } from "./storage.mjs";
+import { assertPermitProfileReady } from "./readiness.mjs";
 
 function nowIso(clock) {
   return new Date(clock()).toISOString();
@@ -27,6 +28,13 @@ function propertyInput(row) {
     parcelIdentifier:
       row.parcel_identifier ?? row.parcelIdentifier ?? null,
     city: row.address_city ?? row.city ?? null,
+    workAddress:
+      row.address_full ??
+      row.situs_address ??
+      row.siteAddress ??
+      row.address_street ??
+      row.address ??
+      null,
   };
 }
 
@@ -58,17 +66,34 @@ async function processProperty({
   let parcelIdentifier;
   let jurisdiction;
   try {
-    parcelIdentifier = normalizeDuvalParcelIdentifier(
+    parcelIdentifier = normalizePermitParcelIdentifier(
+      profile,
       input.parcelIdentifier,
     );
-    jurisdiction = routePermitJurisdiction(profile, input.city);
+    jurisdiction = routePermitJurisdiction(
+      profile,
+      input.city ?? input.workAddress,
+    );
+    if (!jurisdiction) {
+      throw new PermitSourceError(
+        `No permit jurisdiction matched routing evidence "${String(
+          input.city ?? input.workAddress ?? "",
+        )}"`,
+        {
+          classification: "unrouted",
+          code: "permit_jurisdiction_unrouted",
+        },
+      );
+    }
   } catch (error) {
     const classified = classifyPermitError(error);
     jurisdiction =
-      routePermitJurisdiction(profile, input.city) ??
-      profile.jurisdictions.find(
-        (candidate) => candidate.defaultForUnmatchedCity,
-      );
+      routePermitJurisdiction(profile, input.city ?? input.workAddress) ??
+      {
+        key: "unrouted",
+        name: "Unrouted permit authority",
+        status: "blocked",
+      };
     parcelIdentifier =
       String(input.parcelIdentifier ?? "").trim() || "missing";
     const paths = artifactPaths(
@@ -185,6 +210,7 @@ async function processProperty({
         (
           await adapter.searchParcel(parcelIdentifier, {
             requestedPropertyId: input.propertyId,
+            workAddress: input.workAddress,
           })
         ).map(
           (reference) => [reference.sourceRecordId, reference],
@@ -299,6 +325,7 @@ export async function harvestPermitProperties({
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error("Permit harvest concurrency must be between 1 and 8");
   }
+  assertPermitProfileReady(profile);
   await mkdir(outputDir, { recursive: true });
   const results = await mapConcurrent(properties, concurrency, (row) =>
     processProperty({
@@ -356,6 +383,7 @@ export async function harvestPermitProperties({
 }
 
 export async function probePermitSources({ profile, adapterOptions = {} }) {
+  assertPermitProfileReady(profile);
   const results = [];
   for (const jurisdiction of profile.jurisdictions) {
     const adapter = createPermitAdapter(jurisdiction, adapterOptions);
