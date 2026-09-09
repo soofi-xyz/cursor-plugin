@@ -2,7 +2,7 @@ county: Broward
 state: FL
 slug: broward
 fips: "12011"
-snapshot_time: "2026-09-09T17:30:00Z"
+snapshot_time: "2026-09-09T22:40:00Z"
 
 parcel:
   canonical_source: Broward County Property Appraiser assessed roll
@@ -18,6 +18,23 @@ parcel:
 
 permits:
   expected_jurisdiction_count: 32
+  canonical_profile: src/counties/broward/permit-profile.mjs
+  source_surface_count: 37
+  supported_jurisdiction_count: 18
+  blocked_jurisdiction_count: 13
+  custodian_only_jurisdiction_count: 1
+  harvestable_source_surface_count: 20
+  implemented_adapter_families:
+    - accela
+    - arcgis-feature-service
+    - bcs-posse
+    - citizenserve
+    - click2gov
+    - coconut-creek-status
+    - smartgov
+    - tyler-civic-access
+    - tyler-esuite
+  detail_fingerprint_policy: Every harvestable source route declares a versioned detailFingerprintVersion in the executable profile.
   assumes_unified_countywide_history: false
   milestone_scope:
     address: 16715 Berkshire Court, Southwest Ranches, FL 33331
@@ -27,13 +44,17 @@ permits:
   jurisdictions:
     - jurisdiction: Unincorporated Broward County
       key: unincorporated-broward
-      status: blocked
+      status: supported
       vendor: Computronix POSSE
       portal_kind: historical-search
       portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
       historical_records: true
       adapter: bcs-posse
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      supplemental_sources:
+        - adapter: arcgis-feature-service
+          portal: https://bcgishub.broward.org/posse/rest/services/HCED/HCEDPossePermitsRef/MapServer/4
+          mode: bulk-only-unlinked-no-certified-parcel-field
       records_request:
         recipient_office: Broward County Building Code Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -41,13 +62,17 @@ permits:
         route: records-first
     - jurisdiction: Hollywood
       key: hollywood
-      status: blocked
+      status: supported
       vendor: Accela Citizen Access and legacy BCLA
       portal_kind: historical-search
       portal: https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building
       historical_records: true
       adapter: accela
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      predecessor:
+        source: BCLA
+        portal: https://apps.hollywoodfl.org/building/PermitStatus.aspx
+        status: blocked-address-only-identity-unproven
       records_request:
         recipient_office: City of Hollywood Building Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -55,13 +80,13 @@ permits:
         route: records-first
     - jurisdiction: Plantation
       key: plantation
-      status: blocked
+      status: supported
       vendor: Accela Citizen Access
       portal_kind: historical-search
       portal: https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building
       historical_records: true
       adapter: accela
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
       records_request:
         recipient_office: City of Plantation Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -69,13 +94,17 @@ permits:
         route: records-first
     - jurisdiction: Fort Lauderdale
       key: fort-lauderdale
-      status: blocked
+      status: supported
       vendor: Accela Citizen Access
       portal_kind: historical-search
       portal: https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Permits&TabName=Permits
       historical_records: true
       adapter: accela
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      supplemental_sources:
+        - adapter: arcgis-feature-service
+          portal: https://gis.fortlauderdale.gov/arcgis/rest/services/GeneralPurpose/gisdata/MapServer/27
+          mode: parcel-linked-official-bulk
       records_request:
         recipient_office: City of Fort Lauderdale Development Services Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -111,13 +140,13 @@ permits:
         route: records-first
     - jurisdiction: Davie
       key: davie
-      status: blocked
+      status: supported
       vendor: Tyler eSuite
       portal_kind: historical-search
       portal: https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx
       historical_records: true
       adapter: tyler-esuite
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-bounded-pilot-certified
       records_request:
         recipient_office: Town of Davie Building Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -134,13 +163,13 @@ permits:
       implementation_status: bounded-pilot-certified
     - jurisdiction: Coconut Creek
       key: coconut-creek
-      status: blocked
+      status: supported
       vendor: municipal permit status
       portal_kind: historical-search
       portal: https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp
       historical_records: true
       adapter: municipal-status
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-bounded-pilot-certified
       records_request:
         recipient_office: City of Coconut Creek Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -148,13 +177,13 @@ permits:
         route: records-first
     - jurisdiction: Cooper City
       key: cooper-city
-      status: blocked
+      status: supported
       vendor: Accela Citizen Access
       portal_kind: historical-search
       portal: https://aca-prod.accela.com/COOPER/
       historical_records: true
       adapter: accela
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
       records_request:
         recipient_office: Cooper City Building Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -168,7 +197,7 @@ permits:
       portal: https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/
       historical_records: true
       adapter: tyler-esuite
-      implementation_status: paused-adapter-unavailable
+      implementation_status: adapter-routed-positive-detail-pending
       records_request:
         recipient_office: City of Dania Beach Building Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -227,13 +256,13 @@ permits:
         route: records-first
     - jurisdiction: Lauderdale-by-the-Sea
       key: lauderdale-by-the-sea
-      status: blocked
+      status: supported
       vendor: Citizenserve CAP Government
       portal_kind: historical-search
       portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
       historical_records: true
       adapter: citizenserve
-      implementation_status: paused-jurisdiction-certification
+      implementation_status: canonical-citizenserve-route-bounded
       records_request:
         recipient_office: Town of Lauderdale-by-the-Sea Building Division
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -247,7 +276,7 @@ permits:
       portal: http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx
       historical_records: true
       adapter: egovplus
-      implementation_status: paused-adapter-unavailable
+      implementation_status: insecure-http-source-blocked-runtime-refuses-transport
       records_request:
         recipient_office: City of Lauderhill Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -255,13 +284,13 @@ permits:
         route: records-first
     - jurisdiction: Lazy Lake
       key: lazy-lake
-      status: delegated
+      status: supported
       vendor: Broward County Computronix POSSE
       portal_kind: delegated-historical-search
       portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
       historical_records: true
       adapter: bcs-posse
-      implementation_status: delegated-to-unincorporated-blocked-adapter
+      implementation_status: delegated-through-canonical-bcs-posse-adapter
     - jurisdiction: Lighthouse Point
       key: lighthouse-point
       status: blocked
@@ -270,7 +299,7 @@ permits:
       portal: https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome
       historical_records: true
       adapter: smartgov
-      implementation_status: paused-adapter-unavailable
+      implementation_status: adapter-routed-positive-detail-pending
       records_request:
         recipient_office: City of Lighthouse Point Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -404,13 +433,13 @@ permits:
         route: records-first
     - jurisdiction: West Park
       key: west-park
-      status: blocked
+      status: supported
       vendor: Citizenserve CAP Government
       portal_kind: historical-search
       portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0
       historical_records: true
       adapter: citizenserve
-      implementation_status: paused-jurisdiction-certification
+      implementation_status: canonical-citizenserve-route-bounded
       records_request:
         recipient_office: City of West Park Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -418,13 +447,13 @@ permits:
         route: records-first
     - jurisdiction: Weston
       key: weston
-      status: blocked
+      status: supported
       vendor: Accela Citizen Access
       portal_kind: historical-search
       portal: https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building
       historical_records: true
       adapter: accela
-      implementation_status: paused-adapter-unavailable
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
       records_request:
         recipient_office: City of Weston Building Code Services
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
@@ -432,13 +461,13 @@ permits:
         route: records-first
     - jurisdiction: Wilton Manors
       key: wilton-manors
-      status: blocked
+      status: supported
       vendor: Citizenserve CAP Government
       portal_kind: historical-search
       portal: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
       historical_records: true
       adapter: citizenserve
-      implementation_status: paused-jurisdiction-certification
+      implementation_status: canonical-citizenserve-route-bounded
       records_request:
         recipient_office: City of Wilton Manors Building Department
         request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx

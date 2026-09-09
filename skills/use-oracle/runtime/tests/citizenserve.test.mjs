@@ -30,7 +30,9 @@ const [
       "search-listing-only.html",
     ].map((name) => readFile(new URL(name, fixtures), "utf8")),
   );
-const jurisdiction = browardPermitProfile.jurisdictions[0];
+const jurisdiction = browardPermitProfile.jurisdictions.find(
+  (candidate) => candidate.key === "southwest-ranches",
+);
 const request = {
   requestedParcelIdentifier: "504032160260",
   requestedPropertyId: null,
