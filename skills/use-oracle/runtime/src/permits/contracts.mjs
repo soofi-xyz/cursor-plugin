@@ -71,6 +71,7 @@ const contractorSchema = z
     businessName: z.string().trim().min(1),
     licenseNumber: nullableText,
     qualifierName: nullableText,
+    sourceRole: nullableText.optional(),
     phone: nullableText,
     email: nullableText,
   })

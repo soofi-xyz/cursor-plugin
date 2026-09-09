@@ -1,4 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { z } from "zod";
@@ -90,11 +96,13 @@ async function atomicWriteJsonLines(filePath, rows) {
     "utf8",
   );
   await rename(temporaryPath, filePath);
+  await chmod(filePath, 0o600);
 }
 
 export async function writeTylerPrivateCapture(filePath, capture) {
   const parsed = tylerPrivateCaptureSchema.parse(capture);
   await atomicWriteJson(filePath, parsed);
+  await chmod(filePath, 0o600);
   return parsed;
 }
 
@@ -154,6 +162,7 @@ export async function prepareTylerPrivateLoad({
           licenseNumber: contractor.licenseNumber,
           sourcePayload: {
             qualifierName: contractor.qualifierName,
+            sourceRole: contractor.sourceRole ?? null,
             permitNumber: record.permit_number,
             parcelIdentifier: record.parcel_identifier,
           },
@@ -202,6 +211,10 @@ export async function prepareTylerPrivateLoad({
   await atomicWriteJson(
     path.join(outputDir, "private-load-manifest.json"),
     manifest,
+  );
+  await chmod(
+    path.join(outputDir, "private-load-manifest.json"),
+    0o600,
   );
   return manifest;
 }
@@ -280,3 +293,9 @@ export async function readTylerPrivateLoadBundle(inputDir) {
   }
   return { manifest, permits, contacts };
 }
+
+// Source-neutral aliases retain compatibility with existing Tyler artifacts
+// while allowing another certified permit adapter to use the same loader.
+export const writePermitPrivateCapture = writeTylerPrivateCapture;
+export const preparePermitPrivateLoad = prepareTylerPrivateLoad;
+export const readPermitPrivateLoadBundle = readTylerPrivateLoadBundle;

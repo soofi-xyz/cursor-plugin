@@ -25,6 +25,10 @@ const sourceSurfaceSchema = z
       "records-information",
     ]),
     access: z.enum(["public", "blocked", "manual-only", "unavailable"]),
+    historicalBoundary: z.string().min(1).optional(),
+    contractorDetailCapability: z
+      .enum(["public-detail", "not-exposed", "unknown"])
+      .optional(),
   })
   .strict()
   .superRefine((surface, context) => {
@@ -56,6 +60,12 @@ const adapterConfigSchema = z
     expectedTenantName: z.string().min(1).optional(),
     maximumSearchPages: z.number().int().min(1).max(20).optional(),
     maximumContactPages: z.number().int().min(1).max(10).optional(),
+    maximumDetailRecords: z.number().int().min(1).max(100).optional(),
+    installationId: z.number().int().positive().optional(),
+    jurisdictionTokens: z.array(z.string().min(1)).optional(),
+    contractorDetailCapability: z
+      .enum(["public-detail", "not-exposed", "unknown"])
+      .optional(),
   })
   .strict()
   .superRefine((config, context) => {
@@ -95,6 +105,7 @@ const jurisdictionSchema = z
         "click2gov",
         "etrakit",
         "tyler-civic-access",
+        "citizenserve",
       ])
       .nullable(),
     adapterConfig: adapterConfigSchema.nullable(),

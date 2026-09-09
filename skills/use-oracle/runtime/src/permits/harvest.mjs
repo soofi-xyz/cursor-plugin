@@ -182,7 +182,11 @@ async function processProperty({
   try {
     references = [
       ...new Map(
-        (await adapter.searchParcel(parcelIdentifier)).map(
+        (
+          await adapter.searchParcel(parcelIdentifier, {
+            requestedPropertyId: input.propertyId,
+          })
+        ).map(
           (reference) => [reference.sourceRecordId, reference],
         ),
       ).values(),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertPrivatePermitBundle,
   createPostgresTylerPrivateStore,
   loadTylerPrivateDatabase,
   PRIVATE_LOAD_SQL,
@@ -382,6 +383,29 @@ describe("Tyler private database loader", () => {
         .split("DO UPDATE SET")[1]
         .split("RETURNING")[0],
     ).not.toMatch(/\bcompany_id\b/);
+  });
+
+  it("accepts only the explicitly approved source, parcel, and permits", () => {
+    const bundle = sampleBundle();
+    const expectedScope = {
+      countyKey: "broward",
+      sourceSystem: "broward_pembroke_pines_tyler_permits",
+      parcelIdentifier: "514005211940",
+      permitNumbers: ["RL23-04374", "RL23-04447"],
+    };
+    const scopedBundle = {
+      ...bundle,
+      permits: bundle.permits.slice(0, 2),
+    };
+    expect(() =>
+      assertPrivatePermitBundle(scopedBundle, expectedScope),
+    ).not.toThrow();
+    expect(() =>
+      assertPrivatePermitBundle(scopedBundle, {
+        ...expectedScope,
+        permitNumbers: ["RL23-04374", "UNEXPECTED"],
+      }),
+    ).toThrow(/explicitly approved/);
   });
 
   it("fails closed when reflected database columns are missing", async () => {
