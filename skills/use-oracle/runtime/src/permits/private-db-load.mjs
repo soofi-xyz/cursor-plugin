@@ -362,8 +362,40 @@ export function assertBrowardTylerSampleBundle(bundle) {
   }
 }
 
-export async function loadTylerPrivateDatabase({ bundle, store }) {
-  assertBrowardTylerSampleBundle(bundle);
+export function assertPrivatePermitBundle(bundle, expectedScope) {
+  const expectedPermits = [...expectedScope.permitNumbers].sort();
+  const actualPermits = bundle.permits
+    .map((record) => record.permit_number)
+    .sort();
+  if (
+    bundle.manifest.countyKey !== expectedScope.countyKey ||
+    bundle.permits.length !== expectedPermits.length ||
+    new Set(actualPermits).size !== expectedPermits.length ||
+    actualPermits.some(
+      (permitNumber, index) => permitNumber !== expectedPermits[index],
+    ) ||
+    bundle.permits.some(
+      (record) =>
+        record.source_system !== expectedScope.sourceSystem ||
+        record.parcel_identifier !== expectedScope.parcelIdentifier,
+    )
+  ) {
+    throw new Error(
+      "Private permit bundle does not match the explicitly approved source, parcel, and permit identities",
+    );
+  }
+}
+
+export async function loadTylerPrivateDatabase({
+  bundle,
+  store,
+  expectedScope,
+}) {
+  if (expectedScope) {
+    assertPrivatePermitBundle(bundle, expectedScope);
+  } else {
+    assertBrowardTylerSampleBundle(bundle);
+  }
   let transactionStarted = false;
   try {
     await store.begin();

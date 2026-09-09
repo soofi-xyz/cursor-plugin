@@ -1,8 +1,8 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval adapters plus bounded Broward Tyler permit support.",
+  "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval adapters plus bounded Broward Tyler and Citizenserve permit support.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
