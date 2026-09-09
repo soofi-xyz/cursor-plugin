@@ -498,6 +498,10 @@ export async function publishDuvalGapArtifacts({
       "coverage IPNS repoint",
     ],
   };
+  await atomicJson(
+    path.join(path.dirname(receiptPath), "publication-plan.json"),
+    plan,
+  );
   if (dryRun) return plan;
 
   if (approvalPath === null) {

@@ -345,7 +345,14 @@ describe("Duval gap consolidation and CID fill", () => {
       receiptPath: path.join(data.root, "receipt.json"),
       dryRun: true,
     });
+    const persistedPlan = JSON.parse(
+      await readFile(
+        path.join(data.root, "publication-plan.json"),
+        "utf8",
+      ),
+    );
     expect(plan.dryRun).toBe(true);
+    expect(persistedPlan).toEqual(plan);
     expect(plan.destinations.propertyDocumentsIpnsLabel).toBe(
       "oracle-open-data-duval",
     );
