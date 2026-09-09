@@ -1,0 +1,50 @@
+{
+  "reference": {
+    "sourceRecordId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    "permitNumber": "C-MECH-009303-2026",
+    "parcelIdentifier": "494026050080",
+    "sourceUrl": "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/permit/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    "sourcePayload": {
+      "CaseId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "CaseNumber": "C-MECH-009303-2026",
+      "MainParcel": "494026050080",
+      "ModuleName": 2
+    }
+  },
+  "detailPayload": {
+    "Success": true,
+    "Result": {
+      "PermitId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "PermitNumber": "C-MECH-009303-2026",
+      "MainParcelNumber": "494026050080",
+      "MainAddress": null,
+      "MainAddressInfo": {
+        "FormattedAddressString": "200 SAMPLE BOULEVARD SUNRISE, FL 33323"
+      },
+      "PermitType": "Commercial Mechanical - Condensate Lines",
+      "WorkClassName": "Reroof - Condensate Lines",
+      "PermitStatus": "Issued",
+      "Description": "Sanitized mechanical fixture",
+      "ApplyDate": "2026-01-10T00:00:00",
+      "IssueDate": "2026-01-20T00:00:00",
+      "FinalizeDate": null,
+      "ExpireDate": "2026-07-20T00:00:00",
+      "Value": 25000
+    }
+  },
+  "contactsPayload": {
+    "Success": true,
+    "Result": {
+      "Contacts": [
+        {
+          "ContactRoleName": "Primary Contractor",
+          "CompanyName": "Example Renovations AC LLC",
+          "QualifierName": "JANE QUALIFIER",
+          "ContractorLicenseNumber": "CAC1234567",
+          "PhoneNumber": "(954) 555-0100",
+          "EmailAddress": "permits@example.invalid"
+        }
+      ]
+    }
+  }
+}

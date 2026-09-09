@@ -46,6 +46,16 @@ const adapterConfigSchema = z
     municipalityId: z.string().min(1).nullable(),
     parcelFieldNames: z.array(z.string().min(1)),
     minimumDelayMs: z.number().int().min(250),
+    countyKey: z.string().regex(COUNTY_KEY_PATTERN).optional(),
+    countyName: z.string().min(1).optional(),
+    sourceSystem: z
+      .string()
+      .regex(/^[a-z0-9_]+_permits$/)
+      .optional(),
+    expectedTenantId: z.string().min(1).optional(),
+    expectedTenantName: z.string().min(1).optional(),
+    maximumSearchPages: z.number().int().min(1).max(20).optional(),
+    maximumContactPages: z.number().int().min(1).max(10).optional(),
   })
   .strict()
   .superRefine((config, context) => {
@@ -58,6 +68,17 @@ const adapterConfigSchema = z
         });
       }
     }
+    if (
+      (config.expectedTenantId === undefined) !==
+      (config.expectedTenantName === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["expectedTenantName"],
+        message:
+          "Tyler tenant ID and tenant name must be configured together",
+      });
+    }
   });
 
 const jurisdictionSchema = z
@@ -69,7 +90,12 @@ const jurisdictionSchema = z
     status: z.enum(["supported", "blocked", "manual-only", "unavailable"]),
     historicalRecords: z.boolean(),
     adapterKey: z
-      .enum(["jaxepics", "click2gov", "etrakit"])
+      .enum([
+        "jaxepics",
+        "click2gov",
+        "etrakit",
+        "tyler-civic-access",
+      ])
       .nullable(),
     adapterConfig: adapterConfigSchema.nullable(),
     parcelSearchFormat: z.enum(["duval-re", "digits-only", "source-specific"]),
