@@ -5,18 +5,29 @@ import { describe, expect, it } from "vitest";
 import { browardPermitProfile } from "../src/counties/broward/permit-profile.mjs";
 import {
   buildCitizenserveSearchUrl,
+  buildCitizenserveSearchUrls,
+  normalizeCitizenservePermitListing,
   parseCitizenservePermitDetailHtml,
   parseCitizenserveSearchResultsHtml,
+  resolveCitizenserveSource,
+  validateCitizenserveSearchPageHtml,
 } from "../src/permits/adapters/citizenserve.mjs";
 
 const fixtures = new URL("./fixtures/citizenserve/", import.meta.url);
-const [pageOneHtml, pageTwoHtml, contractorHtml, noContractorHtml] =
+const [
+  pageOneHtml,
+  pageTwoHtml,
+  contractorHtml,
+  noContractorHtml,
+  listingOnlyHtml,
+] =
   await Promise.all(
     [
       "search-page-1.html",
       "search-page-2.html",
       "detail-contractor.html",
       "detail-no-contractor.html",
+      "search-listing-only.html",
     ].map((name) => readFile(new URL(name, fixtures), "utf8")),
   );
 const jurisdiction = browardPermitProfile.jurisdictions[0];
@@ -26,6 +37,74 @@ const request = {
 };
 
 describe("Citizenserve/CAP Government adapter", () => {
+  it("uses only the ordered configured Citizenserve hosts", async () => {
+    expect(buildCitizenserveSearchUrls(jurisdiction)).toEqual([
+      expect.stringContaining("https://www6.citizenserve.com/Portal/"),
+      expect.stringContaining("https://www2.citizenserve.com/Portal/"),
+    ]);
+    const attempts = [];
+    const selected = await resolveCitizenserveSource(
+      jurisdiction,
+      async ({ baseUrl, searchUrl }) => {
+        attempts.push(baseUrl);
+        if (baseUrl.includes("www6")) {
+          const timeout = new Error("timed out");
+          timeout.name = "TimeoutError";
+          throw timeout;
+        }
+        return searchUrl;
+      },
+    );
+    expect(attempts).toEqual([
+      "https://www6.citizenserve.com/Portal",
+      "https://www2.citizenserve.com/Portal",
+    ]);
+    expect(selected).toContain("https://www2.citizenserve.com/");
+  });
+
+  it("rejects arbitrary configured hosts", () => {
+    const unsafe = {
+      ...jurisdiction,
+      adapterConfig: {
+        ...jurisdiction.adapterConfig,
+        fallbackBaseUrls: ["https://example.com/Portal"],
+      },
+    };
+    expect(() => buildCitizenserveSearchUrls(unsafe)).toThrow(
+      "not an allow-listed public portal host",
+    );
+  });
+
+  it("validates installation identity and does not fall back on mismatch", async () => {
+    const searchPage = (installationId) => `
+      <input id="installationID" value="${installationId}">
+      <main><h1 class="page-heading">Search</h1></main>
+      <form id="frm_PortalSearch" action="PortalController">
+        <input id="Action" value="DisplayCasesNPagging">
+        <select id="filetype"><option value="Permit">Permits</option></select>
+      </form>`;
+    expect(
+      validateCitizenserveSearchPageHtml(searchPage(117), {
+        jurisdiction,
+      }),
+    ).toEqual({ installationId: 117 });
+    const attempts = [];
+    await expect(
+      resolveCitizenserveSource(
+        jurisdiction,
+        async ({ baseUrl }) => {
+          attempts.push(baseUrl);
+          return validateCitizenserveSearchPageHtml(searchPage(999), {
+            jurisdiction,
+          });
+        },
+      ),
+    ).rejects.toThrow("does not match the configured installation");
+    expect(attempts).toEqual([
+      "https://www6.citizenserve.com/Portal",
+    ]);
+  });
+
   it("preserves source identity and shared-installation filtering", () => {
     const page = parseCitizenserveSearchResultsHtml(pageOneHtml, {
       jurisdiction,
@@ -47,6 +126,45 @@ describe("Citizenserve/CAP Government adapter", () => {
     expect(page.references[0].sourceUrl).toContain(
       "installationID=117",
     );
+  });
+
+  it("preserves the responding fallback host for listing-only provenance", () => {
+    const searchUrl = buildCitizenserveSearchUrl(
+      jurisdiction,
+      "https://www2.citizenserve.com/Portal",
+    );
+    const page = parseCitizenserveSearchResultsHtml(listingOnlyHtml, {
+      jurisdiction,
+      pageNumber: 1,
+      sourceBaseUrl: "https://www2.citizenserve.com/Portal",
+      searchUrl,
+      expectedPermitNumber: "SWR20-000001",
+    });
+    const record = normalizeCitizenservePermitListing({
+      jurisdiction,
+      reference: {
+        ...page.references[0],
+        searchPage: 1,
+        searchKind: "permit-number",
+        searchValue: "SWR20-000001",
+        folioSearchReportedTotal: 1,
+        folioSearchPermitNumbers: ["SWR20-000001"],
+      },
+      request,
+      searchUrl,
+    });
+    expect(record.sourceUrl).toContain(
+      "https://www2.citizenserve.com/",
+    );
+    expect(record.sourcePayload).toMatchObject({
+      sourceHost: "www2.citizenserve.com",
+      sourceHostRole: "operator-approved-fallback",
+      configuredPrimaryHost: "www6.citizenserve.com",
+      installationId: 117,
+      detailAvailability: "not_exposed",
+      contractorDisclosure: "public_detail_not_exposed",
+    });
+    expect(record.contractors).toEqual([]);
   });
 
   it("parses a later page without inventing another page", () => {
@@ -125,5 +243,17 @@ describe("Citizenserve/CAP Government adapter", () => {
         { jurisdiction, pageNumber: 1 },
       ),
     ).toThrow("left the configured public source");
+    expect(() =>
+      parseCitizenserveSearchResultsHtml(listingOnlyHtml, {
+        jurisdiction: {
+          ...jurisdiction,
+          adapterConfig: {
+            ...jurisdiction.adapterConfig,
+            listingOnlyBaseUrls: [],
+          },
+        },
+        pageNumber: 1,
+      }),
+    ).toThrow("no configured public detail link");
   });
 });

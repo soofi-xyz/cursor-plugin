@@ -30,11 +30,18 @@ function parseOptions(argv) {
       "Usage: pilot-citizenserve-private.mjs --county <key> --jurisdiction <key> --folio <identifier> --property-id <uuid> --address <address> --expected-permits <comma-separated permit numbers> --output <ignored directory>",
     );
   }
+  const propertyId = options
+    .get("--property-id")
+    .toLowerCase()
+    .replaceAll("-", "");
+  if (!/^[a-f0-9]{32}$/u.test(propertyId)) {
+    throw new Error("--property-id must be a UUID or 32 lowercase hex characters");
+  }
   return {
     countyKey: options.get("--county"),
     jurisdictionKey: options.get("--jurisdiction"),
     folio: options.get("--folio"),
-    propertyId: options.get("--property-id"),
+    propertyId,
     address: options.get("--address"),
     expectedPermits: options
       .get("--expected-permits")
@@ -66,11 +73,21 @@ await chmod(options.outputDir, 0o700);
 const rawDir = path.join(options.outputDir, "raw-private");
 function createPilotAdapter(searchKind) {
   return createCitizenserveAdapter(jurisdiction, {
-    async onSearchHtml({ pageNumber, searchKind: actualKind, html }) {
+    timeoutMs: 20_000,
+    async onSearchHtml({
+      pageNumber,
+      searchKind: actualKind,
+      searchValue,
+      html,
+    }) {
+      const valueSlug = String(searchValue ?? "unknown").replace(
+        /[^A-Za-z0-9_-]/gu,
+        "_",
+      );
       await privateWrite(
         path.join(
           rawDir,
-          `${actualKind ?? searchKind}-search-page-${pageNumber}.private.html`,
+          `${actualKind ?? searchKind}-${valueSlug}-page-${pageNumber}.private.html`,
         ),
         html,
       );
@@ -88,8 +105,9 @@ function createPilotAdapter(searchKind) {
 }
 const adapter = createPilotAdapter("folio");
 const references = await adapter.searchParcel(options.folio, {
-  requestedPropertyId: null,
-  fallbackAddress: options.address.split(",")[0].trim(),
+  requestedPropertyId: options.propertyId,
+  exactPermitNumbers: options.expectedPermits,
+  expectedAddress: options.address,
 });
 const records = await Promise.all(
   references.map((reference) => adapter.fetchPermitDetail(reference)),
@@ -106,6 +124,9 @@ const foundPermits = records
   .map((record) => record.permit_number)
   .sort();
 const expected = [...new Set(options.expectedPermits)].sort();
+const folioListedPermits = [
+  ...(records[0]?.sourcePayload.folioSearchPermitNumbers ?? []),
+].sort();
 const reconciliation = {
   schemaVersion: "elephant.citizenserve-private-pilot.v1",
   countyKey: options.countyKey,
@@ -115,21 +136,30 @@ const reconciliation = {
   folio: options.folio,
   elephantPropertyId: options.propertyId,
   expectedPermits: expected,
+  folioListedPermits,
   foundPermits,
   missingPermits: expected.filter((permit) => !foundPermits.includes(permit)),
-  unexpectedPermits: foundPermits.filter(
+  unexpectedPermits: folioListedPermits.filter(
     (permit) => !expected.includes(permit),
   ),
+  sourceHost: records[0]?.sourcePayload.sourceHost ?? null,
+  sourceHostRole: records[0]?.sourcePayload.sourceHostRole ?? null,
+  officialCanonicalConfirmation:
+    "unconfirmed-no-direct-municipal-vendor-link",
   counts: {
     expected: expected.length,
     folioListed:
-      records[0]?.sourcePayload.sourceSearchKind === "address"
-        ? 0
-        : references.length,
-    addressFallbackUsed:
-      records[0]?.sourcePayload.sourceSearchKind === "address",
-    listed: references.length,
-    detailed: records.length,
+      records[0]?.sourcePayload.folioSearchReportedTotal ?? 0,
+    expectedListed: records.length,
+    listed: records.length,
+    detailed: records.filter(
+      (record) =>
+        record.sourcePayload.detailAvailability === "public-detail",
+    ).length,
+    listingOnly: records.filter(
+      (record) =>
+        record.sourcePayload.detailAvailability === "not_exposed",
+    ).length,
     contractorBearing: records.filter(
       (record) => record.contractors.length > 0,
     ).length,
@@ -142,6 +172,8 @@ const reconciliation = {
     permitNumber: record.permit_number,
     contractors: record.contractors,
     contractorDisclosure: record.sourcePayload.contractorDisclosure,
+    detailAvailability: record.sourcePayload.detailAvailability,
+    sourceUrl: record.sourceUrl,
   })),
 };
 const reconciliationPath = path.join(

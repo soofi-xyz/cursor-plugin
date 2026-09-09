@@ -19,6 +19,8 @@ const RESULT_HEADERS = Object.freeze([
   "Issue Date",
   "Work Description",
 ]);
+const CITIZENSERVE_HOST_PATTERN = /^www\d+\.citizenserve\.com$/u;
+const SEARCH_PATH = "/Portal/PortalController";
 
 function cleanText(value) {
   const text = String(value ?? "")
@@ -34,13 +36,38 @@ function fail(message, code) {
   });
 }
 
-function validateConfig(jurisdiction) {
-  const config = jurisdiction.adapterConfig;
-  const base = new URL(config.baseUrl);
+function normalizeBaseUrl(value) {
+  const base = new URL(value);
   if (
     base.protocol !== "https:" ||
-    base.hostname !== "www6.citizenserve.com" ||
-    !base.pathname.endsWith("/Portal") ||
+    !CITIZENSERVE_HOST_PATTERN.test(base.hostname) ||
+    base.port ||
+    base.username ||
+    base.password ||
+    base.search ||
+    base.hash ||
+    base.pathname.replace(/\/+$/u, "") !== "/Portal"
+  ) {
+    fail(
+      "Citizenserve source URL is not an allow-listed public portal host",
+      "citizenserve_invalid_configuration",
+    );
+  }
+  return `${base.origin}/Portal`;
+}
+
+function validateConfig(jurisdiction) {
+  const config = jurisdiction.adapterConfig;
+  const baseUrls = [
+    config.baseUrl,
+    ...(config.fallbackBaseUrls ?? []),
+  ].map(normalizeBaseUrl);
+  const listingOnlyBaseUrls = (config.listingOnlyBaseUrls ?? []).map(
+    normalizeBaseUrl,
+  );
+  if (
+    new Set(baseUrls).size !== baseUrls.length ||
+    listingOnlyBaseUrls.some((baseUrl) => !baseUrls.includes(baseUrl)) ||
     !Number.isInteger(config.installationId) ||
     !Array.isArray(config.jurisdictionTokens) ||
     config.jurisdictionTokens.length === 0
@@ -52,15 +79,36 @@ function validateConfig(jurisdiction) {
   }
   return {
     ...config,
-    baseUrl: config.baseUrl.replace(/\/+$/, ""),
+    baseUrl: baseUrls[0],
+    baseUrls,
+    fallbackBaseUrls: baseUrls.slice(1),
+    listingOnlyBaseUrls,
     jurisdictionTokens: config.jurisdictionTokens.map((token) =>
       token.toLowerCase(),
     ),
   };
 }
 
-export function buildCitizenserveSearchUrl(jurisdiction) {
+function requireConfiguredBaseUrl(config, candidate) {
+  const baseUrl = normalizeBaseUrl(candidate);
+  if (!config.baseUrls.includes(baseUrl)) {
+    fail(
+      "Citizenserve source host is not configured for this jurisdiction",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
+  return baseUrl;
+}
+
+export function buildCitizenserveSearchUrl(
+  jurisdiction,
+  sourceBaseUrl = null,
+) {
   const config = validateConfig(jurisdiction);
+  const baseUrl = requireConfiguredBaseUrl(
+    config,
+    sourceBaseUrl ?? config.baseUrl,
+  );
   const query = new URLSearchParams({
     Action: "showSearchPage",
     ctzPagePrefix: "Portal_",
@@ -68,7 +116,75 @@ export function buildCitizenserveSearchUrl(jurisdiction) {
     original_contactID: "0",
     original_iid: "0",
   });
-  return `${config.baseUrl}/PortalController?${query.toString()}`;
+  return `${baseUrl}/PortalController?${query.toString()}`;
+}
+
+export function buildCitizenserveSearchUrls(jurisdiction) {
+  const config = validateConfig(jurisdiction);
+  return config.baseUrls.map((baseUrl) =>
+    buildCitizenserveSearchUrl(jurisdiction, baseUrl),
+  );
+}
+
+export function validateCitizenserveSearchPageHtml(html, { jurisdiction }) {
+  const config = validateConfig(jurisdiction);
+  const $ = cheerio.load(html);
+  const installationIds = $("input#installationID")
+    .map((_, element) => cleanText($(element).attr("value")))
+    .get();
+  const fileTypes = $("select#filetype option")
+    .map((_, element) => cleanText($(element).attr("value")))
+    .get();
+  if (
+    installationIds.length !== 1 ||
+    installationIds[0] !== String(config.installationId) ||
+    cleanText($("main h1.page-heading").first().text()) !== "Search" ||
+    $("form#frm_PortalSearch").attr("action") !== "PortalController" ||
+    !fileTypes.includes("Permit")
+  ) {
+    fail(
+      "Citizenserve search page does not match the configured installation",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
+  return {
+    installationId: config.installationId,
+  };
+}
+
+function isHostAvailabilityError(error) {
+  return (
+    (error instanceof PermitSourceError &&
+      error.code === "citizenserve_host_unavailable") ||
+    error?.name === "TimeoutError" ||
+    /net::ERR_(?:CONNECTION|TIMED_OUT|NAME_NOT_RESOLVED)/u.test(
+      error instanceof Error ? error.message : String(error),
+    )
+  );
+}
+
+export async function resolveCitizenserveSource(jurisdiction, probe) {
+  const config = validateConfig(jurisdiction);
+  for (const [index, baseUrl] of config.baseUrls.entries()) {
+    try {
+      return await probe({
+        baseUrl,
+        searchUrl: buildCitizenserveSearchUrl(jurisdiction, baseUrl),
+        listingOnly: config.listingOnlyBaseUrls.includes(baseUrl),
+      });
+    } catch (error) {
+      if (
+        index === config.baseUrls.length - 1 ||
+        !isHostAvailabilityError(error)
+      ) {
+        throw error;
+      }
+    }
+  }
+  fail(
+    "Citizenserve has no configured source host",
+    "citizenserve_invalid_configuration",
+  );
 }
 
 function parseDetailLink(href, config) {
@@ -85,8 +201,8 @@ function parseDetailLink(href, config) {
   const detailUrl = new URL(match[1], `${config.baseUrl}/`);
   if (
     detailUrl.protocol !== "https:" ||
-    detailUrl.hostname !== "www6.citizenserve.com" ||
-    detailUrl.pathname !== "/Portal/PortalController" ||
+    detailUrl.origin !== new URL(config.baseUrl).origin ||
+    detailUrl.pathname !== SEARCH_PATH ||
     detailUrl.searchParams.get("Action") !== "viewPortalCase" ||
     detailUrl.searchParams.get("type") !== "Permit" ||
     detailUrl.searchParams.get("installationID") !==
@@ -104,9 +220,26 @@ function parseDetailLink(href, config) {
 
 export function parseCitizenserveSearchResultsHtml(
   html,
-  { jurisdiction, pageNumber },
+  {
+    jurisdiction,
+    pageNumber,
+    sourceBaseUrl = null,
+    searchUrl = null,
+    expectedPermitNumber = null,
+  },
 ) {
-  const config = validateConfig(jurisdiction);
+  const validatedConfig = validateConfig(jurisdiction);
+  const activeBaseUrl = requireConfiguredBaseUrl(
+    validatedConfig,
+    sourceBaseUrl ?? validatedConfig.baseUrl,
+  );
+  const config = {
+    ...validatedConfig,
+    baseUrl: activeBaseUrl,
+  };
+  const activeSearchUrl =
+    searchUrl ??
+    buildCitizenserveSearchUrl(jurisdiction, activeBaseUrl);
   if (!Number.isInteger(pageNumber) || pageNumber < 1) {
     fail(
       "Citizenserve page number must be positive",
@@ -114,6 +247,18 @@ export function parseCitizenserveSearchResultsHtml(
     );
   }
   const $ = cheerio.load(html);
+  const pageInstallationId = cleanText(
+    $("input#installationID").first().attr("value"),
+  );
+  if (
+    pageInstallationId !== null &&
+    pageInstallationId !== String(config.installationId)
+  ) {
+    fail(
+      "Citizenserve result page changed installation identity",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
   const heading = cleanText($("main h1.page-heading").first().text());
   if (heading !== "Permitting Search Results") {
     fail(
@@ -172,14 +317,36 @@ export function parseCitizenserveSearchResultsHtml(
       );
     }
     const anchor = cells.eq(0).find("a").first();
-    const permitNumber = cleanText(anchor.text());
+    const permitNumber =
+      cleanText(anchor.text()) ?? cleanText(cells.eq(0).text());
     if (!permitNumber) {
       fail(
         "Citizenserve result row has no permit number",
         "citizenserve_source_identity_mismatch",
       );
     }
-    const sourceUrl = parseDetailLink(anchor.attr("href"), config);
+    if (
+      expectedPermitNumber !== null &&
+      permitNumber !== expectedPermitNumber
+    ) {
+      fail(
+        "Citizenserve exact-permit search returned a different permit",
+        "citizenserve_exact_permit_mismatch",
+      );
+    }
+    const hasPublicDetail = anchor.length > 0;
+    if (
+      !hasPublicDetail &&
+      !config.listingOnlyBaseUrls.includes(activeBaseUrl)
+    ) {
+      fail(
+        "Citizenserve permit row has no configured public detail link",
+        "citizenserve_detail_link_changed",
+      );
+    }
+    const sourceUrl = hasPublicDetail
+      ? parseDetailLink(anchor.attr("href"), config)
+      : activeSearchUrl;
     const parsedUrl = new URL(sourceUrl);
     const recordType = cleanText(cells.eq(2).text());
     if (
@@ -192,10 +359,12 @@ export function parseCitizenserveSearchResultsHtml(
       return;
     }
     references.push({
-      sourceRecordId: parsedUrl.searchParams.get("permit_ID"),
+      sourceRecordId:
+        parsedUrl.searchParams.get("permit_ID") ?? permitNumber,
       workOrderId: parsedUrl.searchParams.get("workOrder_ID"),
       permitNumber,
       sourceUrl,
+      hasPublicDetail,
       workAddress: cleanText(cells.eq(1).text()),
       improvementType: recordType,
       improvementAction: cleanText(cells.eq(3).text()),
@@ -205,6 +374,7 @@ export function parseCitizenserveSearchResultsHtml(
       sourcePayload: {
         permitId: parsedUrl.searchParams.get("permit_ID"),
         workOrderId: parsedUrl.searchParams.get("workOrder_ID"),
+        listingOnly: !hasPublicDetail,
       },
     });
   });
@@ -374,11 +544,115 @@ export function parseCitizenserveContractors($) {
   ];
 }
 
+function sourceHostProvenance(jurisdiction, sourceUrl) {
+  const config = validateConfig(jurisdiction);
+  const parsed = new URL(sourceUrl);
+  const sourceBaseUrl = requireConfiguredBaseUrl(
+    config,
+    `${parsed.origin}/Portal`,
+  );
+  return {
+    sourceHost: parsed.hostname,
+    sourceHostRole:
+      sourceBaseUrl === config.baseUrl
+        ? "configured-primary"
+        : "operator-approved-fallback",
+    configuredPrimaryHost: new URL(config.baseUrl).hostname,
+    installationId: config.installationId,
+  };
+}
+
+export function normalizeCitizenservePermitListing({
+  jurisdiction,
+  reference,
+  request,
+  searchUrl,
+}) {
+  if (reference.hasPublicDetail !== false) {
+    fail(
+      "Citizenserve listing normalization requires an explicit listing-only record",
+      "citizenserve_detail_shape_changed",
+    );
+  }
+  const sourceRecordId = reference.sourceRecordId;
+  const description = reference.description;
+  return normalizedPermitRecordSchema.parse({
+    schemaVersion: "elephant.normalized-permit-record.v1",
+    property_improvement_id: createStablePermitId({
+      countyKey: "broward",
+      jurisdictionKey: jurisdiction.key,
+      sourceRecordId,
+    }),
+    property_id: request.requestedPropertyId,
+    parcel_identifier: request.requestedParcelIdentifier,
+    permit_number: reference.permitNumber,
+    improvement_type: reference.improvementType,
+    improvement_status: reference.status,
+    improvement_action: reference.improvementAction,
+    permit_issue_date: reference.issueDate,
+    application_received_date: null,
+    final_inspection_date: null,
+    permit_close_date: null,
+    completion_date: null,
+    expiration_date: null,
+    opened_date: null,
+    source_system: jurisdiction.adapterConfig.sourceSystem,
+    county_name: "Broward",
+    project_description: description,
+    description,
+    estimated_job_value: null,
+    fee: null,
+    countyKey: "broward",
+    jurisdictionKey: jurisdiction.key,
+    sourceRecordId,
+    sourceUrl: reference.sourceUrl,
+    requestedParcelIdentifier: request.requestedParcelIdentifier,
+    requestedPropertyId: request.requestedPropertyId,
+    workAddress: reference.workAddress,
+    isRoofPermit: isRoofPermit(
+      reference.improvementType,
+      reference.improvementAction,
+      description,
+    ),
+    contractors: [],
+    inspections: [],
+    relatedRecords: [],
+    sourcePayload: {
+      permitId: null,
+      workOrderId: null,
+      projectNumber: null,
+      searchUrl,
+      searchPage: reference.searchPage,
+      searchedParcelIdentifier: request.requestedParcelIdentifier,
+      contractorDisclosure: "public_detail_not_exposed",
+      detailAvailability: "not_exposed",
+      sourceSearchKind: reference.searchKind,
+      sourceSearchValue: reference.searchValue,
+      folioSearchReportedTotal:
+        reference.folioSearchReportedTotal ?? null,
+      folioSearchPermitNumbers:
+        reference.folioSearchPermitNumbers ?? [],
+      ...sourceHostProvenance(jurisdiction, reference.sourceUrl),
+    },
+  });
+}
+
 export function parseCitizenservePermitDetailHtml(
   html,
   { jurisdiction, reference, request, searchUrl },
 ) {
-  validateConfig(jurisdiction);
+  const config = validateConfig(jurisdiction);
+  const referenceUrl = new URL(reference.sourceUrl);
+  requireConfiguredBaseUrl(config, `${referenceUrl.origin}/Portal`);
+  if (
+    referenceUrl.searchParams.get("installationID") !==
+    String(config.installationId)
+  ) {
+    fail(
+      "Citizenserve detail reference changed installation identity",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
   const $ = cheerio.load(html);
   if (cleanText($("main h1.page-heading").first().text()) !== "View Permit") {
     fail(
@@ -473,6 +747,10 @@ export function parseCitizenservePermitDetailHtml(
         reference.searchValue ?? request.requestedParcelIdentifier,
       folioSearchReportedTotal:
         reference.folioSearchReportedTotal ?? null,
+      folioSearchPermitNumbers:
+        reference.folioSearchPermitNumbers ?? [],
+      detailAvailability: "public-detail",
+      ...sourceHostProvenance(jurisdiction, reference.sourceUrl),
     },
   });
 }
@@ -522,12 +800,101 @@ async function rejectAccessControls(page) {
   }
 }
 
-async function submitSearch(page, searchUrl, query, timeoutMs) {
-  await page.goto(searchUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: timeoutMs,
+function assertPageLocation(pageUrl, sourceBaseUrl) {
+  const actual = new URL(pageUrl);
+  const expected = new URL(sourceBaseUrl);
+  if (
+    actual.protocol !== "https:" ||
+    actual.origin !== expected.origin ||
+    actual.pathname !== SEARCH_PATH
+  ) {
+    fail(
+      "Citizenserve navigation left the selected configured host",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
+}
+
+async function configurePinnedHost(page, sourceBaseUrl, enabled) {
+  if (!enabled) return;
+  const source = new URL(sourceBaseUrl);
+  const redirectEndpoint = `${source.origin}/Portal/PortalAjaxController`;
+  const selectedHost = source.hostname.split(".")[0];
+  await page.setRequestInterception(true);
+  page.on("request", (request) => {
+    if (
+      request.url() === redirectEndpoint &&
+      request.method() === "POST" &&
+      new URLSearchParams(request.postData() ?? "").get("Action") ===
+        "getReDirectPortalURL"
+    ) {
+      void request.respond({
+        status: 200,
+        contentType: "text/plain",
+        body: selectedHost,
+      });
+      return;
+    }
+    void request.continue();
   });
+}
+
+async function openSearchPage(
+  page,
+  { jurisdiction, sourceBaseUrl, searchUrl, timeoutMs },
+) {
+  let response;
+  try {
+    response = await page.goto(searchUrl, {
+      waitUntil: "load",
+      timeout: timeoutMs,
+    });
+  } catch (error) {
+    if (isHostAvailabilityError(error)) {
+      throw new PermitSourceError(
+        "Citizenserve configured host is unavailable",
+        {
+          classification: "transient",
+          code: "citizenserve_host_unavailable",
+          cause: error,
+        },
+      );
+    }
+    throw error;
+  }
+  if (
+    !response ||
+    response.status() === 408 ||
+    response.status() === 429 ||
+    response.status() >= 500
+  ) {
+    throw new PermitSourceError(
+      "Citizenserve configured host is unavailable",
+      {
+        classification: "transient",
+        code: "citizenserve_host_unavailable",
+        status: response?.status() ?? null,
+      },
+    );
+  }
+  if (response.status() !== 200) {
+    fail(
+      `Citizenserve search returned HTTP ${response.status()}`,
+      "citizenserve_search_unavailable",
+    );
+  }
+  assertPageLocation(page.url(), sourceBaseUrl);
   await rejectAccessControls(page);
+  validateCitizenserveSearchPageHtml(await page.content(), {
+    jurisdiction,
+  });
+}
+
+async function submitSearch(
+  page,
+  { jurisdiction, sourceBaseUrl, query, timeoutMs },
+) {
+  const config = validateConfig(jurisdiction);
   const fieldsResponse = page.waitForResponse(
     (response) =>
       response.url().includes("getSearchFieldsOnFileType") &&
@@ -536,12 +903,64 @@ async function submitSearch(page, searchUrl, query, timeoutMs) {
   );
   await page.select("#filetype", "Permit");
   await fieldsResponse;
-  const selector = query.kind === "address" ? "#address" : "#parcelNumber";
+  const selector = {
+    address: "#address",
+    folio: "#parcelNumber",
+    "permit-number": "#PermitNumber",
+  }[query.kind];
   await page.waitForSelector(`${selector}:not([disabled])`, {
     visible: true,
     timeout: timeoutMs,
   });
+  const permitType = await page.evaluate((tokens) => {
+    const options = [
+      ...document.querySelectorAll("#PermitType option"),
+    ].map((option) => ({
+      value: option.value,
+      text: (option.textContent ?? "").replace(/\s+/g, " ").trim(),
+    }));
+    return (
+      options.find((option) =>
+        tokens.some((token) => option.text.toLowerCase().includes(token)),
+      ) ?? null
+    );
+  }, config.jurisdictionTokens);
+  if (!permitType?.value) {
+    fail(
+      "Citizenserve permit form does not identify the configured jurisdiction",
+      "citizenserve_source_identity_mismatch",
+    );
+  }
+  await page.$eval(
+    "#PermitType",
+    (element, value) => {
+      element.value = value;
+    },
+    permitType.value,
+  );
   await page.type(selector, query.value);
+  await page.waitForSelector("#submitRow button", {
+    visible: true,
+    timeout: timeoutMs,
+  });
+  await page.evaluate(
+    ({ fieldSelector, fieldValue, permitTypeValue }) => {
+      window
+        .jQuery("#frm_PortalSearch")
+        .one("submit.citizenserveAdapter", () => {
+          window.jQuery("#PermitType").val(permitTypeValue);
+          window.jQuery("#PermitSubType").val("");
+          window.jQuery("#PermitStatus").val("");
+          window.jQuery("#to").val("");
+          window.jQuery(fieldSelector).val(fieldValue);
+        });
+    },
+    {
+      fieldSelector: selector,
+      fieldValue: query.value,
+      permitTypeValue: permitType.value,
+    },
+  );
   await Promise.all([
     page.waitForNavigation({
       waitUntil: "domcontentloaded",
@@ -549,6 +968,7 @@ async function submitSearch(page, searchUrl, query, timeoutMs) {
     }),
     page.click("#submitRow button"),
   ]);
+  assertPageLocation(page.url(), sourceBaseUrl);
   await rejectAccessControls(page);
 }
 
@@ -577,10 +997,51 @@ async function nextPage(page, range, timeoutMs) {
   await navigation;
 }
 
+function normalizedAddressForComparison(value) {
+  return String(value ?? "")
+    .split(",")[0]
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9 ]/gu, " ")
+    .toUpperCase()
+    .replace(
+      /\b(COURT|STREET|ROAD|DRIVE|AVENUE|BOULEVARD|LANE|TRAIL|PLACE|CIRCLE)\b/gu,
+      (word) =>
+        ({
+          COURT: "CT",
+          STREET: "ST",
+          ROAD: "RD",
+          DRIVE: "DR",
+          AVENUE: "AVE",
+          BOULEVARD: "BLVD",
+          LANE: "LN",
+          TRAIL: "TRL",
+          PLACE: "PL",
+          CIRCLE: "CIR",
+        })[word],
+    )
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function assertExpectedAddress(reference, expectedAddress) {
+  if (
+    expectedAddress &&
+    normalizedAddressForComparison(reference.workAddress) !==
+      normalizedAddressForComparison(expectedAddress)
+  ) {
+    fail(
+      "Citizenserve permit address differs from the requested property",
+      "citizenserve_property_identity_mismatch",
+    );
+  }
+}
+
 export function createCitizenserveAdapter(jurisdiction, options = {}) {
   const config = validateConfig(jurisdiction);
   const timeoutMs = options.timeoutMs ?? 60_000;
   const minimumDelayMs = Math.max(config.minimumDelayMs, 1_500);
+  const wait = () =>
+    new Promise((resolve) => setTimeout(resolve, minimumDelayMs));
   return Object.freeze({
     key: "citizenserve",
     async probe() {
@@ -600,141 +1061,255 @@ export function createCitizenserveAdapter(jurisdiction, options = {}) {
         headless: true,
         executablePath: executablePath(),
       });
-      const searchUrl = buildCitizenserveSearchUrl(jurisdiction);
-      let query = request.searchAddress
-        ? {
-            kind: "address",
-            value: cleanText(request.searchAddress),
-          }
-        : { kind: "folio", value: parcelIdentifier };
-      if (!query.value) {
-        fail(
-          "Citizenserve address search value is empty",
-          "invalid_property_address",
-        );
-      }
       const records = [];
       try {
-        const page = await browser.newPage();
-        await submitSearch(page, searchUrl, query, timeoutMs);
-        let prefetchedPage = null;
-        if (query.kind === "folio" && request.fallbackAddress) {
-          const folioHtml = await page.content();
-          if (options.onSearchHtml) {
-            await options.onSearchHtml({
-              pageNumber: 1,
-              searchKind: "folio",
-              html: folioHtml,
+        const selected = await resolveCitizenserveSource(
+          jurisdiction,
+          async ({ baseUrl, searchUrl, listingOnly }) => {
+            const page = await browser.newPage();
+            try {
+              await configurePinnedHost(
+                page,
+                baseUrl,
+                config.pinConfiguredHost === true,
+              );
+              await openSearchPage(page, {
+                jurisdiction,
+                sourceBaseUrl: baseUrl,
+                searchUrl,
+                timeoutMs,
+              });
+              return { baseUrl, searchUrl, listingOnly, page };
+            } catch (error) {
+              await page.close().catch(() => undefined);
+              throw error;
+            }
+          },
+        );
+        const { baseUrl: sourceBaseUrl, searchUrl, page } = selected;
+        const maximumPages = config.maximumSearchPages ?? 3;
+        const maximumDetails = config.maximumDetailRecords ?? 25;
+        let firstQuery = true;
+        const collectQuery = async (query) => {
+          if (!firstQuery) {
+            await wait();
+            await openSearchPage(page, {
+              jurisdiction,
+              sourceBaseUrl,
+              searchUrl,
+              timeoutMs,
             });
           }
-          const folioPage = parseCitizenserveSearchResultsHtml(
-            folioHtml,
-            { jurisdiction, pageNumber: 1 },
+          firstQuery = false;
+          await submitSearch(page, {
+            jurisdiction,
+            sourceBaseUrl,
+            query,
+            timeoutMs,
+          });
+          const references = [];
+          let reportedTotal = 0;
+          for (
+            let pageNumber = 1;
+            pageNumber <= maximumPages;
+            pageNumber += 1
+          ) {
+            const searchHtml = await page.content();
+            if (options.onSearchHtml) {
+              await options.onSearchHtml({
+                pageNumber,
+                searchKind: query.kind,
+                searchValue: query.value,
+                sourceBaseUrl,
+                html: searchHtml,
+              });
+            }
+            const parsed = parseCitizenserveSearchResultsHtml(searchHtml, {
+              jurisdiction,
+              pageNumber,
+              sourceBaseUrl,
+              searchUrl,
+              expectedPermitNumber:
+                query.kind === "permit-number" ? query.value : null,
+            });
+            reportedTotal = parsed.reportedTotal;
+            references.push(
+              ...parsed.references.map((reference) => ({
+                ...reference,
+                searchPage: pageNumber,
+                searchKind: query.kind,
+                searchValue: query.value,
+              })),
+            );
+            if (!parsed.nextRange) break;
+            if (pageNumber === maximumPages) {
+              fail(
+                "Citizenserve search-page ceiling would truncate source results",
+                "citizenserve_pagination_limit",
+              );
+            }
+            await wait();
+            await nextPage(page, parsed.nextRange, timeoutMs);
+          }
+          return { references, reportedTotal };
+        };
+        const exactPermitNumbers = [
+          ...new Set(
+            (request.exactPermitNumbers ?? [])
+              .map(cleanText)
+              .filter(Boolean),
+          ),
+        ];
+        if (
+          exactPermitNumbers.some(
+            (permitNumber) => !/^[A-Z0-9-]+$/u.test(permitNumber),
+          )
+        ) {
+          fail(
+            "Citizenserve exact permit numbers are invalid",
+            "citizenserve_invalid_permit_number",
           );
-          if (folioPage.reportedTotal === 0) {
+        }
+        let selectedReferences = [];
+        let folioSearchReportedTotal = null;
+        let folioSearchPermitNumbers = [];
+        if (exactPermitNumbers.length > 0) {
+          const folioResult = await collectQuery({
+            kind: "folio",
+            value: parcelIdentifier,
+          });
+          folioSearchReportedTotal = folioResult.reportedTotal;
+          folioSearchPermitNumbers = folioResult.references.map(
+            (reference) => reference.permitNumber,
+          );
+          const folioPermitSet = new Set(folioSearchPermitNumbers);
+          for (const permitNumber of exactPermitNumbers) {
+            const exactResult = await collectQuery({
+              kind: "permit-number",
+              value: permitNumber,
+            });
+            if (
+              exactResult.reportedTotal > 1 ||
+              exactResult.references.length > 1
+            ) {
+              fail(
+                "Citizenserve exact-permit search was not exact",
+                "citizenserve_exact_permit_mismatch",
+              );
+            }
+            for (const reference of exactResult.references) {
+              if (!folioPermitSet.has(reference.permitNumber)) {
+                fail(
+                  "Citizenserve exact permit is not associated with the requested folio",
+                  "citizenserve_property_identity_mismatch",
+                );
+              }
+              assertExpectedAddress(
+                reference,
+                request.expectedAddress,
+              );
+              selectedReferences.push(reference);
+            }
+          }
+        } else {
+          let query = request.searchAddress
+            ? {
+                kind: "address",
+                value: cleanText(request.searchAddress),
+              }
+            : { kind: "folio", value: parcelIdentifier };
+          if (!query.value) {
+            fail(
+              "Citizenserve address search value is empty",
+              "invalid_property_address",
+            );
+          }
+          let result = await collectQuery(query);
+          if (
+            query.kind === "folio" &&
+            result.reportedTotal === 0 &&
+            request.fallbackAddress
+          ) {
             query = {
               kind: "address",
               value: cleanText(request.fallbackAddress),
             };
-            await submitSearch(page, searchUrl, query, timeoutMs);
-          } else {
-            prefetchedPage = {
-              html: folioHtml,
-              parsed: folioPage,
-            };
+            result = await collectQuery(query);
           }
-        }
-        const maximumPages = config.maximumSearchPages ?? 3;
-        const maximumDetails = config.maximumDetailRecords ?? 25;
-        for (let pageNumber = 1; pageNumber <= maximumPages; pageNumber += 1) {
-          const searchHtml =
-            pageNumber === 1 && prefetchedPage
-              ? prefetchedPage.html
-              : await page.content();
-          if (options.onSearchHtml && !(pageNumber === 1 && prefetchedPage)) {
-            await options.onSearchHtml({
-              pageNumber,
-              searchKind: query.kind,
-              html: searchHtml,
-            });
-          }
-          const parsed =
-            pageNumber === 1 && prefetchedPage
-              ? prefetchedPage.parsed
-              : parseCitizenserveSearchResultsHtml(searchHtml, {
-                  jurisdiction,
-                  pageNumber,
-                });
-          for (const reference of parsed.references) {
-            if (records.length >= maximumDetails) {
-              fail(
-                "Citizenserve detail ceiling would truncate source results",
-                "citizenserve_detail_limit",
-              );
-            }
-            if (records.length > 0) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, minimumDelayMs),
-              );
-            }
-            const detailPage = await browser.newPage();
-            try {
-              const response = await detailPage.goto(reference.sourceUrl, {
-                waitUntil: "domcontentloaded",
-                timeout: timeoutMs,
-              });
-              if (!response || response.status() !== 200) {
-                fail(
-                  "Citizenserve detail did not return HTTP 200",
-                  "citizenserve_detail_unavailable",
-                );
-              }
-              await rejectAccessControls(detailPage);
-              const detailHtml = await detailPage.content();
-              if (options.onDetailHtml) {
-                await options.onDetailHtml({
-                  reference,
-                  pageNumber,
-                  html: detailHtml,
-                });
-              }
-              records.push(
-                parseCitizenservePermitDetailHtml(
-                  detailHtml,
-                  {
-                    jurisdiction,
-                    reference: {
-                      ...reference,
-                      searchPage: pageNumber,
-                      searchKind: query.kind,
-                      searchValue: query.value,
-                      folioSearchReportedTotal:
-                        query.kind === "address" ? 0 : null,
-                    },
-                    request: {
-                      requestedParcelIdentifier: parcelIdentifier,
-                      requestedPropertyId:
-                        request.requestedPropertyId ?? null,
-                    },
-                    searchUrl,
-                  },
-                ),
-              );
-            } finally {
-              await detailPage.close().catch(() => undefined);
-            }
-          }
-          if (!parsed.nextRange) break;
-          if (pageNumber === maximumPages) {
-            fail(
-              "Citizenserve search-page ceiling would truncate source results",
-              "citizenserve_pagination_limit",
+          selectedReferences = result.references;
+          if (query.kind === "folio") {
+            folioSearchReportedTotal = result.reportedTotal;
+            folioSearchPermitNumbers = result.references.map(
+              (reference) => reference.permitNumber,
             );
           }
-          await new Promise((resolve) =>
-            setTimeout(resolve, minimumDelayMs),
-          );
-          await nextPage(page, parsed.nextRange, timeoutMs);
+        }
+        for (const reference of selectedReferences) {
+          if (records.length >= maximumDetails) {
+            fail(
+              "Citizenserve detail ceiling would truncate source results",
+              "citizenserve_detail_limit",
+            );
+          }
+          const enrichedReference = {
+            ...reference,
+            folioSearchReportedTotal,
+            folioSearchPermitNumbers,
+          };
+          const normalizedRequest = {
+            requestedParcelIdentifier: parcelIdentifier,
+            requestedPropertyId: request.requestedPropertyId ?? null,
+          };
+          if (!reference.hasPublicDetail) {
+            records.push(
+              normalizeCitizenservePermitListing({
+                jurisdiction,
+                reference: enrichedReference,
+                request: normalizedRequest,
+                searchUrl,
+              }),
+            );
+            continue;
+          }
+          if (records.length > 0) await wait();
+          const detailPage = await browser.newPage();
+          try {
+            await configurePinnedHost(
+              detailPage,
+              sourceBaseUrl,
+              config.pinConfiguredHost === true,
+            );
+            const response = await detailPage.goto(reference.sourceUrl, {
+              waitUntil: "domcontentloaded",
+              timeout: timeoutMs,
+            });
+            assertPageLocation(detailPage.url(), sourceBaseUrl);
+            if (!response || response.status() !== 200) {
+              fail(
+                "Citizenserve detail did not return HTTP 200",
+                "citizenserve_detail_unavailable",
+              );
+            }
+            await rejectAccessControls(detailPage);
+            const detailHtml = await detailPage.content();
+            if (options.onDetailHtml) {
+              await options.onDetailHtml({
+                reference,
+                pageNumber: reference.searchPage,
+                html: detailHtml,
+              });
+            }
+            records.push(
+              parseCitizenservePermitDetailHtml(detailHtml, {
+                jurisdiction,
+                reference: enrichedReference,
+                request: normalizedRequest,
+                searchUrl,
+              }),
+            );
+          } finally {
+            await detailPage.close().catch(() => undefined);
+          }
         }
       } finally {
         await browser.close().catch(() => undefined);
