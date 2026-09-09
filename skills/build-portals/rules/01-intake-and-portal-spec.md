@@ -85,6 +85,7 @@ Collect these org-supplied values. Missing items become `openQuestions` entries 
 | Permission to push and open a PR | Yes | Stop before external writes if authorization is absent |
 | Deployment context | Only when deployment is requested or needed for an acceptance criterion | Stop before deployment, not before local implementation |
 | Dataset or BrowserStack credentials | Only when latency or browser-flow gates apply to the requested scope | Mark unrelated gates not applicable rather than blocking the change |
+| Hoothoot-produced query, parameters, result shape, and constraints | Yes for every new or changed data/report query | Stop before query-dependent implementation. Ask the user to run Hoothoot; do not draft or copy a query |
 
 Optional overrides: Lambda memory, timeout, provisioned concurrency, allowed
 origins, frontend framework, PR title, and whether to update an existing PR.
@@ -93,9 +94,11 @@ For existing-project work, `openQuestions` contains only decisions required
 before code can be changed safely. Missing credentials for a later, explicitly
 requested deployment or live verification step do not block local
 implementation; record those as gate blockers and stop before that external
-step. Named acceptance criteria (shared `/api/v2` attach, Persist query,
-soak, live integration) remain required in-repo work: wire the existing
-workflows and sibling-style scripts even when the agent cannot execute them.
+step. Named acceptance criteria such as shared `/api/v2` attachment, soak, and
+live integration remain required in-repo work: wire the existing workflows and
+sibling-style scripts even when the agent cannot execute them. A new or changed
+query is different: it is a hard Hoothoot handoff and cannot be substituted
+with Hoopa-authored implementation.
 
 ## Normalize to `portal-spec.json`
 
@@ -110,6 +113,9 @@ Required top-level fields for every mode:
 - `deliveryMode`
 - `sourceType`
 - `changeRequest`
+- `queryDependencies[]`: empty when no new or changed query is needed;
+  otherwise record each supplied Hoothoot query's target, source,
+  reference/digest, parameters, expected result shape, and constraints
 - `openQuestions[]`
 
 `new_repository` additionally requires structured `designSource` and
@@ -180,6 +186,7 @@ Agent: asks which source is primary; records the other as supplemental context o
     "scopes": ["frontend", "backend", "infrastructure"],
     "acceptanceCriteria": ["Open a reviewable pull request with all required gates passing"]
   },
+  "queryDependencies": [],
   "designSource": {
     "reference": "https://example.com/reference-portal"
   },
@@ -241,6 +248,7 @@ Agent: asks which source is primary; records the other as supplemental context o
     "scopes": ["backend", "infrastructure"],
     "acceptanceCriteria": ["Open a pull request with passing API tests"]
   },
+  "queryDependencies": [],
   "repositoryContext": {
     "repository": "example-org/example-portal",
     "baseBranch": "main",

@@ -43,6 +43,9 @@ Apply when backend code, API contracts, or backend infrastructure changes.
   unless the repository has a stricter rule.
 - Exercise successful responses, validation failures, authorization behavior,
   upstream failures, and timeout/error mapping.
+- When a user-supplied Hoothoot query is wired, assert its exact
+  reference/digest and parameter mapping plus the expected result contract.
+  Do not test or alter query semantics as if Hoopa authored them.
 - Save the machine-readable coverage artifact path and summary.
 
 Any failed applicable test or violated coverage threshold blocks handoff.
@@ -58,6 +61,13 @@ least one authenticated and one unauthenticated state when the portal has auth.
 Use deterministic data, disable incidental animation, and retain diff images.
 An approved baseline update must be reviewable in the feature branch; never
 update baselines merely to hide a mismatch.
+
+Run design assertions on the composed final route with its real parent
+containers and theme. Isolated component proof is insufficient. For every
+Figma-driven control or action, assert computed text, icon, fill, and border
+colors separately; measure indicator and underline/divider geometry; and bind
+button variants to stable action identities so DOM order or embedding cannot
+reverse the visual hierarchy. Follow `07-figma-visual-fidelity.md`.
 
 ## Gate 3: BrowserStack full flow
 
@@ -115,6 +125,11 @@ expected 401 means the physical GET route is missing — often because
 CloudFormation deleted an old `CfnRoute`. Missing Persist debt must be
 **404**, not **502**. A CORS miss against a literal `*` origin is also
 not an auth failure.
+
+When the deployed feature uses a Hoothoot query, verify the deployed endpoint
+against the supplied parameter and result contract and retain evidence tied to
+the query reference/digest. Query semantics and efficiency remain Hoothoot's
+responsibility.
 
 Redact credentials and customer records from logs and evidence.
 
