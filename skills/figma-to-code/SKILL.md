@@ -28,12 +28,20 @@ If the Figma design is missing or stale, **ask the user for a new Figma link**.
 - Find the route/page and the components that render the affected section.
 - Identify which SCSS/CSS modules or stylesheets control layout.
 ### 2) Map Figma to code
-- Extract spacing, typography, sizing, and layout rules from Figma.
+- Extract spacing, typography, sizing, layout, text/fill/border/icon colors,
+  decoration geometry, and every represented control state from Figma.
+- Record action-to-variant mappings by stable action identity or label. Do not
+  infer primary/secondary styling from action semantics or DOM order.
 - List the mismatches between UI and Figma.
 ### 3) Update the code (UI only)
 - Update markup structure if Figma changes section layout.
 - Update SCSS/CSS for spacing, sizes, borders, and typography.
 - Add or adjust breakpoint-specific styles for mobile/tablet/desktop.
+- Preserve exact variants when moving a section into its final page. Check
+  parent selectors, inherited theme values, and browser-native controls for
+  drift. A native select indicator is not acceptable when Figma specifies a
+  different chevron color; use the existing accessible custom select or a
+  custom decorative indicator.
 - Do **not** change API calls, state logic, or data flow.
 ### 4) Commit/override analysis
 - Review recent commits/PRs touching this area.
@@ -47,6 +55,11 @@ These frequently missed categories must be verified explicitly:
 - Breakpoint-specific widths and max-widths
 - Spacing/padding parity across similar boxes
 - Border thickness consistency across variants
+- Text, icon, fill, and border colors checked separately
+- Chevron/caret source, color, size, and position
+- Underline/divider width and offsets measured against the intended control
+- Named actions retain their exact Figma button variants
+- Final-page parent/theme styles do not override isolated component styling
 - Typography alignment (size/line-height/weight)
 - Nav spacing/logo sizing/label variants on small breakpoints
 - Copy changes (strings drift from Figma)
@@ -91,6 +104,9 @@ pnpm run test:browserstack:landing:design
 - [ ] I have Figma for the exact section (preferred).
 - [ ] Business logic remains unchanged.
 - [ ] UI matches Figma across breakpoints.
+- [ ] The composed final route matches, not only the isolated component.
+- [ ] Icon colors, decoration geometry, and action-to-button variants have
+      exact CSS/geometry assertions.
 - [ ] QA_BUG_LOG common misses were checked.
 - [ ] Commit history checked for overrides.
 - [ ] Tests added/updated in the correct lane.

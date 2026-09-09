@@ -19,6 +19,8 @@ without an explicit, reviewed migration.
 - `designSource` — required only for `new_repository`; exactly one primary source among `figma`, `portal_url`, `other_design`, or `source_repo`
 - `repositoryContext` — required for `existing_repository`; repository, base branch, feature branch, and optional current PR
 - `deliveryContext` — org-supplied GitHub, AWS, Amplify, auth/API, test, and verification inputs
+- Hoothoot-produced queries for every endpoint or report that needs a new or
+  changed data query; absence is a hard stop, not an implementation task
 
 ## Produces
 
@@ -83,16 +85,34 @@ gate blockers before the external step. Still implement the in-repo substitute:
 wire `API_V2_HTTP_API_ID` into the existing API deploy workflow, add sibling-style
 soak/live scripts to that workflow, and reuse sibling identifiers.
 
+## Hoothoot query handoff
+
+Treat query authoring as outside Hoopa's scope. For every new or changed SQL,
+Gremlin, graph traversal, report definition, aggregate, filter, or query
+fragment:
+
+1. Stop before query-dependent implementation or tests.
+2. Ask the user to run Hoothoot and return its exact query, parameters,
+   expected result shape, and efficiency constraints.
+3. Do not call another specialist, copy a sibling query, or provide a draft,
+   pseudocode, partial query, operator suggestion, optimization, or repair.
+4. Resume only with the Hoothoot-produced query supplied by the user. Wire it
+   unchanged and test its parameter/result contract.
+
+Preserve an existing query only when the requested work does not change its
+behavior. A query error or semantic change requires a replacement from
+Hoothoot.
+
 ## Nine-stage workflow
 
 Run these stages in order. Do not advance past a failed or blocked stage.
 
-1. **Intake.** Resolve `deliveryMode`, `changeRequest`, affected scopes, and mode-specific context.
-2. **Normalize.** Validate the portal spec. Commit it in a new repo; keep it transient for existing-project work unless requested. Stop if `openQuestions` is non-empty.
+1. **Intake.** Resolve `deliveryMode`, `changeRequest`, affected scopes, and mode-specific context. Identify every new or changed data-query dependency.
+2. **Normalize.** Validate the portal spec. Put every missing Hoothoot query in `openQuestions`. Commit the spec in a new repo; keep it transient for existing-project work unless requested. Stop if `openQuestions` is non-empty.
 3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree.
 4. **Plan or scaffold.** Scaffold the new portal, or inspect the existing architecture and plan the minimum necessary change.
-5. **Frontend.** Implement only when frontend is in scope; use Figma/design tests when supplied or required.
-6. **Backend.** Implement only when backend is in scope; follow the repository's existing API/IaC patterns before applying new-portal defaults. On a shared `/api/v2` HTTP API, copy sibling `authorizationType` and do not add a JWT authorizer unless siblings already use one. Copy sibling CORS; a configured `*` is not a literal origin. Accept Cognito ID tokens and HS256 portal `authToken` (401/403/404 as specified). Failed-payment overlays use installment status events, not money events; see `rules/06-existing-repository-changes.md` §3e. Missing Persist debt is 404 not 502 (`fold().coalesce`). See §3f for the feature-API deploy pipe.
+5. **Frontend.** Implement only when frontend is in scope; use Figma/design tests when supplied or required. Follow `rules/07-figma-visual-fidelity.md` and verify the rendered final route, including icon colors, exact underline geometry, and the design's action-to-button-variant mapping.
+6. **Backend.** Implement only when backend is in scope; follow the repository's existing API/IaC patterns before applying new-portal defaults. Wire only user-provided Hoothoot queries, unchanged. On a shared `/api/v2` HTTP API, copy sibling `authorizationType` and do not add a JWT authorizer unless siblings already use one. Copy sibling CORS; a configured `*` is not a literal origin. Accept Cognito ID tokens and HS256 portal `authToken` (401/403/404 as specified). Failed-payment overlays use installment status events, not money events; see `rules/06-existing-repository-changes.md` §3e. Missing Persist debt is 404, not 502. See §3f for the feature-API deploy pipe.
 7. **Integrate or deploy.** Wire and deploy only the requested surfaces and only with explicit environment authorization. Amplify preview is not the API; `workflow_dispatch` the existing API workflow on the feature branch. Do not recreate Lambda alias `live` (`alias already exists`); **upsert** shared routes; do not invent GitHub bearer secrets.
 8. **Verify.** Run gates that apply to the changed scopes and the repository's required CI suite. `signing method HS256 is invalid` is a gateway JWT miss. Live 401 expected / 404 received means the GET route is gone.
 9. **Pull request and handoff.** Push the feature branch, open or update a PR, and return evidence plus blockers. Never merge without approval.
@@ -111,6 +131,8 @@ Hard stop and ask when:
 - A required auth/API contract cannot be discovered in the existing repo and was not supplied or delegated to a named reference
 - `datasetRef` is missing when latency verification applies
 - BrowserStack credentials are missing when a browser flow applies
+- A new or changed data/report query is required and the user has not supplied
+  Hoothoot's output
 - Any step would place tenant secrets or customer data into generic kit files
 
 On stop, list exact missing fields. Do not scaffold past the last successful stage.
@@ -124,7 +146,7 @@ On stop, list exact missing fields. Do not scaffold past the last successful sta
 | Responsive design tests | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template | this skill | `rules/02-deterministic-lambda-template.md` |
 | Existing-project incremental changes | this skill | `rules/06-existing-repository-changes.md` |
-| Persist / Gremlin / Lexicon queries | `conkeldurr`; also `hoothoot` when that specialist is in the session | Target-repo persist client plus `skills/build-persist-service/` |
+| Data/report query authoring or correction | **User-provided Hoothoot output only**; stop and ask the user to use Hoothoot | — |
 | Full-flow preview tests | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
 Default backend style is HTTP API Gateway + Lambda. Use tRPC only when the user explicitly requests it.
@@ -136,6 +158,9 @@ Required in every `portal-spec.json`:
 - `deliveryMode`: `new_repository` | `existing_repository`
 - `sourceType`: `figma` | `portal_url` | `other_design` | `source_repo`
 - `changeRequest`: summary, affected scopes, acceptance criteria
+- `queryDependencies[]`: supplied Hoothoot provenance/reference, parameters,
+  expected result shape, and constraints for each new or changed query; empty
+  when no query work is required
 - `designSource` and authorized `deliveryContext`: required for new repositories
 - `repositoryContext`: existing repo/base/feature branch plus write and PR authorization
 
@@ -165,3 +190,4 @@ relevant:
 - `rules/04-verification-gates.md`
 - `rules/05-sanitization.md`
 - `rules/06-existing-repository-changes.md`
+- `rules/07-figma-visual-fidelity.md`

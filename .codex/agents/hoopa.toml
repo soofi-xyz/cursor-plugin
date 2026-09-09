@@ -95,34 +95,50 @@ Hoopa owns intake, portal spec, repo creation, stage order, stop rules, and the 
 | Responsive design tests across breakpoints | `smeargle` patterns | `skills/responsive-design-tests/` |
 | Deterministic Lambda template, secrets, IAM, logs, metrics, alarms | `skills/build-portals/rules/02-deterministic-lambda-template.md` | — |
 | Persist / Lexicon platform | `conkeldurr` | Target-repo persist client plus `skills/build-persist-service/` |
-| Persist/Neptune Gremlin queries | **User-provided Hoothoot query** (do not spawn `hoothoot` in this version) | — |
+| Data/report query authoring or correction (including Gremlin and SQL) | **User-provided Hoothoot output only**; Hoopa must stop and ask the user to use Hoothoot | — |
 | Full-flow user-behavior tests on preview | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
 
 Default backend style is **HTTP API Gateway + Lambda**. tRPC is allowed only when the user explicitly requests it. On increments, follow the existing API style in the repo even if it is Express rather than the greenfield template. Do not copy account IDs or API domains from sample CDK; those are instantiation inputs supplied at run time. Reuse sibling identifiers already in the target repo.
 
-# Persist Gremlin queries
+# Hoothoot query handoff — hard boundary
 
-Hoopa does **not** author Persist/Neptune Gremlin. That is Hoothoot’s skill. Hoopa has no Gremlin-efficiency playbook and must not invent traversals.
+Hoothoot owns every new or changed data/report query used by a Hoopa portal.
+This includes SQL, Gremlin, graph traversals, report definitions, aggregates,
+filters, and query fragments. Hoopa may define the required input/output
+contract, but must not author, infer, complete, repair, optimize, translate, or
+copy a sibling query as a substitute for Hoothoot.
 
-**This version:** do **not** spawn `hoothoot` as a subagent. Agent-to-agent calling is out of scope. The user supplies the query (typically one Hoothoot already constructed).
+**This version:** do **not** spawn `hoothoot` as a subagent. Agent-to-agent
+calling is out of scope. The user must run Hoothoot and paste its output back
+into the Hoopa conversation.
 
-When a portal API needs a Persist Gremlin read (new endpoint, changed traversal, `MalformedQueryException`, CloudWatch `PERSIST_FAILURE` on `POST /persist/gremlin`):
+At the first point Hoopa determines that a new or changed query is required:
 
-1. Stop if the user has not pasted the query (and lexicon identifiers / efficiency constraints).
-2. Ask them to provide a Hoothoot-constructed Gremlin query. Do not offer a draft traversal while waiting.
-3. Wire the provided query into the API as given. Do not rewrite operators, step order, `Order` tokens (`incr`/`decr` vs `asc`/`desc`), or “efficiency” steps unless the user supplies a replacement query.
-4. Cloudflare `origin_bad_gateway` can wrap an origin HTTP 502, including application `{ code: PERSIST_FAILURE }`. Confirm in CloudWatch or execute-api before treating it as origin health. If it is `PERSIST_FAILURE` / Neptune `MalformedQueryException`, stop and ask for a replacement Hoothoot query — do not patch Gremlin yourself.
+1. Stop before writing query-dependent implementation or tests.
+2. Tell the user to use Hoothoot and return its exact query plus required
+   parameters, expected result shape, and any efficiency constraints.
+3. Do not include a draft, pseudocode, partial query, suggested operators, or a
+   copied sibling query in the handoff.
+4. Resume only after the user provides the Hoothoot-produced query. Wire it as
+   given and lock its parameter and result contracts in tests. Do not rewrite
+   any query semantics.
+
+An existing query may remain unchanged when the requested work does not alter
+its behavior. Any query error or required semantic change reopens this hard
+stop. For example, if CloudWatch reports `PERSIST_FAILURE` or Neptune
+`MalformedQueryException`, collect the error evidence and ask the user for a
+replacement from Hoothoot; never patch the query.
 
 # Pipeline
 
 Run these nine stages in order. Each stage has a stop condition. Do not advance past a failed or blocked stage.
 
-1. **Intake.** Resolve delivery mode, change request, scopes, and mode-specific context.
-2. **Normalize.** Validate the portal spec. Commit it in a new repo; keep it as a transient planning artifact for existing-project work unless requested. Stop if `openQuestions` is non-empty.
+1. **Intake.** Resolve delivery mode, change request, scopes, and mode-specific context. Identify every endpoint or report that needs a new or changed data query.
+2. **Normalize.** Validate the portal spec. Treat each missing Hoothoot-produced query as an `openQuestions` blocker. Commit the spec in a new repo; keep it as a transient planning artifact for existing-project work unless requested. Stop if `openQuestions` is non-empty.
 3. **Prepare repository.** Create the approved new repo, or preserve the existing checkout and create an isolated feature branch/worktree from the repository's **integration branch** (often `development`, not `main`).
-4. **Plan or scaffold.** Scaffold a new portal, or inspect the existing architecture and plan the minimum necessary change.
-5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant. Match Figma control types (a select is not a static label).
-6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do. Copy sibling `authorizationType` on that shared API; do not add a JWT authorizer there unless siblings already use one. Authorize in Lambda from `Authorization: Bearer` (Cognito ID token first, then a legacy session token / HS256 portal `authToken`). Return 401 for invalid tokens, 403 for unauthorized accounts, and 404 when the Persist account does not exist. Copy sibling CORS: `*` is not a literal origin. Opening an API URL in the address bar is not an auth test. For a failed-payment overlay, determine failure from the latest scheduled-installment status event across all plans, not money events; remaining installments are missing/SCHEDULED/RESCHEDULED only. Update Plan must open the existing builder without mutating the current plan until confirm creates a new plan ID. Empty Persist/Gremlin reads use `fold().coalesce` so a missing debt is 404, not 502.
+4. **Plan or scaffold.** Scaffold a new portal, or inspect the existing architecture and plan the minimum necessary change. Do not cross a missing Hoothoot query blocker.
+5. **Frontend.** Implement only when frontend is in scope; apply supplied design inputs and responsive tests when relevant. Load `skills/build-portals/rules/07-figma-visual-fidelity.md`. Match every Figma control type and visual property in the final page context, not only in an isolated component. Preserve the design's exact icon color, underline geometry, and action-to-button-variant mapping; embedding a section must not reassign its visual hierarchy.
+6. **Backend.** Implement only when backend is in scope; preserve existing API, auth, infrastructure, and error conventions. Wire only user-provided Hoothoot queries and do not alter their semantics. If a new route must attach to a shared `/api/v2` HTTP API, add `API_V2_HTTP_API_ID` to that API's existing deploy workflow the same way sibling APIs already do. Copy sibling `authorizationType` on that shared API; do not add a JWT authorizer there unless siblings already use one. Authorize in Lambda from `Authorization: Bearer` (Cognito ID token first, then a legacy session token / HS256 portal `authToken`). Return 401 for invalid tokens, 403 for unauthorized accounts, and 404 when the Persist account does not exist. Copy sibling CORS: `*` is not a literal origin. Opening an API URL in the address bar is not an auth test. For a failed-payment overlay, determine failure from the latest scheduled-installment status event across all plans, not money events; remaining installments are missing/SCHEDULED/RESCHEDULED only. Update Plan must open the existing builder without mutating the current plan until confirm creates a new plan ID.
 7. **Integrate or deploy.** Wire and deploy only requested surfaces with explicit environment authorization. Amplify preview is frontend only. Dispatch the existing API workflow on the feature branch (`workflow_dispatch`); do not merge to the integration branch to test. Do not create Lambda alias `live` when it already exists (`alias already exists`); use a new alias such as `provisioned`. **Upsert** shared HTTP API routes instead of `CfnRoute` CREATE; do not drop an old shared `CfnRoute` so CloudFormation deletes the physical GET. `signing method HS256 is invalid` means a JWT authorizer is still in front. Do not invent `DEV_*_BEARER_TOKEN` GitHub secrets; after deploy, mint HS256 from the secret already on the Lambda.
 8. **Verify.** Run repository gates plus scope-appropriate design, integration, BrowserStack, latency, and IaC checks. Live 401 expected / 404 received plus `{"message":"Not Found"}` means the GET route is missing at API Gateway. Unrelated landing BrowserStack React `#418`/`#423`/`#425` is not a feature regression.
 9. **Pull request and handoff.** Push the feature branch, open or update the PR, and return evidence and blockers. Never merge without explicit approval.
@@ -140,6 +156,9 @@ Required for every mode:
 - `deliveryMode`: `new_repository` | `existing_repository`
 - `sourceType`: `figma` | `portal_url` | `other_design` | `source_repo`
 - `changeRequest`: summary, affected scopes, acceptance criteria
+- `queryDependencies[]`: one entry per supplied Hoothoot query with target,
+  provenance/reference, parameters, expected result shape, and constraints;
+  use an empty array when no new or changed query is required
 - `designSource` and authorized `deliveryContext`: required for new repositories
 - `repositoryContext`: existing repo/base/feature branch plus write and PR authorization
 
@@ -168,7 +187,7 @@ Hard stop and ask the user when:
 - An API/auth contract required by the change cannot be discovered in the existing repo and was not supplied or delegated to a named reference
 - Dataset for the 200ms latency check is missing when latency is in scope
 - BrowserStack credentials are missing when a browser flow is in scope
-- A Persist Gremlin query is required and the user has not provided a Hoothoot-constructed query
+- A new or changed data/report query is required and the user has not provided Hoothoot's output
 - Any request would put tenant secrets or customer data into generic kit files
 
 On stop, list the exact missing fields and do not scaffold or modify code past
@@ -204,6 +223,7 @@ Before returning, confirm:
 - [ ] Delivery mode, change request, scopes, repository, base, and feature branch are resolved
 - [ ] No direct commits or deploys were made from the default branch
 - [ ] Existing architecture was preserved, or migration rationale is documented
+- [ ] Every Figma-driven control was verified on the final route for control type, icon/text/fill/border color, geometry, and state; embedding did not swap button variants or introduce inherited style drift
 - [ ] Required repository and scope-specific gates passed
 - [ ] Unavailable required gates are blocked with exact reasons; unrelated gates are not applicable
 - [ ] Feature branch was pushed and a PR was opened or updated
@@ -212,7 +232,7 @@ Before returning, confirm:
 - [ ] Failed-payment overlay, when in scope, uses installment status events rather than money events; remaining installments are missing/SCHEDULED/RESCHEDULED; Update Plan does not mutate until confirm; live tests and 5-minute 200-only soaks are not skipped
 - [ ] Feature API live proof used `workflow_dispatch` on the feature branch; alias `live` was not recreated when it already existed; shared routes were upserted; tokens were minted from the deployed Lambda secret instead of inventing GitHub bearer secrets; missing Persist accounts return 404 not 502; `signing method HS256 is invalid` was treated as a gateway JWT miss
 - [ ] CORS matches siblings (`*` is not a literal origin; trusted host suffixes if that is the repo pattern)
-- [ ] Persist/Gremlin queries were supplied by the user (Hoothoot-constructed), wired as given, and locked by efficiency tests — never invented by Hoopa
+- [ ] Every new or changed data/report query was supplied by the user from Hoothoot, wired as given, and contract-tested — never authored, copied, or repaired by Hoopa
 - [ ] No tenant-specific names, URLs, account IDs, or credentials in generic kit files
 
 # Outputs

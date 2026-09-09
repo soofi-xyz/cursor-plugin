@@ -87,8 +87,9 @@ For backend management:
   `API_V2_HTTP_API_ID` to **that API's existing deploy workflow** with the
   same GitHub var plus fallback pattern sibling APIs already use. Leaving
   the workflow unwired is a delivery miss even when local AWS is absent
-- when frontend is in scope, match Figma control types. A dropdown in the
-  design is a select, not a static label
+- when frontend is in scope, follow
+  `07-figma-visual-fidelity.md`. Match control types and exact rendered
+  properties on the final route, not only in an isolated component
 - copy sibling CORS. A deploy fallback of `*` is not a literal Origin
   string. Express `origins.includes(origin)` will never match a portal or
   preview host against `*`. If siblings allow trusted host suffixes
@@ -182,8 +183,8 @@ When a story asks for a post-login overlay driven by
    account to a named DEV fixture. Live/soak steps still fail if they
    cannot authenticate — they just must not invent `DEV_*_BEARER_TOKEN`
    secrets. Persist missing-debt must return **404**, not **502**: empty
-   Gremlin uses `fold().coalesce(unfold().project(...), constant(null))`,
-   and Persist HTTP 404 maps to `ACCOUNT_NOT_FOUND`. Do not use
+   or not-found results map to `ACCOUNT_NOT_FOUND`. If that behavior requires
+   a query change, stop and request a Hoothoot-produced replacement. Do not use
    `000000000` as a missing debt id.
 7. When the story names DEV Persist fixture accounts, encode those
    expected summary shapes in contract tests and hit the same accounts
@@ -202,7 +203,7 @@ Treat them as hard increment rules, not one-off ops.
 | `Route with key GET /accounts/{id}/... already exists` (409) | `CfnRoute` CREATE on the shared HTTP API | **Upsert** the existing route (target + `authorizationType: NONE`) |
 | Live `invalid token expected 401, received 404` plus `{"message":"Not Found"}` | CloudFormation deleted the old `CfnRoute` logical ID **after** the upsert, taking the physical GET route with it | Do not drop a shared-API `CfnRoute` from the template without recreating the route. Force the upsert to run again after that delete |
 | `WWW-Authenticate: signing method HS256 is invalid` | Shared API JWT authorizer still in front; Amplify preview did not deploy the Lambda | `workflow_dispatch` the API workflow on the **feature branch**. `authorizationType: NONE`. Confirm 200/401 from Lambda, not Gateway |
-| Missing account expected 404, received 502 | Empty Gremlin or Persist HTTP 404 remapped to `PERSIST_FAILURE` | `fold().coalesce(..., constant(null))`; map Persist 404 to `ACCOUNT_NOT_FOUND`. Use a 9-digit missing id, not `000000000` |
+| Missing account expected 404, received 502 | Empty query result or Persist HTTP 404 remapped to `PERSIST_FAILURE` | Map existing empty/not-found results to `ACCOUNT_NOT_FOUND`. If the query must change, stop and request a Hoothoot replacement. Use a 9-digit missing id, not `000000000` |
 | Preview BrowserStack landing design fail on React `#418`/`#423`/`#425` | iOS Safari hydration console; this change did not touch landing | Ignore those minified hydration codes in the real-device design spec. Do not treat it as a payments/overlay regression |
 
 Green PR checks are frontend/unit only. They do not put a sibling API
@@ -210,23 +211,25 @@ Lambda on the shared DEV HTTP API.
 
 ## 3b. Persist / Gremlin queries
 
-When the change reads Persist (or the story names Hoothoot / a Gremlin
-query):
+Hoothoot is the mandatory source for every new or changed portal data query,
+including Persist/Gremlin, SQL, report definitions, aggregates, filters, and
+query fragments. Hoopa cannot call Hoothoot in this version.
 
-1. Delegate to `conkeldurr` and the target repo's existing persist client.
-   If a Persist query specialist such as `hoothoot` is available in the
-   session, call it to produce or validate the query.
-2. Absence of that specialist is not permission to skip the query. Copy
-   sibling Gremlin from the same repo and lock efficiency in unit tests:
-   indexed identifier start, immediate `limit(1)`, filter before order,
-   `project()` of API fields only (no `valueMap(true)` dumps), one Persist
-   round-trip. Missing vertices must `fold().coalesce(..., constant(null))`
-   so Persist does not 5xx an empty traversal; map that null/empty row and
-   Persist HTTP 404 to **404** `ACCOUNT_NOT_FOUND`, never **502**.
-3. Do not treat a hand-written query as done solely because increment mode
-   skipped a live specialist pass. Encode the constraints in tests and add
-   an optional live Persist validation step to CI when the repo already
-   uses OIDC to call Persist.
+At the first query dependency:
+
+1. Stop before writing query-dependent implementation or tests.
+2. Ask the user to run Hoothoot and return the exact query, parameters,
+   expected result shape, and efficiency constraints.
+3. Do not author, infer, complete, repair, optimize, translate, or copy a
+   sibling query. Do not include query pseudocode or operator suggestions in
+   the handoff.
+4. Resume only after the user supplies Hoothoot's output. Wire the query
+   unchanged and test its parameter/result contract. Any semantic correction
+   or query error requires another Hoothoot handoff.
+
+An existing query may remain unchanged when the requested work does not alter
+its behavior. Hoopa may adapt the surrounding client, error mapping, and API
+contract without changing query semantics.
 
 ## 3c. Story acceptance criteria vs local hard-stops
 
@@ -240,8 +243,9 @@ CI-owned. It is also **not** a waiver of acceptance criteria.
 | p95 soak (for example 200 requests / 5 minutes) | A sibling-style script **and** a step in the existing deploy or preview workflow. Count **HTTP 200 only**. The soak must actually run for the named duration. Default the soak account to a named DEV fixture when `DEV_*_PERF_ACCOUNT_ID` is unset. If the story forbids skipping, fail the soak step when it cannot mint or send a Bearer token; do not log-and-skip |
 | Real feature-branch API | Follow this repo. Dispatch the existing API workflow on the **feature branch** (`workflow_dispatch`). Do not merge to the integration branch to test. Do not pretend a portal Amplify preview deployed the API |
 
-If the story names a specialist Hoopa cannot call, still complete the
-in-repo substitute above and record the missing specialist in the handoff.
+If the story names a specialist Hoopa cannot call, complete a safe in-repo
+substitute only when another hard boundary does not forbid it. There is no
+substitute for Hoothoot query output: stop and ask the user.
 
 ## 4. Test before and after implementation
 
@@ -291,6 +295,8 @@ Stop before code changes when:
 - the requested behavior or acceptance criteria are ambiguous
 - existing user changes overlap the requested files and inclusion is unclear
 - branch pushes or pull-request creation were not authorized
+- a new or changed data/report query is required and the user has not supplied
+  Hoothoot's output
 
 List only blockers relevant to the requested scope. A missing UI design is not
 a backend-change blocker, and missing deployment access does not prevent a
