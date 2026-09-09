@@ -186,6 +186,7 @@ Agent: asks which source is primary; records the other as supplemental context o
     "scopes": ["frontend", "backend", "infrastructure"],
     "acceptanceCriteria": ["Open a reviewable pull request with all required gates passing"]
   },
+  "queryDependencies": [],
   "designSource": {
     "reference": "https://example.com/reference-portal"
   },
@@ -247,6 +248,7 @@ Agent: asks which source is primary; records the other as supplemental context o
     "scopes": ["backend", "infrastructure"],
     "acceptanceCriteria": ["Open a pull request with passing API tests"]
   },
+  "queryDependencies": [],
   "repositoryContext": {
     "repository": "example-org/example-portal",
     "baseBranch": "main",

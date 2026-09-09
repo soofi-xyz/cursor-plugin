@@ -47,6 +47,7 @@ REQUIRED_SCHEMA_FIELDS = (
     "deliveryMode",
     "sourceType",
     "changeRequest",
+    "queryDependencies",
     "openQuestions",
 )
 REQUIRED_SKILL_TOKENS = (
@@ -167,8 +168,10 @@ EXISTING_REPOSITORY_TOKENS = (
     "never merge",
     "integration branch",
     "API_V2_HTTP_API_ID",
-    "conkeldurr",
-    "hoothoot",
+    "Hoothoot is the mandatory source",
+    "stop before writing query-dependent",
+    "do not author",
+    "sibling query",
     "sibling-style",
     "JWT authorizer",
     "Cognito ID token",
@@ -180,7 +183,6 @@ EXISTING_REPOSITORY_TOKENS = (
     "alias already exists",
     "upsert",
     "signing method HS256",
-    "fold().coalesce",
 )
 
 
@@ -289,6 +291,15 @@ def assert_schema_contract(schema: dict) -> None:
         if delivery_mode not in delivery_mode_enum:
             fail(f"schema deliveryMode enum must include {delivery_mode!r}")
 
+    query_dependency_schema = (
+        schema.get("properties", {}).get("queryDependencies", {}).get("items", {})
+    )
+    query_source = (
+        query_dependency_schema.get("properties", {}).get("source", {}).get("const")
+    )
+    if query_source != "hoothoot":
+        fail("schema queryDependencies items must require Hoothoot provenance")
+
     conditional_contract = json.dumps(schema.get("allOf", []))
     for token in (
         "new_repository",
@@ -316,6 +327,7 @@ def assert_schema_contract(schema: dict) -> None:
             "scopes": ["frontend", "backend", "infrastructure"],
             "acceptanceCriteria": ["Open a reviewed pull request"],
         },
+        "queryDependencies": [],
         "designSource": {"reference": "https://example.com/reference-portal"},
         "deliveryContext": {
             "repository": "example-org/example-portal",
@@ -366,6 +378,7 @@ def assert_schema_contract(schema: dict) -> None:
             "scopes": ["backend"],
             "acceptanceCriteria": ["Open a pull request with API tests"],
         },
+        "queryDependencies": [],
         "repositoryContext": {
             "repository": "example-org/example-portal",
             "baseBranch": "main",
@@ -376,6 +389,39 @@ def assert_schema_contract(schema: dict) -> None:
         "openQuestions": [],
     }
     validate_against_schema(schema, existing_example, "existing repository example")
+
+    hoothoot_query_example = copy.deepcopy(existing_example)
+    hoothoot_query_example["queryDependencies"] = [
+        {
+            "target": "GET /reports/payment-plan-summary",
+            "source": "hoothoot",
+            "queryReference": "sha256:example-query-digest",
+            "parameters": ["accountId"],
+            "expectedResultShape": "One payment-plan summary row",
+            "constraints": ["Bounded read"],
+        }
+    ]
+    validate_against_schema(
+        schema,
+        hoothoot_query_example,
+        "existing repository with Hoothoot query",
+    )
+
+    non_hoothoot_query = copy.deepcopy(hoothoot_query_example)
+    non_hoothoot_query["queryDependencies"][0]["source"] = "hoopa"
+    assert_schema_rejects(
+        schema,
+        non_hoothoot_query,
+        "query dependency without Hoothoot provenance",
+    )
+
+    incomplete_query_handoff = copy.deepcopy(hoothoot_query_example)
+    del incomplete_query_handoff["queryDependencies"][0]["expectedResultShape"]
+    assert_schema_rejects(
+        schema,
+        incomplete_query_handoff,
+        "incomplete Hoothoot query handoff",
+    )
 
     blocked_example = dict(valid_example)
     blocked_example["openQuestions"] = ["Need GitHub org and repository name"]
