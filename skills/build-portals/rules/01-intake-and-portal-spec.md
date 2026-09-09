@@ -36,6 +36,15 @@ scopes (`frontend`, `backend`, `infrastructure`, `testing`, or `deployment`),
 and supplied acceptance criteria. Backend-only work is valid and does not
 require a Figma file or other UI design.
 
+When the story supplies test scenarios or the change affects a user journey or
+integration boundary, normalize `testScenarios[]` before implementation. Give
+each scenario a stable story ID, title, preconditions, executable steps,
+expected result, approved fixture labels, image-evidence checkpoints, and safe
+stop. Include at least the final asserted UI state as an evidence checkpoint.
+Derive scenarios from acceptance criteria when they are unambiguous; otherwise
+ask for the missing behavior. Do not put credential values or personal data in
+the spec.
+
 ### `designSource` for `new_repository` (exactly one primary source)
 
 Select exactly one row. Reject mixed primary sources. Ask the user to choose if they supply more than one.
@@ -85,6 +94,7 @@ Collect these org-supplied values. Missing items become `openQuestions` entries 
 | Permission to push and open a PR | Yes | Stop before external writes if authorization is absent |
 | Deployment context | Only when deployment is requested or needed for an acceptance criterion | Stop before deployment, not before local implementation |
 | Dataset or BrowserStack credentials | Only when latency or browser-flow gates apply to the requested scope | Mark unrelated gates not applicable rather than blocking the change |
+| Test scenarios and Asana story reference | Yes when a journey or integration boundary is in scope | Stop before test implementation only when scenario steps, expected results, fixtures, or the evidence destination cannot be resolved |
 | Hoothoot-produced query, parameters, result shape, and constraints | Yes for every new or changed data/report query | Stop before query-dependent implementation. Ask the user to run Hoothoot; do not draft or copy a query |
 
 Optional overrides: Lambda memory, timeout, provisioned concurrency, allowed
@@ -113,6 +123,8 @@ Required top-level fields for every mode:
 - `deliveryMode`
 - `sourceType`
 - `changeRequest`
+- `testScenarios[]` when a story scenario, user journey, or integration
+  boundary is in scope
 - `queryDependencies[]`: empty when no new or changed query is needed;
   otherwise record each supplied Hoothoot query's target, source,
   reference/digest, parameters, expected result shape, and constraints

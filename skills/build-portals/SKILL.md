@@ -28,6 +28,9 @@ without an explicit, reviewed migration.
   transient planning artifact for an existing repository unless requested
 - A new repository or an incremental feature branch in the existing repository
 - A pull request for review; never merge it without explicit approval
+- Scenario-derived integration tests plus per-scenario feature and approved
+  development evidence, sanitized checkpoint PNGs, and Asana-ready contact
+  sheets when a journey or integration boundary is in scope
 - Zero unresolved `openQuestions` before repository writes begin
 
 Read `rules/01-intake-and-portal-spec.md` for intake, hard-stop fields, Figma MCP routing, and normalization rules. Validate JSON against `reference/portal-spec.schema.json`.
@@ -114,8 +117,22 @@ Run these stages in order. Do not advance past a failed or blocked stage.
 5. **Frontend.** Implement only when frontend is in scope; use Figma/design tests when supplied or required. Follow `rules/07-figma-visual-fidelity.md` and verify the rendered final route, including icon colors, exact underline geometry, and the design's action-to-button-variant mapping.
 6. **Backend.** Implement only when backend is in scope; follow the repository's existing API/IaC patterns before applying new-portal defaults. Wire only user-provided Hoothoot queries, unchanged. On a shared `/api/v2` HTTP API, copy sibling `authorizationType` and do not add a JWT authorizer unless siblings already use one. Copy sibling CORS; a configured `*` is not a literal origin. Accept Cognito ID tokens and HS256 portal `authToken` (401/403/404 as specified). Failed-payment overlays use installment status events, not money events; see `rules/06-existing-repository-changes.md` §3e. Missing Persist debt is 404, not 502. See §3f for the feature-API deploy pipe.
 7. **Integrate or deploy.** Wire and deploy only the requested surfaces and only with explicit environment authorization. Amplify preview is not the API; `workflow_dispatch` the existing API workflow on the feature branch. Do not recreate Lambda alias `live` (`alias already exists`); **upsert** shared routes; do not invent GitHub bearer secrets.
-8. **Verify.** Run gates that apply to the changed scopes and the repository's required CI suite. `signing method HS256 is invalid` is a gateway JWT miss. Live 401 expected / 404 received means the GET route is gone.
-9. **Pull request and handoff.** Push the feature branch, open or update a PR, and return evidence plus blockers. Never merge without approval.
+8. **Feature verification.** Run gates that apply to the changed scopes and the
+   repository's required CI suite. For story test scenarios, load
+   `skills/unified-portal-smoke-testing/`, commit one independently reportable
+   integration test per scenario, and execute the suite against the exact
+   feature deployment. Preserve a normal-security baseline and run the required
+   isolated CORS-disabled Chrome lane; label both honestly.
+   `signing method HS256 is invalid` is a gateway JWT miss. Live 401 expected /
+   404 received means the GET route is gone.
+9. **Pull request and handoff.** Push the feature branch, open or update a PR,
+   and publish feature evidence. Treat approval and development verification as
+   required handoff phases: stop for explicit approval, then, after the feature
+   commit and same test suite are present on the development branch, run every
+   scenario against the exact development deployment with normal browser
+   security. Return or attach per-scenario feature and development evidence for
+   the Asana user story. Never infer merge permission from test approval and
+   never merge without approval.
 
 ## Stop-before-scaffold rule
 
@@ -147,7 +164,7 @@ On stop, list exact missing fields. Do not scaffold past the last successful sta
 | Deterministic Lambda template | this skill | `rules/02-deterministic-lambda-template.md` |
 | Existing-project incremental changes | this skill | `rules/06-existing-repository-changes.md` |
 | Data/report query authoring or correction | **User-provided Hoothoot output only**; stop and ask the user to use Hoothoot | — |
-| Full-flow preview tests | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | — |
+| Scenario-derived full-flow tests and evidence | Existing-repo Playwright/BrowserStack configs, or generated-repo configs for new repos | `skills/unified-portal-smoke-testing/` |
 
 Default backend style is HTTP API Gateway + Lambda. Use tRPC only when the user explicitly requests it.
 
@@ -158,6 +175,9 @@ Required in every `portal-spec.json`:
 - `deliveryMode`: `new_repository` | `existing_repository`
 - `sourceType`: `figma` | `portal_url` | `other_design` | `source_repo`
 - `changeRequest`: summary, affected scopes, acceptance criteria
+- `testScenarios[]`: stable ID, title, preconditions, steps, expected result,
+  fixture labels, image-evidence checkpoints, and safe stop when a user journey
+  or integration boundary is in scope
 - `queryDependencies[]`: supplied Hoothoot provenance/reference, parameters,
   expected result shape, and constraints for each new or changed query; empty
   when no query work is required
@@ -191,3 +211,4 @@ relevant:
 - `rules/05-sanitization.md`
 - `rules/06-existing-repository-changes.md`
 - `rules/07-figma-visual-fidelity.md`
+- `../unified-portal-smoke-testing/SKILL.md`

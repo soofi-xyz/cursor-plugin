@@ -10,7 +10,7 @@ Always run the repository's required gates: lint, typecheck, relevant tests,
 build, and any CI checks required by its conventions. Then select
 scope-appropriate gates below from `changeRequest.scopes`.
 
-All five gates apply to a full `new_repository` portal delivery. For an
+All six gates apply to a full `new_repository` portal delivery. For an
 `existing_repository` change, run a gate only when the changed surface or an
 acceptance criterion requires it. Mark unrelated gates **not applicable** with
 a one-line reason; do not call them blocked or passed. A required gate must pass
@@ -27,7 +27,7 @@ CI will run it.
 | --- | --- |
 | Backend behavior | API unit/contract tests; live integration and latency only when deployment/live verification is explicitly in scope |
 | Frontend behavior or appearance | Responsive design tests |
-| User flow, auth, or preview deployment | BrowserStack full flow when credentials and a deployed target are required by acceptance criteria |
+| User flow, auth, or integration boundary | Scenario-derived feature and approved development integration runs; BrowserStack full flow when cross-browser proof is required |
 | Infrastructure | Synthesis/diff plus the repository's infrastructure tests |
 | Code-only refactor | Repository gates and focused regression tests; live deployment gates are not applicable |
 
@@ -100,7 +100,59 @@ If a real-device landing-page design spec fails on React minified
 ignore those iOS Safari hydration console codes. That is not a payments
 or overlay regression and must not block the feature PR.
 
-## Gate 4: Backend integration
+## Gate 4: Scenario integration lifecycle
+
+Apply when the story supplies test scenarios or the change affects a user
+journey, auth flow, provider/API seam, persistence boundary, navigation handoff,
+iframe, or another integration boundary.
+
+Load `skills/unified-portal-smoke-testing/`. Normalize every story scenario to a
+stable ID and create an independently runnable integration test from its
+preconditions, steps, expected result, approved fixture label, and safe stop.
+Commit those tests on the feature branch before executing them. Use the target
+repository's existing Playwright/browser framework and real non-production
+services; do not mock or intercept the primary seam.
+
+Run the exact feature deployment in two explicitly labeled lanes:
+
+1. preserve a normal-security browser baseline so a real CORS failure is
+   observable;
+2. run every scenario through the skill's isolated CORS-disabled Chrome profile
+   against the same feature URL.
+
+A CORS-disabled pass proves functionality behind the CORS boundary but does not
+prove correct CORS configuration and cannot turn a normal-security blocker into
+a release pass.
+
+Publish feature evidence, then stop for explicit approval before development
+verification. Do not infer merge permission from permission to test. Once the
+development deployment is proven to contain the feature commit and same test
+suite, rerun every scenario against the exact development URL with normal
+browser security. If tests changed during review, rerun the feature lane first.
+
+For each scenario and environment, record result, test source/title, branch,
+commit, test-suite digest, deployment/check identity, sanitized URL, browser
+security mode, timing, expected and observed result, and links to
+trace/video/CI artifacts. Capture a sanitized PNG from the actual browser run at
+every declared evidence checkpoint, including at least the final asserted UI
+state. Mask sensitive selectors, verify the image is readable and not a loading
+or blank state, and index its SHA-256 digest in `evidence.json`.
+
+Preserve each checkpoint PNG and generate an attachment-friendly contact sheet
+for each environment and browser-security lane. Label contact-sheet cards with
+scenario ID, result, environment, branch, short commit, security mode, and
+capture time without altering the source screenshot. Never synthesize or
+re-stage a missing success image.
+
+Produce `evidence.json` plus a compact `evidence.md` index in the approved
+artifact store. Attach or link the contact sheets and source images to the Asana
+user story when authorized; otherwise return an attachment-ready package and
+copy-pasteable Asana summary.
+
+Any omitted, skipped, stale, wrong-environment, mock-backed, or unproven scenario
+is `NOT RUN` or `BLOCKED`, never `PASS`.
+
+## Gate 5: Backend integration
 
 For `new_repository`, apply this gate. For `existing_repository`, apply only
 when `deployment` is in `changeRequest.scopes` or an acceptance criterion
@@ -133,7 +185,7 @@ responsibility.
 
 Redact credentials and customer records from logs and evidence.
 
-## Gate 5: API latency
+## Gate 6: API latency
 
 For `new_repository`, apply this gate. For `existing_repository`, apply only
 when `deployment` is in `changeRequest.scopes` and API performance is affected,
@@ -210,6 +262,11 @@ their links to the pull request and delivery task:
 - real feature API URL
 - latency JSON (`artifacts/latency.json`)
 - integration test result
+- per-scenario feature and approved development `evidence.json` / `evidence.md`
+  links, including normal-security and CORS-disabled labels
+- per-scenario checkpoint PNGs with SHA-256 digests and one contact sheet per
+  environment/browser-security lane
+- Asana user-story evidence attachment or attachment-ready summary
 
 Evidence must identify the feature commit tested. Missing, stale, production,
 or mock-backed evidence blocks handoff only when that gate applies. The handoff
