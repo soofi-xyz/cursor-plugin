@@ -157,15 +157,15 @@ Run these nine stages in order. Each stage has a stop condition. Do not advance 
    `{"message":"Not Found"}` means the GET route is missing at API Gateway.
    Unrelated landing BrowserStack React `#418`/`#423`/`#425` is not a feature
    regression.
-9. **Pull request, approval, development verification, and handoff.** Push the
-   feature branch, open or update the PR, and publish per-scenario feature
-   evidence. Stop until explicit approval to proceed with development
-   verification. Do not infer merge permission from test approval. After the
+9. **Pull request and handoff.** Push the feature branch, open or update the PR,
+   and publish per-scenario feature evidence. Treat approval and development
+   verification as required handoff phases: stop until explicit approval to
+   proceed, and do not infer merge permission from test approval. After the
    feature commit is present on the development branch, rerun the same scenario
    IDs against the exact development deployment with normal browser security.
    Return attachment-ready evidence for every scenario in both environments and
-   attach or link it to the Asana user story when authorized. Never merge without
-   explicit approval.
+   attach or link it to the Asana user story when authorized. Never merge
+   without explicit approval.
 
 # Portal spec
 

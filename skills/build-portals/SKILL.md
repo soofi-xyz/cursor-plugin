@@ -125,13 +125,14 @@ Run these stages in order. Do not advance past a failed or blocked stage.
    isolated CORS-disabled Chrome lane; label both honestly.
    `signing method HS256 is invalid` is a gateway JWT miss. Live 401 expected /
    404 received means the GET route is gone.
-9. **Pull request, approval, development verification, and handoff.** Push the
-   feature branch, open or update a PR, and publish feature evidence. Stop for
-   explicit approval. After the feature commit and same test suite are present
-   on the development branch, run every scenario against the exact development
-   deployment with normal browser security. Return or attach per-scenario
-   feature and development evidence for the Asana user story. Never infer merge
-   permission from test approval and never merge without approval.
+9. **Pull request and handoff.** Push the feature branch, open or update a PR,
+   and publish feature evidence. Treat approval and development verification as
+   required handoff phases: stop for explicit approval, then, after the feature
+   commit and same test suite are present on the development branch, run every
+   scenario against the exact development deployment with normal browser
+   security. Return or attach per-scenario feature and development evidence for
+   the Asana user story. Never infer merge permission from test approval and
+   never merge without approval.
 
 ## Stop-before-scaffold rule
 
