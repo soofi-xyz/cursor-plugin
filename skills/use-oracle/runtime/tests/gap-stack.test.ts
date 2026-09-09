@@ -11,6 +11,8 @@ describe("isolated Duval gap Batch stack", () => {
         artifactBucketName: "existing-artifact-bucket",
         jobQueueArn:
           "arn:aws:batch:us-east-1:282516654782:job-queue/existing-queue",
+        gitCommit: "a".repeat(40),
+        treeDigest: "b".repeat(64),
       },
     });
     const stack = new DuvalGapBatchStack(app, "TestDuvalGapBatchStack", {
@@ -20,7 +22,12 @@ describe("isolated Duval gap Batch stack", () => {
     expect(rendered).toContain("county-enrichment-duval-gap");
     expect(rendered).toContain("gap-requests/*");
     expect(rendered).toContain("runs/*/artifacts/sunbiz/*");
+    expect(rendered).toContain("runs/*/checkpoints/duval-gap/*");
     expect(rendered).toContain("DuvalGapJobDefinitionArn");
+    expect(rendered).toContain("MaxCostCeilingUsd");
+    expect(rendered).toContain("MAX_COST_CEILING_USD");
+    expect(rendered).toContain("RUNTIME_GIT_COMMIT");
+    expect(rendered).toContain("RUNTIME_TREE_DIGEST");
     expect(rendered).not.toContain("county-enrichment-bbb");
     expect(rendered).not.toContain("county-enrichment-permit");
     expect(rendered).not.toContain("county-enrichment-sunbiz");

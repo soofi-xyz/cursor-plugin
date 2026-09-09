@@ -199,7 +199,88 @@ async function* propertyPermitRows({ propertyRowsPath, permitRowsPath }) {
   }
 }
 
-async function loadSunbizDocuments(extractDir) {
+export const PUBLIC_SUNBIZ_FIELDS = Object.freeze([
+  "schemaVersion",
+  "source",
+  "documentNumber",
+  "entityName",
+  "statusCode",
+  "status",
+  "filingTypeCode",
+  "filingType",
+  "filedDate",
+  "lastTransactionDate",
+  "stateCountry",
+  "annualReports",
+  "linkage",
+]);
+export const EXCLUDED_SUNBIZ_FIELDS = Object.freeze([
+  "principalAddress",
+  "mailingAddress",
+  "registeredAgent",
+  "officers",
+  "feiNumber",
+  "rawRecordLength",
+  "matchedAddresses",
+]);
+
+function nullable(value) {
+  return value === undefined ? null : value;
+}
+
+export function sanitizeSunbizEntity(entity, matchMethod) {
+  return {
+    schemaVersion: nullable(entity.schemaVersion),
+    source: nullable(entity.source),
+    documentNumber: entity.documentNumber,
+    entityName: nullable(entity.entityName),
+    statusCode: nullable(entity.statusCode),
+    status: nullable(entity.status),
+    filingTypeCode: nullable(entity.filingTypeCode),
+    filingType: nullable(entity.filingType),
+    filedDate: nullable(entity.filedDate),
+    lastTransactionDate: nullable(entity.lastTransactionDate),
+    stateCountry: nullable(entity.stateCountry),
+    annualReports: Array.isArray(entity.annualReports)
+      ? entity.annualReports.map((report) => ({
+          year: nullable(report?.year),
+          date: nullable(report?.date),
+        }))
+      : [],
+    linkage: {
+      matchMethod,
+    },
+  };
+}
+
+async function loadSunbizLinkIndex(linksPath) {
+  const byPropertyId = new Map();
+  const requiredDocumentNumbers = new Set();
+  let linkCount = 0;
+  for (const link of await readJsonLines(linksPath)) {
+    if (
+      typeof link.property_id !== "string" ||
+      typeof link.document_number !== "string" ||
+      typeof link.match_method !== "string"
+    ) {
+      throw new Error("Sunbiz property link is missing its public linkage contract");
+    }
+    const values = byPropertyId.get(link.property_id) ?? new Map();
+    const existing = values.get(link.document_number);
+    if (existing !== undefined && existing !== link.match_method) {
+      throw new Error(
+        `Sunbiz link ${link.document_number} has conflicting match methods`,
+      );
+    }
+    values.set(link.document_number, link.match_method);
+    byPropertyId.set(link.property_id, values);
+    requiredDocumentNumbers.add(link.document_number);
+    linkCount += 1;
+  }
+  return { byPropertyId, requiredDocumentNumbers, linkCount };
+}
+
+async function loadSunbizDocuments(extractDir, requiredDocumentNumbers) {
   const manifest = JSON.parse(
     await readFile(path.join(extractDir, "manifest.json"), "utf8"),
   );
@@ -221,7 +302,12 @@ async function loadSunbizDocuments(extractDir) {
       if (typeof documentNumber !== "string" || documentNumber.length === 0) {
         throw new Error("Sunbiz record is missing entity.documentNumber");
       }
-      documents.set(documentNumber, record.entity);
+      if (requiredDocumentNumbers.has(documentNumber)) {
+        if (documents.has(documentNumber)) {
+          throw new Error(`Duplicate Sunbiz document ${documentNumber}`);
+        }
+        documents.set(documentNumber, record.entity);
+      }
       rows += 1;
     }
   }
@@ -230,30 +316,25 @@ async function loadSunbizDocuments(extractDir) {
       `Sunbiz rows ${rows} do not match manifest ${manifest.matchedRecordCount}`,
     );
   }
-  return documents;
+  for (const documentNumber of requiredDocumentNumbers) {
+    if (!documents.has(documentNumber)) {
+      throw new Error(`Sunbiz link references missing document ${documentNumber}`);
+    }
+  }
+  return { documents, sourceCount: rows };
 }
 
-async function loadSunbizLinks(linksPath, documents) {
-  const byPropertyId = new Map();
-  for (const link of await readJsonLines(linksPath)) {
-    const document = documents.get(link.document_number);
-    if (document === undefined) {
-      throw new Error(
-        `Sunbiz link references missing document ${link.document_number}`,
-      );
-    }
-    const values = byPropertyId.get(link.property_id) ?? new Map();
-    values.set(link.document_number, document);
-    byPropertyId.set(link.property_id, values);
-  }
+function attachSunbizDocuments(linkIndex, documents) {
   return new Map(
-    [...byPropertyId].map(([propertyId, values]) => [
+    [...linkIndex.byPropertyId].map(([propertyId, values]) => [
       propertyId,
       [...values.entries()]
         .sort(([left], [right]) =>
           left < right ? -1 : left > right ? 1 : 0,
         )
-        .map(([, value]) => value),
+        .map(([documentNumber, matchMethod]) =>
+          sanitizeSunbizEntity(documents.get(documentNumber), matchMethod),
+        ),
     ]),
   );
 }
@@ -365,6 +446,7 @@ export async function buildPropertyConsolidation({
   expectedPropertyCount = null,
   expectedPermitCount = null,
   shardSize = 5_000,
+  onProgress = async () => {},
 }) {
   if (county !== "duval") {
     throw new Error("The current gap profile is locked to county=duval");
@@ -389,10 +471,14 @@ export async function buildPropertyConsolidation({
       `Permit input count ${permits.inputCount} does not match ${expectedPermitCount}`,
     );
   }
-  const sunbizDocuments = await loadSunbizDocuments(sunbizExtractDir);
-  const sunbizByPropertyId = await loadSunbizLinks(
-    sunbizLinksPath,
-    sunbizDocuments,
+  const sunbizLinks = await loadSunbizLinkIndex(sunbizLinksPath);
+  const sunbizSource = await loadSunbizDocuments(
+    sunbizExtractDir,
+    sunbizLinks.requiredDocumentNumbers,
+  );
+  const sunbizByPropertyId = attachSunbizDocuments(
+    sunbizLinks,
+    sunbizSource.documents,
   );
   const propertiesDir = path.join(outputDir, "properties");
   const shardsDir = path.join(outputDir, "shards");
@@ -436,6 +522,14 @@ export async function buildPropertyConsolidation({
         cid: receipt.cid,
       });
       totalBytes += receipt.bytes;
+      if (entries.length % 10_000 === 0) {
+        await onProgress({
+          stage: "consolidation",
+          completedProperties: entries.length,
+          expectedProperties: expectedPropertyCount,
+          totalBytes,
+        });
+      }
     }
   } finally {
     await rm(path.join(outputDir, ".work"), { recursive: true, force: true });
@@ -499,8 +593,12 @@ export async function buildPropertyConsolidation({
     reconciliation: {
       permitInputCount: permits.inputCount,
       linkedPermitCount: permits.linkedCount,
-      sunbizSourceCount: sunbizDocuments.size,
+      sunbizSourceCount: sunbizSource.sourceCount,
+      sunbizLinkedDocumentCount: sunbizSource.documents.size,
+      sunbizLinkCount: sunbizLinks.linkCount,
       sunbizLinkedPropertyCount: sunbizByPropertyId.size,
+      sunbizPublicFields: PUBLIC_SUNBIZ_FIELDS,
+      sunbizExcludedFields: EXCLUDED_SUNBIZ_FIELDS,
       ownerOccupiedSourceRows: derived.ownerOccupied.size,
       hoaSourceRows: derived.hoa.size,
       avmSourceFolios: derived.avm.size,

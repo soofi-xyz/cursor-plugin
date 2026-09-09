@@ -6,6 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
+import { DuckDBInstance } from "@duckdb/node-api";
 
 import { toParquetRecord } from "../core/query-table.mjs";
 import {
@@ -144,6 +145,58 @@ function incrementSplit(split, value) {
   split[key] = (split[key] ?? 0) + 1;
 }
 
+function sqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function sqlIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+async function assertPreservedColumns({
+  inputParquet,
+  outputParquet,
+  schemaFields,
+}) {
+  const changedFields = new Set([
+    "property_cid",
+    "owner_occupied",
+    "hoa_flag",
+    "avm_value",
+  ]);
+  const preserved = Object.keys(schemaFields).filter(
+    (field) => !changedFields.has(field),
+  );
+  const comparisons = preserved.map(
+    (field) =>
+      `input.${sqlIdentifier(field)} IS DISTINCT FROM output.${sqlIdentifier(field)}`,
+  );
+  const instance = await DuckDBInstance.create(":memory:");
+  const connection = await instance.connect();
+  try {
+    const result = await connection.runAndReadAll(
+      `SELECT count(*) AS mismatch_count
+       FROM read_parquet(${sqlString(inputParquet)}) AS input
+       FULL OUTER JOIN read_parquet(${sqlString(outputParquet)}) AS output
+         ON input.property_id = output.property_id
+       WHERE input.property_id IS NULL
+          OR output.property_id IS NULL
+          OR ${comparisons.join("\n          OR ")}`,
+    );
+    const mismatchCount = Number(
+      result.getRowObjectsJson()[0]?.mismatch_count ?? 0,
+    );
+    if (mismatchCount !== 0) {
+      throw new Error(
+        `Gap query-table changed ${mismatchCount} rows outside approved overlays`,
+      );
+    }
+    return preserved.length;
+  } finally {
+    connection.closeSync();
+  }
+}
+
 export async function enrichQueryTableFile({
   county,
   inputParquet,
@@ -155,7 +208,9 @@ export async function enrichQueryTableFile({
   avmPath = null,
   outputManifest,
   expectedRowCount = null,
+  expectedCounts = null,
   frozenAt,
+  onProgress = async () => {},
 }) {
   if (path.resolve(inputParquet) === path.resolve(outputParquet)) {
     throw new Error("Gap enrichment requires a distinct output Parquet");
@@ -176,6 +231,13 @@ export async function enrichQueryTableFile({
   const seenFolios = new Set();
   const ownerOccupiedSplit = {};
   const hoaSplit = {};
+  let inputCidCount = 0;
+  let inputOwnerOccupiedCount = 0;
+  let permitPropertyCount = 0;
+  let linkedPermitCount = 0;
+  let sunbizPropertyCount = 0;
+  let bbbPropertyCount = 0;
+  let bbbWithoutPermitsCount = 0;
   let rowCount = 0;
   let avmCount = 0;
   try {
@@ -192,12 +254,35 @@ export async function enrichQueryTableFile({
       }
       seenProperties.add(propertyId);
       seenFolios.add(folio);
+      if (row.property_cid !== null && row.property_cid !== undefined) {
+        inputCidCount += 1;
+      }
+      if (row.owner_occupied !== null && row.owner_occupied !== undefined) {
+        inputOwnerOccupiedCount += 1;
+      }
       const enriched = enrichQueryTableRow(row, overlays);
+      if (!/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(enriched.property_cid)) {
+        throw new Error(`Invalid property CID for ${folio}`);
+      }
       await writer.appendRow(toParquetRecord(enriched));
       rowCount += 1;
+      if (enriched.has_permits === true) permitPropertyCount += 1;
+      linkedPermitCount += Number(enriched.permit_count ?? 0);
+      if (enriched.has_sunbiz_tenant === true) sunbizPropertyCount += 1;
+      if (enriched.has_bbb_contractor === true) {
+        bbbPropertyCount += 1;
+        if (enriched.has_permits !== true) bbbWithoutPermitsCount += 1;
+      }
       if (enriched.avm_value !== null) avmCount += 1;
       incrementSplit(ownerOccupiedSplit, enriched.owner_occupied);
       incrementSplit(hoaSplit, enriched.hoa_flag);
+      if (rowCount % 50_000 === 0) {
+        await onProgress({
+          stage: "query-table",
+          completedRows: rowCount,
+          expectedRows: expectedRowCount,
+        });
+      }
       row = await cursor.next();
     }
   } finally {
@@ -214,6 +299,36 @@ export async function enrichQueryTableFile({
       `CID count ${overlays.cidByFolio.size} does not match query rows ${rowCount}`,
     );
   }
+  if (inputCidCount !== 0 || inputOwnerOccupiedCount !== 0) {
+    throw new Error(
+      "Gap input is not the frozen empty-CID/empty-owner-occupied snapshot",
+    );
+  }
+  if (expectedCounts !== null) {
+    const observed = {
+      ownerOccupiedSourceCount: overlays.ownerOccupiedByFolio.size,
+      permitPropertyCount,
+      linkedPermitCount,
+      sunbizPropertyCount,
+      bbbPropertyCount,
+      bbbWithoutPermitsCount,
+      ownerOccupiedTrueCount: ownerOccupiedSplit.true ?? 0,
+      ownerOccupiedFalseCount: ownerOccupiedSplit.false ?? 0,
+      ownerOccupiedNullCount: ownerOccupiedSplit.null ?? 0,
+    };
+    for (const [key, expected] of Object.entries(expectedCounts)) {
+      if (observed[key] !== expected) {
+        throw new Error(
+          `Gap query-table ${key} ${observed[key]} does not match ${expected}`,
+        );
+      }
+    }
+  }
+  const preservedColumnCount = await assertPreservedColumns({
+    inputParquet,
+    outputParquet,
+    schemaFields,
+  });
 
   const outputBody = await readFile(outputParquet);
   const blockers = [];
@@ -265,6 +380,14 @@ export async function enrichQueryTableFile({
     cidCount: overlays.cidByFolio.size,
     ownerOccupiedSourceRows: overlays.ownerOccupiedByFolio.size,
     ownerOccupiedSplit,
+    inputCidCount,
+    inputOwnerOccupiedCount,
+    permitPropertyCount,
+    linkedPermitCount,
+    sunbizPropertyCount,
+    bbbPropertyCount,
+    bbbWithoutPermitsCount,
+    preservedColumnCount,
     hoaSourceRows: overlays.hoaByFolio.size,
     hoaSplit,
     avmSourceFolios: overlays.avmByFolio.size,

@@ -11,6 +11,7 @@ import path from "node:path";
 
 import {
   CreateBucketCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
   PutBucketTaggingCommand,
@@ -26,6 +27,10 @@ import {
   hasFilebaseCredentials,
 } from "../core/filebase.mjs";
 import { computeUnixFsCid } from "./canonical-json.mjs";
+import {
+  EXCLUDED_SUNBIZ_FIELDS,
+  PUBLIC_SUNBIZ_FIELDS,
+} from "./property-consolidation.mjs";
 
 export const GAP_APPROVAL_SCHEMA_VERSION =
   "elephant.duval-mcp-gap-publish-approval.v1";
@@ -60,12 +65,53 @@ const gapApprovalSchema = z
         queryTable: integritySchema,
       })
       .strict(),
+    destinations: z
+      .object({
+        propertyDocumentsBucket: z.string().min(1),
+        propertyDocumentsIpnsLabel: z.string().min(1),
+        placesBucket: z.string().min(1),
+        placesIpnsLabel: z.string().min(1),
+        queryTableBucket: z.string().min(1),
+        queryTableIpnsLabel: z.string().min(1),
+      })
+      .strict(),
+    publicationBounds: z
+      .object({
+        uploadConcurrency: z.number().int().min(1).max(16),
+        checkpointEvery: z.number().int().min(100).max(10_000),
+      })
+      .strict(),
+    privacyPolicy: z
+      .object({
+        ownerOccupied: z.string().min(1),
+        sunbizPublicFields: z.array(z.string().min(1)),
+        sunbizExcludedFields: z.array(z.string().min(1)),
+        bbbProfilesPublished: z.literal(false),
+        placesEmailsPublished: z.literal(false),
+        placesPhonesPublished: z.literal(false),
+      })
+      .strict(),
+    createsDedicatedLabels: z.array(z.string().min(1)).length(2),
     humanPiiApproval: z.literal(true),
     approved: z.literal(true),
     approvedBy: z.string().min(1),
     approvedAt: z.string().datetime({ offset: true }),
   })
   .strict();
+
+const OWNER_OCCUPIED_POLICY =
+  "AV_HMSTD > 0 true; = 0 false; blank, unparseable, or unmatched null";
+
+function gapPrivacyPolicy() {
+  return {
+    ownerOccupied: OWNER_OCCUPIED_POLICY,
+    sunbizPublicFields: [...PUBLIC_SUNBIZ_FIELDS],
+    sunbizExcludedFields: [...EXCLUDED_SUNBIZ_FIELDS],
+    bbbProfilesPublished: false,
+    placesEmailsPublished: false,
+    placesPhonesPublished: false,
+  };
+}
 
 async function fileIntegrity(filePath) {
   const body = await readFile(filePath);
@@ -282,6 +328,35 @@ async function uploadCheckedFile(options) {
   return cid;
 }
 
+async function readBackObject({
+  client,
+  bucket,
+  key,
+  expectedBytes,
+  expectedSha256,
+}) {
+  const response = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
+  if (response.Body === undefined) {
+    throw new Error(`Filebase readback returned no body for ${bucket}/${key}`);
+  }
+  const hash = createHash("sha256");
+  let bytes = 0;
+  for await (const chunk of response.Body) {
+    hash.update(chunk);
+    bytes += chunk.length;
+  }
+  const sha256 = hash.digest("hex");
+  if (bytes !== expectedBytes || sha256 !== expectedSha256) {
+    throw new Error(
+      `Filebase readback failed for ${bucket}/${key}: ` +
+        `${bytes}/${sha256} != ${expectedBytes}/${expectedSha256}`,
+    );
+  }
+  return { bucket, key, bytes, sha256 };
+}
+
 function assertApprovalIntegrity(approval, integrity) {
   for (const key of Object.keys(integrity)) {
     if (JSON.stringify(approval.artifacts[key]) !== JSON.stringify(integrity[key])) {
@@ -290,15 +365,42 @@ function assertApprovalIntegrity(approval, integrity) {
   }
 }
 
+export function validateGapApproval(value, plan, profile) {
+  const approval = gapApprovalSchema.parse(value);
+  assertApprovalIntegrity(approval, plan.artifacts);
+  for (const key of [
+    "destinations",
+    "publicationBounds",
+    "privacyPolicy",
+    "createsDedicatedLabels",
+  ]) {
+    if (JSON.stringify(approval[key]) !== JSON.stringify(plan[key])) {
+      throw new Error(`Approval ${key} does not match the publication plan`);
+    }
+  }
+  if (
+    approval.protectedCids.queryTable !==
+      profile.protectedPublications.queryTable.frozenCid ||
+    approval.protectedCids.permitTable !==
+      profile.protectedPublications.permitTable.frozenCid ||
+    approval.protectedCids.coverage !==
+      profile.protectedPublications.coverage.frozenCid
+  ) {
+    throw new Error("Approval protected CIDs do not match the frozen profile");
+  }
+  return approval;
+}
+
 async function uploadPropertyDocuments({
   client,
   bucket,
   propertyOutputDir,
   entries,
   receipt,
-  receiptPath,
+  persistReceipt,
   concurrency = 16,
   checkpointEvery = 10_000,
+  onProgress = async () => {},
 }) {
   let next = 0;
   let completedSinceCheckpoint = 0;
@@ -324,15 +426,20 @@ async function uploadPropertyDocuments({
       if (completedSinceCheckpoint >= checkpointEvery) {
         completedSinceCheckpoint = 0;
         const snapshot = structuredClone(receipt);
-        checkpointWrites = checkpointWrites.then(() =>
-          atomicJson(receiptPath, snapshot),
-        );
+        checkpointWrites = checkpointWrites.then(async () => {
+          await persistReceipt(snapshot);
+          await onProgress({
+            stage: "filebase-property-upload",
+            completedObjects: Object.keys(snapshot.uploads).length,
+            totalObjects: entries.length,
+          });
+        });
       }
     }
   });
   await Promise.all(workers);
   await checkpointWrites;
-  await atomicJson(receiptPath, receipt);
+  await persistReceipt(receipt);
 }
 
 export async function publishDuvalGapArtifacts({
@@ -343,6 +450,11 @@ export async function publishDuvalGapArtifacts({
   approvalPath = null,
   receiptPath,
   dryRun = true,
+  checkpointStore = null,
+  checkpointIdentity = null,
+  uploadConcurrency = 8,
+  checkpointEvery = 10_000,
+  onProgress = async () => {},
   env = process.env,
 }) {
   const paths = {
@@ -368,6 +480,16 @@ export async function publishDuvalGapArtifacts({
     destinations: profile.publication,
     protectedPublications: profile.protectedPublications,
     artifacts: integrity,
+    checkpointIdentity,
+    publicationBounds: {
+      uploadConcurrency,
+      checkpointEvery,
+    },
+    privacyPolicy: gapPrivacyPolicy(),
+    createsDedicatedLabels: [
+      profile.publication.propertyDocumentsIpnsLabel,
+      profile.publication.placesIpnsLabel,
+    ],
     forbiddenOperations: [
       "appraisal ingest",
       "permit ingest",
@@ -381,20 +503,11 @@ export async function publishDuvalGapArtifacts({
   if (approvalPath === null) {
     throw new Error("Live Duval gap publication requires exact-byte approval");
   }
-  const approval = gapApprovalSchema.parse(
+  const approval = validateGapApproval(
     JSON.parse(await readFile(approvalPath, "utf8")),
+    plan,
+    profile,
   );
-  assertApprovalIntegrity(approval, integrity);
-  if (
-    approval.protectedCids.queryTable !==
-      profile.protectedPublications.queryTable.frozenCid ||
-    approval.protectedCids.permitTable !==
-      profile.protectedPublications.permitTable.frozenCid ||
-    approval.protectedCids.coverage !==
-      profile.protectedPublications.coverage.frozenCid
-  ) {
-    throw new Error("Approval protected CIDs do not match the frozen profile");
-  }
   fillDerivedFilebaseToken(env);
   if (!hasFilebaseCredentials(env)) {
     throw new Error("Filebase credentials are missing");
@@ -428,13 +541,34 @@ export async function publishDuvalGapArtifacts({
     approvedBy: approval.approvedBy,
     approvedAt: approval.approvedAt,
     artifacts: integrity,
+    checkpointIdentity,
     uploads: {},
     names: {},
   };
+  const persistReceipt = async (value) => {
+    const snapshot = structuredClone(value);
+    snapshot.checkpoint = {
+      uploadCount: Object.keys(snapshot.uploads ?? {}).length,
+      savedAt: new Date().toISOString(),
+    };
+    await atomicJson(receiptPath, snapshot);
+    if (checkpointStore?.save) await checkpointStore.save(snapshot);
+  };
   try {
-    receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    const remoteReceipt = checkpointStore?.load
+      ? await checkpointStore.load()
+      : null;
+    receipt =
+      remoteReceipt ??
+      JSON.parse(await readFile(receiptPath, "utf8"));
     if (JSON.stringify(receipt.artifacts) !== JSON.stringify(integrity)) {
       throw new Error("Existing publication receipt is for different bytes");
+    }
+    if (
+      JSON.stringify(receipt.checkpointIdentity ?? null) !==
+      JSON.stringify(checkpointIdentity)
+    ) {
+      throw new Error("Existing publication receipt has different provenance");
     }
     if (
       receipt.uploads === null ||
@@ -447,7 +581,7 @@ export async function publishDuvalGapArtifacts({
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
       throw error;
     }
-    await atomicJson(receiptPath, receipt);
+    await persistReceipt(receipt);
   }
 
   const propertyManifest = JSON.parse(
@@ -459,7 +593,10 @@ export async function publishDuvalGapArtifacts({
     propertyOutputDir,
     entries: propertyManifest.entries ?? [],
     receipt,
-    receiptPath,
+    persistReceipt,
+    concurrency: uploadConcurrency,
+    checkpointEvery,
+    onProgress,
   });
   const index = JSON.parse(await readFile(paths.propertyIndex, "utf8"));
   for (const shard of index.shards ?? []) {
@@ -546,7 +683,71 @@ export async function publishDuvalGapArtifacts({
     });
     receipt.uploads[queryKey] = integrity.queryTable.cid;
   }
-  await atomicJson(receiptPath, receipt);
+  await persistReceipt(receipt);
+
+  const propertySamples = [
+    propertyManifest.entries?.[0],
+    propertyManifest.entries?.[
+      Math.floor((propertyManifest.entries?.length ?? 1) / 2)
+    ],
+    propertyManifest.entries?.at(-1),
+  ].filter(
+    (entry, index, values) =>
+      entry !== undefined &&
+      values.findIndex((candidate) => candidate?.filePath === entry.filePath) ===
+        index,
+  );
+  const readbackTargets = [
+    {
+      bucket: profile.publication.propertyDocumentsBucket,
+      key: "index.json",
+      expectedBytes: integrity.propertyIndex.bytes,
+      expectedSha256: integrity.propertyIndex.sha256,
+    },
+    {
+      bucket: profile.publication.propertyDocumentsBucket,
+      key: "manifest.json",
+      expectedBytes: integrity.propertyManifest.bytes,
+      expectedSha256: integrity.propertyManifest.sha256,
+    },
+    ...propertySamples.map((entry) => ({
+      bucket: profile.publication.propertyDocumentsBucket,
+      key: entry.filePath,
+      expectedBytes: entry.fileSizeBytes,
+      expectedSha256: entry.sha256,
+    })),
+    {
+      bucket: profile.publication.placesBucket,
+      key: `${profile.countyKey}/places-table.parquet`,
+      expectedBytes: integrity.placesTable.bytes,
+      expectedSha256: integrity.placesTable.sha256,
+    },
+    {
+      bucket: profile.publication.placesBucket,
+      key: `${profile.countyKey}/index.json`,
+      expectedBytes: integrity.placesIndex.bytes,
+      expectedSha256: integrity.placesIndex.sha256,
+    },
+    {
+      bucket: profile.publication.placesBucket,
+      key: "NOTICE.txt",
+      expectedBytes: integrity.placesNotice.bytes,
+      expectedSha256: integrity.placesNotice.sha256,
+    },
+    {
+      bucket: profile.publication.queryTableBucket,
+      key: queryKey,
+      expectedBytes: integrity.queryTable.bytes,
+      expectedSha256: integrity.queryTable.sha256,
+    },
+  ];
+  receipt.remoteReadback = [];
+  for (const target of readbackTargets) {
+    receipt.remoteReadback.push(
+      await readBackObject({ client, ...target }),
+    );
+  }
+  await persistReceipt(receipt);
 
   const namesCurrent = await listNames(env.FILEBASE_API_TOKEN);
   assertProtectedNames(namesCurrent, profile, integrity.queryTable.cid);
@@ -585,6 +786,6 @@ export async function publishDuvalGapArtifacts({
   assertProtectedNames(namesAfter, profile, integrity.queryTable.cid);
   receipt.status = "complete";
   receipt.completedAt = new Date().toISOString();
-  await atomicJson(receiptPath, receipt);
+  await persistReceipt(receipt);
   return receipt;
 }

@@ -9,10 +9,13 @@ import {
   parseGapBatchRequest,
   type GapBatchRequest,
 } from "./gap-contracts.js";
+import { assertGapCostAllowed } from "./gap-cost-plan.js";
 import {
   downloadVerifiedObject,
   getVerifiedJson,
+  getVerifiedJsonIfExists,
   putImmutableJson,
+  putVersionedCheckpointJson,
   uploadDirectoryImmutable,
 } from "./s3-integrity.js";
 
@@ -66,6 +69,16 @@ function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable ${name}`);
   return value;
+}
+
+function emit(event: string, details: Record<string, unknown> = {}): void {
+  process.stdout.write(
+    `${JSON.stringify({
+      event,
+      observedAt: new Date().toISOString(),
+      ...details,
+    })}\n`,
+  );
 }
 
 async function downloadInputs(
@@ -169,6 +182,25 @@ async function main(): Promise<void> {
   if (digest !== expectedDigest || !requestKey.includes(digest)) {
     throw new Error("Gap request key or digest is not content-addressed");
   }
+  if (
+    request.provenance.gitCommit !== requiredEnvironment("RUNTIME_GIT_COMMIT") ||
+    request.provenance.treeDigest !==
+      requiredEnvironment("RUNTIME_TREE_DIGEST")
+  ) {
+    throw new Error("Gap request provenance does not match the runtime image");
+  }
+  const cost = assertGapCostAllowed(
+    request,
+    Number(requiredEnvironment("MAX_COST_CEILING_USD")),
+  );
+  emit("duval_gap_started", {
+    runId: request.runId,
+    requestDigest: digest,
+    livePublish:
+      request.inputs.publishApproval !== null &&
+      process.env.GAP_LIVE_PUBLISH === "true",
+    estimatedCostUsd: cost.estimatedUsd,
+  });
 
   const workDir = "/work/duval-gap";
   const inputDir = path.join(workDir, "inputs");
@@ -179,11 +211,13 @@ async function main(): Promise<void> {
     mkdir(outputDir, { recursive: true }),
   ]);
   const inputs = await downloadInputs(bucket, request, inputDir);
+  emit("duval_gap_inputs_verified", { runId: request.runId });
   const sunbiz = await materializeSunbizHandoff(
     bucket,
     inputs.sunbizHandoff,
     inputDir,
   );
+  emit("duval_gap_sunbiz_materialized", { runId: request.runId });
 
   const [
     consolidationModule,
@@ -203,10 +237,24 @@ async function main(): Promise<void> {
     ),
   ]);
   const profile = profileModule.duvalGapProfile;
+  const protectedProfileCids = {
+    queryTable: profile.protectedPublications.queryTable.frozenCid,
+    permitTable: profile.protectedPublications.permitTable.frozenCid,
+    coverage: profile.protectedPublications.coverage.frozenCid,
+  };
+  if (
+    JSON.stringify(protectedProfileCids) !==
+    JSON.stringify(request.protectedCids)
+  ) {
+    throw new Error("Gap request protected CIDs do not match runtime profile");
+  }
   const propertyOutput = path.join(outputDir, "property");
   const placesOutput = path.join(outputDir, "places");
   const queryOutput = path.join(outputDir, "query-table.parquet");
   const queryManifest = path.join(outputDir, "query-table-manifest.json");
+  const publicationCheckpointKey =
+    `runs/${request.runId}/checkpoints/duval-gap/publication.json`;
+  let lastPublicationCheckpoint: Record<string, unknown> | null = null;
 
   const consolidation = await consolidationModule.buildPropertyConsolidation({
     county: request.county,
@@ -221,12 +269,27 @@ async function main(): Promise<void> {
     frozenAt: request.frozenAt,
     expectedPropertyCount: request.expected.propertyCount,
     expectedPermitCount: request.expected.permitCount,
+    onProgress: (details: Record<string, unknown>) =>
+      emit("duval_gap_progress", { runId: request.runId, ...details }),
   });
-  if (
-    consolidation.manifest.reconciliation.sunbizLinkedPropertyCount !==
-    request.expected.sunbizLinkedPropertyCount
-  ) {
-    throw new Error("Sunbiz linked-property reconciliation failed");
+  emit("duval_gap_consolidation_complete", {
+    runId: request.runId,
+    propertyCount: consolidation.manifest.propertyCount,
+  });
+  const consolidationExpected = {
+    linkedPermitCount: request.expected.linkedPermitCount,
+    sunbizSourceCount: request.expected.sunbizSourceCount,
+    sunbizLinkCount: request.expected.sunbizLinkCount,
+    sunbizLinkedPropertyCount: request.expected.sunbizLinkedPropertyCount,
+    ownerOccupiedSourceRows: request.expected.ownerOccupiedSourceCount,
+  };
+  for (const [key, expected] of Object.entries(consolidationExpected)) {
+    const observed = consolidation.manifest.reconciliation[key];
+    if (observed !== expected) {
+      throw new Error(
+        `Consolidation ${key} ${observed} does not match ${expected}`,
+      );
+    }
   }
 
   const places = await placesModule.extractContactFreeOverturePlaces({
@@ -237,6 +300,10 @@ async function main(): Promise<void> {
     outputDir: placesOutput,
     cacheDir: path.join(workDir, "cache"),
     frozenAt: request.frozenAt,
+  });
+  emit("duval_gap_places_complete", {
+    runId: request.runId,
+    rowCount: places.rowCount,
   });
   const query = await queryTableModule.enrichQueryTableFile({
     county: request.county,
@@ -251,7 +318,25 @@ async function main(): Promise<void> {
     avmPath: inputs.avmFeed,
     outputManifest: queryManifest,
     expectedRowCount: request.expected.propertyCount,
+    expectedCounts: {
+      ownerOccupiedSourceCount: request.expected.ownerOccupiedSourceCount,
+      permitPropertyCount: request.expected.permitPropertyCount,
+      linkedPermitCount: request.expected.linkedPermitCount,
+      sunbizPropertyCount: request.expected.sunbizLinkedPropertyCount,
+      bbbPropertyCount: request.expected.bbbPropertyCount,
+      bbbWithoutPermitsCount: 0,
+      ownerOccupiedTrueCount: request.expected.ownerOccupiedTrueCount,
+      ownerOccupiedFalseCount: request.expected.ownerOccupiedFalseCount,
+      ownerOccupiedNullCount: request.expected.ownerOccupiedNullCount,
+    },
     frozenAt: request.frozenAt,
+    onProgress: (details: Record<string, unknown>) =>
+      emit("duval_gap_progress", { runId: request.runId, ...details }),
+  });
+  emit("duval_gap_query_table_complete", {
+    runId: request.runId,
+    rowCount: query.rowCount,
+    cidCount: query.cidCount,
   });
   const publication = await publicationModule.publishDuvalGapArtifacts({
     profile,
@@ -263,7 +348,34 @@ async function main(): Promise<void> {
     dryRun:
       inputs.publishApproval === null ||
       process.env.GAP_LIVE_PUBLISH !== "true",
+    checkpointIdentity: {
+      requestDigest: digest,
+      gitCommit: request.provenance.gitCommit,
+      treeDigest: request.provenance.treeDigest,
+    },
+    checkpointStore: {
+      load: () =>
+        getVerifiedJsonIfExists(s3, bucket, publicationCheckpointKey),
+      save: async (value: unknown) => {
+        lastPublicationCheckpoint = await putVersionedCheckpointJson(
+          s3,
+          bucket,
+          publicationCheckpointKey,
+          value,
+        );
+      },
+    },
+    uploadConcurrency: request.publication.filebaseConcurrency,
+    checkpointEvery: request.publication.checkpointEvery,
+    onProgress: (details: Record<string, unknown>) =>
+      emit("duval_gap_progress", { runId: request.runId, ...details }),
     env: process.env,
+  });
+  emit("duval_gap_publication_phase_complete", {
+    runId: request.runId,
+    status:
+      publication.status ??
+      (publication.dryRun ? "awaiting-exact-byte-approval" : "unknown"),
   });
   const consolidationSummary = {
     propertyCount: consolidation.manifest.propertyCount,
@@ -284,6 +396,7 @@ async function main(): Promise<void> {
     names: publication.names,
     placesDirectoryCid: publication.placesDirectoryCid,
     placesTableUrl: publication.placesTableUrl,
+    checkpoint: lastPublicationCheckpoint,
     completedAt: publication.completedAt,
   };
   await writeFile(
@@ -291,6 +404,7 @@ async function main(): Promise<void> {
     `${JSON.stringify(
       {
         requestDigest: digest,
+        cost,
         consolidation: consolidationSummary,
         places,
         query,
@@ -334,6 +448,10 @@ async function main(): Promise<void> {
       },
     },
   );
+  emit("duval_gap_handoff_complete", {
+    runId: request.runId,
+    requestDigest: digest,
+  });
 }
 
 main().catch((error) => {

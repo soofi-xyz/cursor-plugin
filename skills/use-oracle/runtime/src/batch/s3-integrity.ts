@@ -125,6 +125,44 @@ export async function putImmutableJson(
   return { key, bytes: body.length, sha256 };
 }
 
+export async function putVersionedCheckpointJson(
+  client: S3Client,
+  bucket: string,
+  key: string,
+  value: unknown,
+): Promise<{
+  key: string;
+  bytes: number;
+  sha256: string;
+  versionId: string;
+}> {
+  const body = Buffer.from(canonicalJson(value));
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  const response = await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: "application/json",
+      ContentLength: body.length,
+      ChecksumSHA256: base64Sha256(sha256),
+      Metadata: { sha256 },
+    }),
+  );
+  if (!response.VersionId) {
+    throw new Error(
+      `Checkpoint bucket must be versioned: s3://${bucket}/${key}`,
+    );
+  }
+  await getVerifiedJson(client, bucket, key, sha256);
+  return {
+    key,
+    bytes: body.length,
+    sha256,
+    versionId: response.VersionId,
+  };
+}
+
 export async function putImmutableFile(
   client: S3Client,
   bucket: string,

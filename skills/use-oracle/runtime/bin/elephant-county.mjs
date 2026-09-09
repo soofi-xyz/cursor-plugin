@@ -1080,6 +1080,21 @@ async function runGapQueryTableCommand(argv) {
       "expected-properties",
       duvalGapProfile.expectedPropertyCount,
     ),
+    expectedCounts: {
+      ownerOccupiedSourceCount:
+        duvalGapProfile.expectedOwnerOccupiedSourceCount,
+      permitPropertyCount: duvalGapProfile.expectedPermitPropertyCount,
+      linkedPermitCount: duvalGapProfile.expectedLinkedPermitCount,
+      sunbizPropertyCount: duvalGapProfile.expectedSunbizPropertyCount,
+      bbbPropertyCount: duvalGapProfile.expectedBbbPropertyCount,
+      bbbWithoutPermitsCount: 0,
+      ownerOccupiedTrueCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.true,
+      ownerOccupiedFalseCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.false,
+      ownerOccupiedNullCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.null,
+    },
     frozenAt: requireStringFlag(flags, "frozen-at"),
   });
   console.log(JSON.stringify({ event: "gap_query_table_complete", ...result }, null, 2));

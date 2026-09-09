@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   getVerifiedJson,
   putImmutableJson,
+  putVersionedCheckpointJson,
 } from "../src/batch/s3-integrity.js";
 
 interface StoredObject {
@@ -22,7 +23,7 @@ function memoryS3(): S3Client {
     send: async (command: unknown) => {
       if (command instanceof PutObjectCommand) {
         const key = `${command.input.Bucket}/${command.input.Key}`;
-        if (objects.has(key)) {
+        if (objects.has(key) && command.input.IfNoneMatch === "*") {
           const error = new Error("precondition");
           Object.assign(error, { $metadata: { httpStatusCode: 412 } });
           throw error;
@@ -32,7 +33,9 @@ function memoryS3(): S3Client {
           body,
           metadata: command.input.Metadata ?? {},
         });
-        return {};
+        return command.input.IfNoneMatch === "*"
+          ? {}
+          : { VersionId: `version-${objects.size}` };
       }
       if (command instanceof GetObjectCommand) {
         const value = objects.get(
@@ -86,5 +89,31 @@ describe("immutable S3 JSON integrity", () => {
         receipt.sha256,
       ),
     ).resolves.toEqual({ first: 1, second: 2 });
+  });
+
+  it("persists a versioned checkpoint and restores the latest verified value", async () => {
+    const client = memoryS3();
+    const first = await putVersionedCheckpointJson(
+      client,
+      "bucket",
+      "runs/run/checkpoints/publication.json",
+      { uploadCount: 10 },
+    );
+    const second = await putVersionedCheckpointJson(
+      client,
+      "bucket",
+      "runs/run/checkpoints/publication.json",
+      { uploadCount: 20 },
+    );
+    expect(first.versionId).toMatch(/^version-/);
+    expect(second.sha256).not.toBe(first.sha256);
+    await expect(
+      getVerifiedJson(
+        client,
+        "bucket",
+        "runs/run/checkpoints/publication.json",
+        second.sha256,
+      ),
+    ).resolves.toEqual({ uploadCount: 20 });
   });
 });

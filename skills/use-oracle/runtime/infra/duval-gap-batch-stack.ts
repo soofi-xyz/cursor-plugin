@@ -27,6 +27,20 @@ export class DuvalGapBatchStack extends Stack {
     const jobQueueArn = this.requiredContext("jobQueueArn");
     const projectName =
       this.node.tryGetContext("projectName") ?? "duval-mcp-gap-close";
+    const gitCommit = this.requiredContext("gitCommit");
+    const treeDigest = this.requiredContext("treeDigest");
+    if (!/^[a-f0-9]{40}$/.test(gitCommit)) {
+      throw new Error("gitCommit must be a full lowercase Git SHA");
+    }
+    if (!/^[a-f0-9]{64}$/.test(treeDigest)) {
+      throw new Error("treeDigest must be a lowercase SHA-256");
+    }
+    const maxCostCeilingUsd = Number(
+      this.node.tryGetContext("maxCostCeilingUsd") ?? 15,
+    );
+    if (!Number.isFinite(maxCostCeilingUsd) || maxCostCeilingUsd <= 0) {
+      throw new Error("maxCostCeilingUsd must be a positive finite number");
+    }
     Tags.of(this).add("project_name", projectName);
 
     const artifactBucket = s3.Bucket.fromBucketName(
@@ -65,11 +79,13 @@ export class DuvalGapBatchStack extends Stack {
     artifactBucket.grantRead(jobRole, "inputs/*");
     artifactBucket.grantRead(jobRole, "runs/*/handoffs/sunbiz.json");
     artifactBucket.grantRead(jobRole, "runs/*/artifacts/sunbiz/*");
+    artifactBucket.grantRead(jobRole, "runs/*/checkpoints/duval-gap/*");
     jobRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ["s3:GetObject", "s3:PutObject"],
         resources: [
           artifactBucket.arnForObjects("runs/*/artifacts/duval-gap/*"),
+          artifactBucket.arnForObjects("runs/*/checkpoints/duval-gap/*"),
           artifactBucket.arnForObjects(
             "runs/*/handoffs/duval-gap-*.json",
           ),
@@ -106,6 +122,9 @@ export class DuvalGapBatchStack extends Stack {
         environment: {
           HOME: "/work/home",
           TMPDIR: "/work/tmp",
+          MAX_COST_CEILING_USD: String(maxCostCeilingUsd),
+          RUNTIME_GIT_COMMIT: gitCommit,
+          RUNTIME_TREE_DIGEST: treeDigest,
         },
         secrets:
           filebaseSecret === null
@@ -133,7 +152,7 @@ export class DuvalGapBatchStack extends Stack {
         jobDefinitionName: "county-enrichment-duval-gap",
         container,
         timeout: Duration.hours(12),
-        retryAttempts: 1,
+        retryAttempts: 2,
         propagateTags: true,
       },
     );
@@ -177,6 +196,9 @@ export class DuvalGapBatchStack extends Stack {
     });
     new CfnOutput(this, "BatchLogGroupName", {
       value: logGroup.logGroupName,
+    });
+    new CfnOutput(this, "MaxCostCeilingUsd", {
+      value: String(maxCostCeilingUsd),
     });
   }
 

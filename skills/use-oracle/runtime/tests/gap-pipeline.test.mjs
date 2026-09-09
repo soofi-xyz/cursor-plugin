@@ -12,6 +12,7 @@ import { writeQueryTableParquet } from "../src/core/query-table.mjs";
 import {
   assertProtectedNames,
   publishDuvalGapArtifacts,
+  validateGapApproval,
 } from "../src/gaps/filebase-publication.mjs";
 import { buildPropertyConsolidation } from "../src/gaps/property-consolidation.mjs";
 import { enrichQueryTableFile } from "../src/gaps/query-table-enrichment.mjs";
@@ -229,6 +230,13 @@ describe("Duval gap consolidation and CID fill", () => {
     );
     expect(document.permits).toHaveLength(1);
     expect(document.sunbizTenants[0].entityName).toBe("EXAMPLE LLC");
+    expect(document.sunbizTenants[0].linkage.matchMethod).toBe(
+      "unique_property_exact_normalized_principal_address_zip",
+    );
+    expect(document.sunbizTenants[0]).not.toHaveProperty("principalAddress");
+    expect(document.sunbizTenants[0]).not.toHaveProperty("parties");
+    expect(document.sunbizTenants[0]).not.toHaveProperty("officers");
+    expect(document.sunbizTenants[0]).not.toHaveProperty("registeredAgent");
     expect(document.property.ownerOccupied).toBe(true);
     expect(document.bbbProfiles).toEqual([]);
     expect(first.manifest.reconciliation.sunbizLinkedPropertyCount).toBe(1);
@@ -280,13 +288,30 @@ describe("Duval gap consolidation and CID fill", () => {
       ownerOccupiedPath: data.ownerPath,
       outputManifest: queryManifest,
       expectedRowCount: 1,
+      expectedCounts: {
+        ownerOccupiedSourceCount: 1,
+        permitPropertyCount: 1,
+        linkedPermitCount: 1,
+        sunbizPropertyCount: 1,
+        bbbPropertyCount: 0,
+        bbbWithoutPermitsCount: 0,
+        ownerOccupiedTrueCount: 1,
+        ownerOccupiedFalseCount: 0,
+        ownerOccupiedNullCount: 0,
+      },
       frozenAt: "2026-09-08T04:45:00Z",
     });
     const row = await readSingleParquet(queryOutput);
     expect(row.property_cid).toMatch(/^Qm/);
     expect(row.owner_occupied).toBe(true);
+    expect(row.market_value).toBe(250_000);
+    expect(row.has_permits).toBe(true);
+    expect(Number(row.permit_count)).toBe(1);
+    expect(row.has_sunbiz_tenant).toBe(true);
+    expect(row.has_bbb_contractor).toBe(false);
     expect(row.hoa_flag).toBeNull();
     expect(row.avm_value).toBeNull();
+    expect(manifest.preservedColumnCount).toBeGreaterThan(20);
     expect(manifest.blockers.map((blocker) => blocker.field)).toEqual([
       "hoa_flag",
       "avm_value",
@@ -327,5 +352,48 @@ describe("Duval gap consolidation and CID fill", () => {
     expect(plan.artifacts.placesIndex.cid).toMatch(/^Qm/);
     expect(plan.artifacts.placesNotice.cid).toMatch(/^Qm/);
     expect(plan.forbiddenOperations).toContain("BBB submission");
+    expect(plan.privacyPolicy.bbbProfilesPublished).toBe(false);
+    expect(plan.privacyPolicy.sunbizExcludedFields).toContain("officers");
+    expect(plan.createsDedicatedLabels).toEqual([
+      "oracle-open-data-duval",
+      "oracle-open-data-duval-places",
+    ]);
+    const approval = {
+      schemaVersion: "elephant.duval-mcp-gap-publish-approval.v1",
+      action: "publish-duval-mcp-gap-artifacts",
+      county: "duval",
+      protectedCids: {
+        queryTable:
+          duvalGapProfile.protectedPublications.queryTable.frozenCid,
+        permitTable:
+          duvalGapProfile.protectedPublications.permitTable.frozenCid,
+        coverage: duvalGapProfile.protectedPublications.coverage.frozenCid,
+      },
+      artifacts: plan.artifacts,
+      destinations: plan.destinations,
+      publicationBounds: plan.publicationBounds,
+      privacyPolicy: plan.privacyPolicy,
+      createsDedicatedLabels: plan.createsDedicatedLabels,
+      humanPiiApproval: true,
+      approved: true,
+      approvedBy: "test approver",
+      approvedAt: "2026-09-09T12:00:00Z",
+    };
+    expect(
+      validateGapApproval(approval, plan, duvalGapProfile).approved,
+    ).toBe(true);
+    expect(() =>
+      validateGapApproval(
+        {
+          ...approval,
+          privacyPolicy: {
+            ...approval.privacyPolicy,
+            placesPhonesPublished: true,
+          },
+        },
+        plan,
+        duvalGapProfile,
+      ),
+    ).toThrow();
   });
 });

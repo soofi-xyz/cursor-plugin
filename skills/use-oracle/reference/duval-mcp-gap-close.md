@@ -22,6 +22,12 @@ Use only:
 Never create a new label with an old network key. Never update
 `oracle-permit-table-duval` or `oracle-dataset-coverage-duval`.
 
+The frozen input query must be the corrected permit-mediated BBB artifact:
+CID `QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS`, SHA-256
+`3f43ef083328d193ba55bee7ec4279f6a6ba371d8b6279ac6af01864419aa56a`.
+The output must preserve 171,134 BBB properties, 336,451 permit properties,
+42,184 Sunbiz properties, and zero BBB flags without permits.
+
 ## Preflight
 
 ```bash
@@ -110,7 +116,8 @@ durable blockers and leave both columns null.
 ## AWS batch
 
 `gap-batch` accepts a separate strict request contract. It rejects every BBB
-field or stage. Point `inputs.sunbizHandoff` at the existing complete Sunbiz
+harvest or linkage stage while requiring the existing BBB flags to survive the
+query-table rewrite. Point `inputs.sunbizHandoff` at the existing complete Sunbiz
 handoff; the worker downloads its checksum-addressed extract chunks and links
 without rerunning Sunbiz.
 
@@ -122,6 +129,11 @@ npm run gap:submit --prefix skills/use-oracle/runtime -- \
   --request <gap-request.json> \
   --stack <deployed-stack-name>
 ```
+
+The request and deployed stack both enforce a conservative cost ceiling. The
+plan includes the worst-case two-attempt Fargate estimate; obtain operator
+approval for the ceiling before submission. Filebase subscription and storage
+charges are reported separately because they are not AWS compute cost.
 
 Deploy the CDK stack before submitting a new request. Supply
 `filebaseSecretArn` only when the secret JSON contains
@@ -150,7 +162,11 @@ node skills/use-oracle/runtime/bin/elephant-county.mjs \
 A human must approve the exact property index, property manifest, places
 Parquet/index/notice, and final query-table byte hashes using
 `elephant.duval-mcp-gap-publish-approval.v1`. Only then rerun with
-`--approve <approval.json>`. Publication is checkpointed. New dedicated
+`--approve <approval.json>`. The approval also binds the destination names,
+upload bounds, new-label creation, owner-occupied rule, contact-free Places
+policy, and the exact Sunbiz public-field allowlist. Publication checkpoints
+are versioned in the private AWS artifact bucket and resume across Batch
+attempts. New dedicated
 labels may be created once; any later attempt to repoint them fails closed.
 The places label targets the generated bucket-directory CID so the catalog URL
 can resolve `<ipns>/duval/places-table.parquet` with sibling `index.json` and
@@ -167,11 +183,13 @@ After catalog/MCP deployment:
 - Appraisal remains `403885`; permits remain `3415527`.
 - Sunbiz-linked properties remain `42184`, unless a reviewed correction
   manifest explains a change.
+- BBB-linked properties remain `171134`, all with `has_permits=true`.
 - Owner-occupied has the documented true/false/null split.
 - HOA and AVM either have approved-source values or remain zero with durable
   blocker links.
 - `getOracleProperty` returns nested Sunbiz for a linked property and no new
-  BBB payload.
+  BBB payload. Public Sunbiz excludes principal/mailing/agent/officer
+  addresses, officer and agent identities, FEI, contacts, and raw payloads.
 - `queryPlaces` works and the Parquet schema contains neither `emails` nor
   `phones`.
 - The protected permit and coverage IPNS CIDs are unchanged.

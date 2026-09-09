@@ -8,8 +8,8 @@ protected_publications:
   property_query_table:
     label: oracle-query-table-duval
     network_key: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
-    cid: QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ
-    sha256: 05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb
+    cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
+    sha256: 3f43ef083328d193ba55bee7ec4279f6a6ba371d8b6279ac6af01864419aa56a
     bytes: 167302003
     mutation_policy: one approved post-enrichment repoint only
   permit_table:
@@ -22,10 +22,9 @@ protected_publications:
   dataset_coverage:
     label: oracle-dataset-coverage-duval
     network_key: k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w
-    cid: QmReJrVy627vgRemjDy9N3NTnuCxYVqTr1oraAXmJLmV3y
-    previous_cid: QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm
-    refrozen_at: "2026-09-08T09:57:06Z"
-    refreeze_reason: A separately owned BBB reconciliation published 476 bounded, unlinked profiles while human approval was pending. This gap workflow submitted no BBB work and did not repoint coverage.
+    cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
+    refrozen_at: "2026-09-08T14:35:57.784Z"
+    refreeze_reason: Corrected permit-mediated BBB publication; this gap workflow consumes that query snapshot and must not repoint coverage.
     mutation_policy: immutable for this workflow
   identity_evidence:
     - source: Filebase Names API
@@ -34,9 +33,9 @@ protected_publications:
     - source: public IPFS gateway response headers
       observed_at: "2026-09-08T04:45:00Z"
       result: all three x-ipfs-roots and ETags matched the Filebase Names API CIDs
-    - source: Filebase Names API plus public immutable gateway payload
-      observed_at: "2026-09-08T09:57:06Z"
-      result: query and permit identities remained frozen; current coverage resolved to the independently published BBB reconciliation CID with unchanged appraisal, Sunbiz, and permit counts
+    - source: BBB publication receipt plus Filebase Names API and public immutable gateway
+      observed_at: "2026-09-08T14:40:56.006Z"
+      result: query and coverage resolve to the corrected permit-mediated BBB artifacts; permit identity remains unchanged
 
 frozen_counts:
   appraisal_properties: 403885
@@ -45,7 +44,11 @@ frozen_counts:
   permit_source_records: 3624986
   sunbiz_records: 691288
   sunbiz_linked_properties: 42184
-  independently_published_bbb_profiles: 476
+  independently_published_bbb_profiles: 698
+  properties_with_permits: 336451
+  properties_with_sunbiz: 42184
+  properties_with_bbb_contractor: 171134
+  bbb_properties_without_permits: 0
   property_cid_non_null: 0
   avm_value_non_null: 0
   hoa_flag_non_null: 0
@@ -82,6 +85,29 @@ sunbiz_input:
   linked_properties: 42184
   links: 73127
   bbb_dependency: none
+  public_field_policy:
+    include:
+      - schemaVersion
+      - source
+      - documentNumber
+      - entityName
+      - statusCode
+      - status
+      - filingTypeCode
+      - filingType
+      - filedDate
+      - lastTransactionDate
+      - stateCountry
+      - annualReports
+      - linkage.matchMethod
+    exclude:
+      - principalAddress
+      - mailingAddress
+      - registeredAgent
+      - officers
+      - feiNumber
+      - rawRecordLength
+      - matchedAddresses
 
 dedicated_destinations:
   property_documents:

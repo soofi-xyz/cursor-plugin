@@ -20,6 +20,9 @@ import {
   parseGapBatchRequest,
   type GapBatchRequest,
 } from "../src/batch/gap-contracts.js";
+import {
+  assertGapCostAllowed,
+} from "../src/batch/gap-cost-plan.js";
 import { putImmutableJson } from "../src/batch/s3-integrity.js";
 
 const STACK_NAME = "DuvalMcpGapBatchStack";
@@ -114,6 +117,7 @@ async function main(): Promise<void> {
 
   const request = await requestFromFile(requiredFlag(flags, "request"));
   const digest = gapRequestDigest(request);
+  const cost = assertGapCostAllowed(request);
   const plan = {
     schemaVersion: "elephant.duval-mcp-gap-batch-plan.v1",
     requestDigest: digest,
@@ -122,6 +126,7 @@ async function main(): Promise<void> {
     submitsBbb: false,
     protectedCids: request.protectedCids,
     livePublishRequested: request.inputs.publishApproval !== null,
+    cost,
   };
   if (command === "plan") {
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
@@ -136,9 +141,16 @@ async function main(): Promise<void> {
   const bucket = outputs.ArtifactBucketName;
   const queue = outputs.JobQueueArn;
   const jobDefinition = outputs.DuvalGapJobDefinitionArn;
-  if (!bucket || !queue || !jobDefinition) {
+  const deploymentCostCeiling = Number(outputs.MaxCostCeilingUsd);
+  if (
+    !bucket ||
+    !queue ||
+    !jobDefinition ||
+    !Number.isFinite(deploymentCostCeiling)
+  ) {
     throw new Error("Duval gap Batch stack outputs are incomplete");
   }
+  assertGapCostAllowed(request, deploymentCostCeiling);
   const requestKey = `gap-requests/${digest}/request.json`;
   const s3 = new S3Client({ region: EXPECTED_REGION });
   await putImmutableJson(s3, bucket, requestKey, request);

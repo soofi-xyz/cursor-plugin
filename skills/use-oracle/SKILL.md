@@ -40,7 +40,7 @@ stage map, and publish/coverage rules.
    its property query table, including cryptographic approval and immutable readback.
 10. [`../county-readiness-preflight/SKILL.md`](../county-readiness-preflight/SKILL.md) — the
    deterministic validator. `onboard-county` must run it before seed, pilot, or full ingest.
-10. [`reference/duval-mcp-gap-close.md`](./reference/duval-mcp-gap-close.md) — the
+11. [`reference/duval-mcp-gap-close.md`](./reference/duval-mcp-gap-close.md) — the
    appraisal/permit/BBB-safe AWS procedure for Duval consolidated property CIDs,
    owner-occupied, Sunbiz attachment, Overture places, and guarded publication.
 
