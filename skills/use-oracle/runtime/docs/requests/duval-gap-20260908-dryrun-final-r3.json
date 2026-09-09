@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "elephant.duval-mcp-gap-batch-request.v1",
+  "runId": "duval-mcp-gap-20260908-dryrun-final-r3",
+  "county": "duval",
+  "countyFips": "12031",
+  "pipelineKey": "duval-mcp-gap-close",
+  "frozenAt": "2026-09-08T04:45:00Z",
+  "phases": [
+    "consolidation",
+    "sunbiz-attach",
+    "owner-occupied",
+    "approved-source-overlays",
+    "cid-fill",
+    "places",
+    "validate",
+    "publish"
+  ],
+  "inputs": {
+    "queryTable": {
+      "key": "inputs/duval-gap/query-table.parquet/05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb/query-table.parquet",
+      "sha256": "05767aa517d8923acf172070d81beac3eb0b9480e798e2b3048a381e05ff8adb",
+      "bytes": 167302003
+    },
+    "permitTable": {
+      "key": "inputs/duval-gap/permit-table.parquet/6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e/permit-table.parquet",
+      "sha256": "6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e",
+      "bytes": 1108488548
+    },
+    "sunbizHandoff": {
+      "key": "inputs/duval-gap/sunbiz.json/35d5f36ddb7f9cd6754a22d90513af2e33eb8a3016f332d7475bf1dbdc3e4c89/sunbiz.json",
+      "sha256": "35d5f36ddb7f9cd6754a22d90513af2e33eb8a3016f332d7475bf1dbdc3e4c89",
+      "bytes": 1703864
+    },
+    "ownerOccupiedNal": {
+      "key": "inputs/duval-gap/owner-occupied-nal.jsonl/4504bf852552ad24db03ed565d88b6feb39eef750240a14a1c1324bad53df493/owner-occupied-nal.jsonl",
+      "sha256": "4504bf852552ad24db03ed565d88b6feb39eef750240a14a1c1324bad53df493",
+      "bytes": 21825424
+    },
+    "hoaMembership": null,
+    "avmFeed": null,
+    "publishApproval": null
+  },
+  "overture": {
+    "release": "2026-08-19.0",
+    "boundarySource": "tiger/tl_2024_us_county",
+    "expectedCount": null,
+    "includeEmails": false,
+    "includePhones": false
+  },
+  "expected": {
+    "propertyCount": 403885,
+    "permitCount": 3415527,
+    "sunbizLinkedPropertyCount": 42184
+  },
+  "protectedCids": {
+    "queryTable": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ",
+    "permitTable": "QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62",
+    "coverage": "QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm"
+  },
+  "provenance": {
+    "gitCommit": "19e060aa909459e183a85928e5d5b9b14f6b3e2c",
+    "treeDigest": "bfdd6dbaf8c77cb92dd053e9c40aeb6282f12ab785ddd2dbf746ae9c91dd2cfc"
+  }
+}

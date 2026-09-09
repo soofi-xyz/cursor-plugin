@@ -1,6 +1,6 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval county adapters.",
   "type": "module",
@@ -21,11 +21,17 @@
     "batch:submit": "tsx bin/enrichment-batch.ts submit",
     "batch:status": "tsx bin/enrichment-batch.ts status",
     "batch:recover-blocked": "tsx bin/enrichment-batch.ts recover-blocked",
+    "gap:plan": "tsx bin/gap-batch.ts plan",
+    "gap:submit": "tsx bin/gap-batch.ts submit",
+    "gap:status": "tsx bin/gap-batch.ts status",
     "cdk:synth": "cdk synth",
     "catalog:update": "node scripts/catalog/update-published-county-catalog.mjs",
     "catalog:mcp-maps": "node scripts/catalog/print-mcp-env-maps.mjs",
     "catalog:merge-mcp-maps": "node scripts/catalog/merge-mcp-env-maps.mjs",
-    "catalog:sync-mcp-json": "node scripts/catalog/sync-mcp-json.mjs"
+    "catalog:sync-mcp-json": "node scripts/catalog/sync-mcp-json.mjs",
+    "cdk:gap:synth": "cdk synth --app \"npx tsx infra/gap-app.ts\"",
+    "cdk:gap:diff": "cdk diff --app \"npx tsx infra/gap-app.ts\"",
+    "cdk:gap:deploy": "cdk deploy --app \"npx tsx infra/gap-app.ts\""
   },
   "dependencies": {
     "@aws-sdk/client-batch": "^3.1127.0",
@@ -33,8 +39,12 @@
     "@aws-sdk/client-s3": "^3.879.0",
     "@aws-sdk/client-sts": "^3.1127.0",
     "@dsnp/parquetjs": "^1.8.7",
+    "@duckdb/node-api": "^1.5.4-r.1",
     "adm-zip": "^0.6.0",
+    "blockstore-core": "^6.1.3",
     "cheerio": "^1.1.2",
+    "csv-parse": "^5.6.0",
+    "ipfs-unixfs-importer": "^16.1.5",
     "puppeteer-core": "^25.10.0",
     "zod": "^4.5.4"
   },

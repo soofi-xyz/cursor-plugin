@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "elephant.duval-mcp-gap-publish-approval.v1",
+  "action": "publish-duval-mcp-gap-artifacts",
+  "county": "duval",
+  "protectedCids": {
+    "queryTable": "QmR139dymemJaxD5u8Ftx9mc2fm7KxTDeN4JC3KshMnACZ",
+    "permitTable": "QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62",
+    "coverage": "QmQRiMu8ecW3Gk2eymebRfWFVBy73i3Fg8R3GAoMveAMHm"
+  },
+  "artifacts": {
+    "propertyIndex": {
+      "bytes": 11760,
+      "sha256": "4721d271b1323030788118d045a9ee95e080363469cd2f9653adb04f5451e137",
+      "cid": "QmeM48tpZXjvfziNwAjj4Au15g2kDzu41FhuLjeNtaMuYo"
+    },
+    "propertyManifest": {
+      "bytes": 119997945,
+      "sha256": "c137d1640e5c9381e2d2448e7a4b9d95329972ba26e27f0d65a9777844453ab1",
+      "cid": "QmfN5kTDa4TbyjNvhGXqD1JM93onYw4Z3nHXNsdCfwj6V8"
+    },
+    "placesTable": {
+      "bytes": 6623705,
+      "sha256": "076ed6396e221e38d54cc26ce22c5816a9f5105fa9fd3c88ab832412da270faf",
+      "cid": "QmUKW7dTVRZbjdGQYrFSjNBrSpsJSHUBruFSjCchEWBmd3"
+    },
+    "placesIndex": {
+      "bytes": 956,
+      "sha256": "e7e92e01c90cb2a3999f95a0f21911a7346f8c041cd74022dd13175f0d91ed95",
+      "cid": "QmZ8e2LnAinXcxzN4FPjQcTwqWDQuHa6Do4DBRTRRQjje7"
+    },
+    "placesNotice": {
+      "bytes": 407,
+      "sha256": "e458ccb3ac8c2952abdb34bbdaf898c7179e3ce496cc971afe6777be377a5993",
+      "cid": "QmdZKG33fwezPq8NCygg9KMRCv7U7h9XjP23mBxiwdXRqN"
+    },
+    "queryTable": {
+      "bytes": 187692636,
+      "sha256": "07b46e8f55440ea41dbfc489e7da09c8f71f1bbbc2257fd83ab1e82b6caff76c",
+      "cid": "QmVuuGGtvfy6amtr2emzXrHb8zHYs4446rb1pTzrerNZwx"
+    }
+  },
+  "humanPiiApproval": true,
+  "approved": true,
+  "approvedBy": "Nelson",
+  "approvedAt": "2026-09-08T09:57:06Z"
+}

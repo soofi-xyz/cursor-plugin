@@ -8,12 +8,15 @@ COPY src ./src
 COPY bin ./bin
 COPY infra ./infra
 RUN npm run batch:build && npm prune --omit=dev
+RUN node --input-type=module -e \
+  'import { DuckDBInstance } from "@duckdb/node-api"; const db = await DuckDBInstance.create(":memory:"); const connection = await db.connect(); await connection.run("INSTALL spatial; INSTALL httpfs;"); connection.closeSync();'
 
 FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     HOME=/work/home \
     TMPDIR=/work/tmp \
+    DUCKDB_EXTENSIONS_BUNDLED=true \
     ORACLE_RUNTIME_ROOT=/app \
     CHROME_EXECUTABLE_PATH=/usr/bin/chromium
 
@@ -31,6 +34,7 @@ COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src ./src
+COPY --from=build /root/.duckdb /work/home/.duckdb
 
 RUN mkdir -p /work/home /work/tmp \
     && chown -R node:node /work

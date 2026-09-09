@@ -210,6 +210,9 @@ destination:
   bucket: elephant-oracle-query-table
   public_prefix: duval/
   private_harvest_boundary: AWS S3 run artifacts; not published to Filebase
+  independent_identity_sources:
+    - filebase_names_api_2026_09_08_matched_catalog_network_keys_and_cids
+    - public_ipfs_gateway_headers_2026_09_08_matched_names_api_cids
 
 publication:
   status: published-and-donphan-verified
