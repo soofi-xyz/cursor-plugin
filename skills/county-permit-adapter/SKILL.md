@@ -46,6 +46,16 @@ payload is unchanged.
 3. **MaintStar** (`plant-city-maintstar.mjs`):
    - JSON search endpoint: `POST api/Public/Record/Search` with `{ recordNumber }`.
    - Direct structured JSON extraction for status, issue dates, contractor license, and valuation.
+4. **Tyler EnerGov Civic Access** (`tyler-civic-access.mjs`):
+   - Bootstrap the anonymous public tenant in Chromium, verify the configured tenant ID/name,
+     and preserve separate portal/API bases for tenant-slug variants.
+   - Search Permit module `2` by exact parcel, fetch
+     `api/energov/permits/permitdetail` plus
+     `api/energov/entity/contacts/search/search`, and retain only
+     contractor-role contacts in `contractors[]`.
+   - Fail closed when tenant, CaseId, permit number, source URL, parcel evidence, pagination
+     totals, or contact-page limits disagree. Keep a contractor name even when license or
+     company matching is unavailable; never force an ambiguous company link.
 
 ### Distributed Cloud Scraper Architecture (AWS Lambda)
 

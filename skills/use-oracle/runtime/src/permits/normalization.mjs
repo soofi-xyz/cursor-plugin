@@ -18,6 +18,39 @@ export function normalizeDuvalParcelIdentifier(value) {
   return `${digits.slice(0, 6)}-${digits.slice(6)}`;
 }
 
+export function normalizeBrowardParcelIdentifier(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[-\s]/g, "");
+  if (!/^[A-Z0-9]{12}$/.test(normalized)) {
+    throw new PermitSourceError(
+      `Invalid Broward folio "${String(value ?? "")}"`,
+      {
+        classification: "permanent",
+        code: "invalid_parcel_identifier",
+      },
+    );
+  }
+  return normalized;
+}
+
+export function normalizePermitParcelIdentifier(profile, value) {
+  if (profile.parcelIdentifierFormat === "broward-folio") {
+    return normalizeBrowardParcelIdentifier(value);
+  }
+  return normalizeDuvalParcelIdentifier(value);
+}
+
+export function normalizeSourcePayload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return JSON.parse(
+    JSON.stringify(value, (_key, child) =>
+      child === undefined ? null : child,
+    ),
+  );
+}
+
 export function formatParcelForSource(parcelIdentifier, format) {
   const normalized = normalizeDuvalParcelIdentifier(parcelIdentifier);
   if (format === "digits-only") return normalized.replace("-", "");
@@ -32,14 +65,20 @@ export function routePermitJurisdiction(profile, city) {
     .replace(/\s+/g, " ");
   const exact = profile.jurisdictions.find((jurisdiction) =>
     jurisdiction.routingCities.some(
-      (alias) => alias.trim().toUpperCase() === normalizedCity,
+      (alias) => {
+        const normalizedAlias = alias.trim().toUpperCase();
+        return (
+          normalizedAlias === normalizedCity ||
+          normalizedCity.endsWith(` ${normalizedAlias}`) ||
+          normalizedCity.includes(`, ${normalizedAlias},`)
+        );
+      },
     ),
   );
-  return (
-    exact ??
-    profile.jurisdictions.find(
-      (jurisdiction) => jurisdiction.defaultForUnmatchedCity,
-    )
+  if (exact) return exact;
+  if (profile.defaultRoutingPolicy === "explicit-only") return null;
+  return profile.jurisdictions.find(
+    (jurisdiction) => jurisdiction.defaultForUnmatchedCity,
   );
 }
 

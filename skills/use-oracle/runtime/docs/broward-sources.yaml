@@ -1,0 +1,494 @@
+county: Broward
+state: FL
+slug: broward
+fips: "12011"
+snapshot_time: "2026-09-09T22:40:00Z"
+
+parcel:
+  canonical_source: Broward County Property Appraiser assessed roll
+  assessed_parcel_count: 754061
+  gis_feature_count: 556178
+  discrepancy_threshold_pct: 2.0
+  discrepancy_explanation: The assessed roll includes condominium and other separately assessed units that do not have one unique parcel polygon; folio remains the canonical identifier.
+  separately_assessed_without_geometry: acknowledged
+  identifier_proven: true
+  identifier_name: Folio
+  identifier_format: 12 undashed alphanumeric characters
+  join_rule: Preserve as text, uppercase letters, and remove display dashes only.
+
+permits:
+  expected_jurisdiction_count: 32
+  canonical_profile: src/counties/broward/permit-profile.mjs
+  source_surface_count: 37
+  supported_jurisdiction_count: 18
+  blocked_jurisdiction_count: 13
+  custodian_only_jurisdiction_count: 1
+  harvestable_source_surface_count: 20
+  implemented_adapter_families:
+    - accela
+    - arcgis-feature-service
+    - bcs-posse
+    - citizenserve
+    - click2gov
+    - coconut-creek-status
+    - smartgov
+    - tyler-civic-access
+    - tyler-esuite
+  detail_fingerprint_policy: Every harvestable source route declares a versioned detailFingerprintVersion in the executable profile.
+  assumes_unified_countywide_history: false
+  milestone_scope:
+    address: 16715 Berkshire Court, Southwest Ranches, FL 33331
+    folio: "504032160260"
+    expected_permit_count: 10
+    source_system: broward_southwest_ranches_citizenserve_permits
+  jurisdictions:
+    - jurisdiction: Unincorporated Broward County
+      key: unincorporated-broward
+      status: supported
+      vendor: Computronix POSSE
+      portal_kind: historical-search
+      portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+      historical_records: true
+      adapter: bcs-posse
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      supplemental_sources:
+        - adapter: arcgis-feature-service
+          portal: https://bcgishub.broward.org/posse/rest/services/HCED/HCEDPossePermitsRef/MapServer/4
+          mode: bulk-only-unlinked-no-certified-parcel-field
+      records_request:
+        recipient_office: Broward County Building Code Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Hollywood
+      key: hollywood
+      status: supported
+      vendor: Accela Citizen Access and legacy BCLA
+      portal_kind: historical-search
+      portal: https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building
+      historical_records: true
+      adapter: accela
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      predecessor:
+        source: BCLA
+        portal: https://apps.hollywoodfl.org/building/PermitStatus.aspx
+        status: blocked-address-only-identity-unproven
+      records_request:
+        recipient_office: City of Hollywood Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Plantation
+      key: plantation
+      status: supported
+      vendor: Accela Citizen Access
+      portal_kind: historical-search
+      portal: https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building
+      historical_records: true
+      adapter: accela
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      records_request:
+        recipient_office: City of Plantation Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Fort Lauderdale
+      key: fort-lauderdale
+      status: supported
+      vendor: Accela Citizen Access
+      portal_kind: historical-search
+      portal: https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Permits&TabName=Permits
+      historical_records: true
+      adapter: accela
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      supplemental_sources:
+        - adapter: arcgis-feature-service
+          portal: https://gis.fortlauderdale.gov/arcgis/rest/services/GeneralPurpose/gisdata/MapServer/27
+          mode: parcel-linked-official-bulk
+      records_request:
+        recipient_office: City of Fort Lauderdale Development Services Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Coral Springs
+      key: coral-springs
+      status: blocked
+      vendor: CentralSquare eTRAKiT
+      portal_kind: historical-search
+      portal: https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx
+      historical_records: true
+      adapter: etrakit
+      implementation_status: captcha-no-bypass
+      records_request:
+        recipient_office: City of Coral Springs Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Pompano Beach
+      key: pompano-beach
+      status: blocked
+      vendor: Click2Gov
+      portal_kind: historical-search
+      portal: https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html
+      historical_records: true
+      adapter: click2gov
+      implementation_status: paused-adapter-certification
+      records_request:
+        recipient_office: City of Pompano Beach Building Inspections Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Davie
+      key: davie
+      status: supported
+      vendor: Tyler eSuite
+      portal_kind: historical-search
+      portal: https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx
+      historical_records: true
+      adapter: tyler-esuite
+      implementation_status: canonical-adapter-bounded-pilot-certified
+      records_request:
+        recipient_office: Town of Davie Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Pembroke Pines
+      key: pembroke-pines
+      status: supported
+      vendor: Tyler EnerGov Civic Access
+      portal_kind: historical-search
+      portal: https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: bounded-pilot-certified
+    - jurisdiction: Coconut Creek
+      key: coconut-creek
+      status: supported
+      vendor: municipal permit status
+      portal_kind: historical-search
+      portal: https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp
+      historical_records: true
+      adapter: municipal-status
+      implementation_status: canonical-adapter-bounded-pilot-certified
+      records_request:
+        recipient_office: City of Coconut Creek Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Cooper City
+      key: cooper-city
+      status: supported
+      vendor: Accela Citizen Access
+      portal_kind: historical-search
+      portal: https://aca-prod.accela.com/COOPER/
+      historical_records: true
+      adapter: accela
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      records_request:
+        recipient_office: Cooper City Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Dania Beach
+      key: dania-beach
+      status: blocked
+      vendor: Tyler eSuite
+      portal_kind: historical-search
+      portal: https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/
+      historical_records: true
+      adapter: tyler-esuite
+      implementation_status: adapter-routed-positive-detail-pending
+      records_request:
+        recipient_office: City of Dania Beach Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Deerfield Beach
+      key: deerfield-beach
+      status: blocked
+      vendor: Gov-Easy and GeoCivix
+      portal_kind: historical-search
+      portal: https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2
+      historical_records: true
+      adapter: gov-easy-geocivix
+      implementation_status: captcha-login-no-bypass
+      records_request:
+        recipient_office: City of Deerfield Beach Building Services
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Hallandale Beach
+      key: hallandale-beach
+      status: supported
+      vendor: Tyler EnerGov Civic Access
+      portal_kind: historical-search
+      portal: https://energovweb.hallandalebeachfl.gov/EnerGovProd/SelfService
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: bounded-pilot-certified
+    - jurisdiction: Hillsboro Beach
+      key: hillsboro-beach
+      status: blocked
+      vendor: CommunityCore
+      portal_kind: historical-search
+      portal: https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd
+      historical_records: true
+      adapter: communitycore
+      implementation_status: account-required-no-login
+      records_request:
+        recipient_office: Town of Hillsboro Beach Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Lauderdale Lakes
+      key: lauderdale-lakes
+      status: blocked
+      vendor: OpenGov
+      portal_kind: historical-search
+      portal: https://lauderdalelakesfl.portal.opengov.com/search
+      historical_records: true
+      adapter: opengov
+      implementation_status: paused-adapter-unavailable
+      records_request:
+        recipient_office: City of Lauderdale Lakes Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Lauderdale-by-the-Sea
+      key: lauderdale-by-the-sea
+      status: supported
+      vendor: Citizenserve CAP Government
+      portal_kind: historical-search
+      portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+      historical_records: true
+      adapter: citizenserve
+      implementation_status: canonical-citizenserve-route-bounded
+      records_request:
+        recipient_office: Town of Lauderdale-by-the-Sea Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Lauderhill
+      key: lauderhill
+      status: blocked
+      vendor: eGovPLUS
+      portal_kind: historical-search
+      portal: http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx
+      historical_records: true
+      adapter: egovplus
+      implementation_status: insecure-http-source-blocked-runtime-refuses-transport
+      records_request:
+        recipient_office: City of Lauderhill Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Lazy Lake
+      key: lazy-lake
+      status: supported
+      vendor: Broward County Computronix POSSE
+      portal_kind: delegated-historical-search
+      portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+      historical_records: true
+      adapter: bcs-posse
+      implementation_status: delegated-through-canonical-bcs-posse-adapter
+    - jurisdiction: Lighthouse Point
+      key: lighthouse-point
+      status: blocked
+      vendor: Granicus SmartGov
+      portal_kind: historical-search
+      portal: https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome
+      historical_records: true
+      adapter: smartgov
+      implementation_status: adapter-routed-positive-detail-pending
+      records_request:
+        recipient_office: City of Lighthouse Point Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Margate
+      key: margate
+      status: blocked
+      vendor: Click2Gov
+      portal_kind: historical-search
+      portal: https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html
+      historical_records: true
+      adapter: click2gov
+      implementation_status: paused-adapter-certification
+      records_request:
+        recipient_office: City of Margate Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Miramar
+      key: miramar
+      status: supported
+      vendor: Tyler EnerGov Civic Access
+      portal_kind: historical-search
+      portal: https://miramarfl-energovweb.tylerhost.net/apps/selfservice
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: bounded-pilot-certified
+    - jurisdiction: North Lauderdale
+      key: north-lauderdale
+      status: blocked
+      vendor: Tyler EnerGov Civic Access
+      portal_kind: historical-search
+      portal: https://nlselfservice.nlauderdale.org/Energov_prod/SelfService#/home
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: login-required-no-bypass
+      records_request:
+        recipient_office: City of North Lauderdale Community Development Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Oakland Park
+      key: oakland-park
+      status: supported
+      vendor: Tyler EnerGov Civic Access and predecessor portal
+      portal_kind: historical-search
+      portal: https://oaklandparkfl-energovweb.tylerhost.net/apps/selfservice
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: bounded-post-2019-certified-predecessor-gap-documented
+    - jurisdiction: Parkland
+      key: parkland
+      status: blocked
+      vendor: MyGovernmentOnline
+      portal_kind: historical-search
+      portal: https://www.mgoconnect.org/cp/portal
+      historical_records: true
+      adapter: mygovernmentonline
+      implementation_status: account-required-no-login
+      records_request:
+        recipient_office: City of Parkland Building Division
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Pembroke Park
+      key: pembroke-park
+      status: blocked
+      vendor: Gov-Easy
+      portal_kind: historical-search
+      portal: https://www.tppfl.gov/194/Online-Permitting-System
+      historical_records: true
+      adapter: gov-easy
+      implementation_status: captcha-no-bypass
+      records_request:
+        recipient_office: Town of Pembroke Park Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Sea Ranch Lakes
+      key: sea-ranch-lakes
+      status: custodian-only
+      vendor: municipal custodian
+      portal_kind: records-information
+      portal: https://www.searanchlakes.com/
+      historical_records: false
+      adapter: none
+      implementation_status: no-public-history
+      records_request:
+        recipient_office: Village of Sea Ranch Lakes Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Southwest Ranches
+      key: southwest-ranches
+      status: supported
+      vendor: Citizenserve CAP Government
+      portal_kind: historical-search
+      portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+      configured_primary_status: unavailable-timeout-2026-09-09
+      operator_approved_fallback: https://www2.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+      official_canonical_confirmation: unconfirmed-no-direct-municipal-vendor-link
+      historical_records: true
+      anonymous_access: true
+      adapter: citizenserve
+      source_system: broward_southwest_ranches_citizenserve_permits
+      implementation_status: operator-approved-www2-listing-fallback-certified
+      contractor_detail_capability: not-exposed-on-www2-listing-fallback
+    - jurisdiction: Sunrise
+      key: sunrise
+      status: supported
+      vendor: Tyler EnerGov Civic Access
+      portal_kind: historical-search
+      portal: https://www.sunrisefl.gov/openforbusiness
+      historical_records: true
+      adapter: tyler-civic-access
+      implementation_status: bounded-pilot-certified
+    - jurisdiction: Tamarac
+      key: tamarac
+      status: blocked
+      vendor: Click2Gov
+      portal_kind: historical-search
+      portal: https://e-gov.tamarac.org/Click2GovBP/selectpermit.html
+      historical_records: true
+      adapter: click2gov
+      implementation_status: paused-adapter-certification
+      records_request:
+        recipient_office: City of Tamarac Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: West Park
+      key: west-park
+      status: supported
+      vendor: Citizenserve CAP Government
+      portal_kind: historical-search
+      portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0
+      historical_records: true
+      adapter: citizenserve
+      implementation_status: canonical-citizenserve-route-bounded
+      records_request:
+        recipient_office: City of West Park Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Weston
+      key: weston
+      status: supported
+      vendor: Accela Citizen Access
+      portal_kind: historical-search
+      portal: https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building
+      historical_records: true
+      adapter: accela
+      implementation_status: canonical-adapter-implemented-live-pilot-pending
+      records_request:
+        recipient_office: City of Weston Building Code Services
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+    - jurisdiction: Wilton Manors
+      key: wilton-manors
+      status: supported
+      vendor: Citizenserve CAP Government
+      portal_kind: historical-search
+      portal: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
+      historical_records: true
+      adapter: citizenserve
+      implementation_status: canonical-citizenserve-route-bounded
+      records_request:
+        recipient_office: City of Wilton Manors Building Department
+        request_portal_url: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+        system_scope: Complete building-permit, contractor, and inspection history with Broward folio identifiers, including predecessor systems
+        route: records-first
+
+source_inventory:
+  property_appraisal: https://web.bcpa.net/BcpaClient/#/Record-Search
+  property_geometry: https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16
+  permit_authority_boundary: 31 incorporated municipalities plus unincorporated Broward County
+  sunbiz: https://dos.fl.gov/sunbiz/
+  bbb: https://www.bbb.org/
+
+destination:
+  writes_in_scope: false
+  proven: false
+  mode: Private local pilot artifacts only; database load remains an explicit user-terminal handoff.
+
+publication:
+  status: not-in-scope
+
+approved_exceptions:
+  - gate: parcel
+    reason: The assessed-roll denominator is canonical; the material GIS gap is expected for separately assessed units without unique polygons and this milestone does not seed from GIS.

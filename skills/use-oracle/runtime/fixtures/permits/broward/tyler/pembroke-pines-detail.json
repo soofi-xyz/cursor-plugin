@@ -1,0 +1,48 @@
+{
+  "reference": {
+    "sourceRecordId": "11111111-2222-4333-8444-555555555555",
+    "permitNumber": "RL23-04374",
+    "parcelIdentifier": "514005211940",
+    "sourceUrl": "https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice#/permit/11111111-2222-4333-8444-555555555555",
+    "sourcePayload": {
+      "CaseId": "11111111-2222-4333-8444-555555555555",
+      "CaseNumber": "RL23-04374",
+      "MainParcel": "514005211940",
+      "ModuleName": 2
+    }
+  },
+  "detailPayload": {
+    "Success": true,
+    "Result": {
+      "PermitId": "11111111-2222-4333-8444-555555555555",
+      "PermitNumber": "RL23-04374",
+      "MainParcelNumber": "514005211940",
+      "MainAddress": "100 SAMPLE CIRCLE PEMBROKE PINES, FL 33025",
+      "PermitType": "Residential Miscellaneous - Residential New Roof",
+      "WorkClassName": "Residential New Roof",
+      "PermitStatus": "Complete",
+      "Description": "Sanitized roof fixture",
+      "ProjectName": "Sanitized roof project",
+      "ApplyDate": "2023-10-01T00:00:00",
+      "IssueDate": "2023-10-05T00:00:00",
+      "FinalizeDate": "2023-11-01T00:00:00",
+      "ExpireDate": "2024-04-05T00:00:00",
+      "Value": 15000
+    }
+  },
+  "contactsPayload": {
+    "Success": true,
+    "Result": [
+      {
+        "ContactTypeName": "Contractor",
+        "GlobalEntityName": "Example Roofing & Waterproofing LLC/JANE QUALIFIER",
+        "FirstName": "QUALIFIER",
+        "LastName": "JANE"
+      },
+      {
+        "ContactTypeName": "Owner",
+        "GlobalEntityName": "SANITIZED OWNER"
+      }
+    ]
+  }
+}

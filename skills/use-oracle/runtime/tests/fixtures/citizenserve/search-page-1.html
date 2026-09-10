@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <main>
+      <h1 class="page-heading">Permitting Search Results</h1>
+      <div id="resultContent">
+        <p>1 to 2 of 4 records found</p>
+        <a href="javascript:displayResultNPagging('2','4')">Next</a>
+        <table>
+          <thead>
+            <tr>
+              <th>Permit#</th><th>Address</th><th>Permit Type</th>
+              <th>Sub Type</th><th>Status</th><th>Issue Date</th>
+              <th>Work Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><a href="javascript:openURLLink('PortalController?Action=viewPortalCase&amp;type=Permit&amp;workOrder_ID=70010001&amp;permit_ID=1401001&amp;installationID=117');">SWR20-000001</a></td>
+              <td>100 SAMPLE CT</td><td>Southwest Ranches Permit</td>
+              <td>Structural</td><td>Closed</td><td>02/06/2020</td>
+              <td>RE-ROOF</td>
+            </tr>
+            <tr>
+              <td><a href="javascript:openURLLink('PortalController?Action=viewPortalCase&amp;type=Permit&amp;workOrder_ID=70010002&amp;permit_ID=1401002&amp;installationID=117');">LBS20-000002</a></td>
+              <td>200 SAMPLE ST</td><td>Lauderdale-By-The-Sea Permit</td>
+              <td>Electrical</td><td>Issued</td><td>03/07/2020</td>
+              <td>SERVICE REPAIR</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </body>
+</html>
