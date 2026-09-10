@@ -1,14 +1,16 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
-  "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Includes canonical Broward permit routing and bounded backfill planning.",
+  "description": "Self-contained Elephant county-ingestion, enrichment, coverage-only repair, and private Broward roofing-cohort analysis runtime bundled with the soofi-xyz-team-kit plugin.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
   },
   "bin": {
     "elephant-county": "bin/elephant-county.mjs",
+    "broward-roofing-cohort": "bin/broward-roofing-cohort.mjs",
+    "broward-roofing-readonly-export": "bin/broward-roofing-readonly-export.mjs",
     "permit-backfill": "bin/permit-backfill.mjs",
     "permit-source-coverage": "bin/permit-source-coverage.mjs",
     "probe-broward-permits": "bin/probe-broward-permits.mjs"
@@ -18,6 +20,8 @@
     "test:watch": "vitest",
     "test:transforms": "node scripts/run-transform-tests.mjs",
     "test:catalog": "vitest run tests/catalog",
+    "roofing:analyze": "node bin/broward-roofing-cohort.mjs",
+    "roofing:export": "node bin/broward-roofing-readonly-export.mjs",
     "permits:backfill": "node bin/permit-backfill.mjs",
     "permits:backfill-plan": "node bin/permit-backfill.mjs",
     "permits:coverage": "node bin/permit-source-coverage.mjs",
