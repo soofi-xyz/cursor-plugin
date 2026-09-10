@@ -53,7 +53,7 @@ rejects caller SQL/URLs.
 
 | Tool | Purpose | Key inputs |
 |------|---------|------------|
-| `getPropertyQuerySchema` | Lists the property query-table's ~37 columns + descriptions — **call FIRST** to learn columns | `county?` (default `lee`) |
+| `getPropertyQuerySchema` | Lists the property query-table columns + descriptions, including `elephant_uuid` / `elephant_token` when published — **call FIRST** to learn columns | `county?` (default `lee`) |
 | `queryProperties` | Runs ONE read-only `SELECT`/`WITH…SELECT` over the `properties` view (per-county Parquet read from IPFS via DuckDB) and returns rows | `county?` (default `lee`), `sql`, `limit?` |
 
 This is the **PRIMARY path for attribute / aggregate / count / filter questions** — "how
@@ -68,10 +68,14 @@ Constraints on `queryProperties`:
 - The queried view is always named **`properties`**.
 - Use `ILIKE '%…%'` for text matching: owner (`owners_text`), city (`address_city`),
   material (`exterior_wall_material`).
+- Use `elephant_uuid` / `elephant_token` for stable address identity (`address:v1`: country,
+  state, ZIP5, street, unit). Do not treat `normalized_address_hash` as the same id.
+  Columns may be NULL until a county republish includes them.
 - `county` must match the MCP server's `PROPERTY_QUERY_TABLE_MAP` (default `lee`).
 
 **Data coverage varies by county.** Lee has no acreage/material (those columns are NULL);
-HOA (`hoa_flag`) is NULL in every county. Call `getPropertyQuerySchema` or run a
+HOA (`hoa_flag`) is NULL in every county. `elephant_uuid` / `elephant_token` are NULL until
+a republish. Call `getPropertyQuerySchema` or run a
 `SELECT count(col)` to confirm a column is populated, and state "not available for this
 county" rather than inventing values. On Lee, owner / city / value / count questions work.
 

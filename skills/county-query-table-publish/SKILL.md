@@ -7,7 +7,7 @@ metadata: {"author":"elephant-xyz"}
 
 Turns a county that is already loaded in the query DB into a **SQL-queryable open
 dataset**. Exports a flat, scalar-only **Parquet "query table"** (one row per property,
-~37 columns), publishes it to **public IPFS via Filebase** behind the county's **own IPNS
+including `elephant_uuid` / `elephant_token`), publishes it to **public IPFS via Filebase** behind the county's **own IPNS
 pointer**, and wires it into the `elephant` MCP so its embedded DuckDB range-reads the
 Parquet straight off an IPFS gateway. The **donphan** agent then answers arbitrary
 questions ("how many concrete homes in 33410", counts / filters / aggregates) as plain
@@ -39,7 +39,7 @@ and may run `--dry-run`; **only a human approves**.
 query DB  (county loaded + reconciled; consolidation manifest exists)
   │  npm run export:query-table   -- --county <c> --manifest <consolidation manifest.json>
   ▼
-data/artifacts/publish/<c>/query-table.parquet  (one flat row per folio, ~37 cols)
+data/artifacts/publish/<c>/query-table.parquet  (one flat row per folio, including elephant_uuid / elephant_token)
   │  npm run validate:query-table -- --county <c> --parquet <path>        ← GATE
   ▼
 validated parquet  (rows == distinct folio in the DB, 0 dup/null folios)
@@ -62,7 +62,7 @@ When publishing speed to IPFS/Filebase is prioritized, bypass relational databas
    - Deep-enriched municipal/county permits.
    - Sunbiz corporate entity registrations (by address hash & business name).
    - Multi-trade BBB contractor quality scores (by license, phone, & name).
-3. Directly writes the flat ~37-column Parquet file (`data/artifacts/publish/<county>/query-table.parquet`) in **~15 minutes** (compared to 10+ hours for relational bulk staging and SQL joins).
+3. Directly writes the flat Parquet file (`data/artifacts/publish/<county>/query-table.parquet`) in **~15 minutes** (compared to 10+ hours for relational bulk staging and SQL joins).
 
 ### DuckDB HTTPFS IPNS Range Read Resilience
 
@@ -129,7 +129,8 @@ npm run export:query-table -- \
 (`DATA_DIR` is the `skills/use-oracle/runtime` data dir, so staging lands at
 `data/artifacts/publish/<county>/query-table.parquet`.)
 
-One flat row per **folio** (`request_identifier`), ~37 scalar columns, DuckDB-readable.
+One flat row per **folio** (`request_identifier`), scalar columns including
+`elephant_uuid` / `elephant_token`, DuckDB-readable.
 A single SQL pass pre-dedups every many-to-one relation, then folds via
 `DISTINCT ON (folio)` — it never reads the heavy consolidated JSON. The run logs
 `query_table_export_finished` with `rowCount` and `rowsWithCid`; **`rowsWithCid` = 0
@@ -152,6 +153,10 @@ means you forgot `--manifest`** (or pointed at the wrong one) — fix before pub
 - **`property_cid` lives in the consolidation manifest, not the DB** — computed at
   consolidation-export time; hence `--manifest` and the ordering after
   `county-open-data-publish`.
+- **`elephant_uuid` / `elephant_token` are `address:v1` ids**, minted at export from
+  country `us`, Oracle `state_code`, ZIP5, situs street, and unit. Do not expand ROAD→RD.
+  They are not `normalized_address_hash`. The kit runtime helper is
+  `skills/use-oracle/runtime/src/core/address-signature.mjs`.
 
 ### ⚠️ `--manifest` is optional — and the local CID-join fallback
 

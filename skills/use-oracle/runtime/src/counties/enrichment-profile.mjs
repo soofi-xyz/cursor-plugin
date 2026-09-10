@@ -111,6 +111,8 @@ export const enrichmentProfileSchema = z
       property_id: "UTF8",
       address_street: "UTF8",
       address_zip: "UTF8",
+      elephant_uuid: "UTF8",
+      elephant_token: "UTF8",
       has_permits: "BOOLEAN",
       has_sunbiz_tenant: "BOOLEAN",
       has_bbb_contractor: "BOOLEAN",

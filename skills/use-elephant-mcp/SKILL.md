@@ -73,13 +73,16 @@ consolidated JSON.
    authoritative all-business denominator exists. Never read the places IPFS URL or Neon
    directly; the MCP resolves the catalog-authorized parquet.
 1. **Property attribute / aggregate / count / filter** — `getPropertyQuerySchema` (learn the
-   ~37 columns) → `queryProperties` with ONE read-only `SELECT`/`WITH…SELECT` over the
+   published columns, including `elephant_uuid` / `elephant_token`) → `queryProperties` with ONE read-only `SELECT`/`WITH…SELECT` over the
    `properties` view. Single statement, SELECT/CTE only; row cap auto-applies (default 100,
    max 1000). Use `ILIKE '%…%'` for owner (`owners_text`), city (`address_city`), material
-   (`exterior_wall_material`). This runs SQL over the **OPEN IPFS parquet via MCP (NOT Neon)** —
+   (`exterior_wall_material`). Use `elephant_uuid` or `elephant_token` for deterministic
+   `address:v1` matching (country, state, ZIP5, street, unit) — do not reuse
+   `normalizedAddressHash`. This runs SQL over the **OPEN IPFS parquet via MCP (NOT Neon)** —
    do **not** hand these off to `use-elephant-query-db`. `county` defaults to `lee` and must
    match the MCP's `PROPERTY_QUERY_TABLE_MAP`. Coverage varies by county: Lee has no
-   acreage/material (NULL); HOA (`hoa_flag`) is NULL everywhere — confirm with
+   acreage/material (NULL); HOA (`hoa_flag`) is NULL everywhere; identity columns are NULL
+   until a republish includes them — confirm with
    `getPropertyQuerySchema` / `SELECT count(col)` and say "not available for this county"
    rather than inventing.
 2. **Dataset context** — `getOracleDatasetInfo` → county, `propertyCount`, freshness timestamps

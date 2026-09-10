@@ -13,6 +13,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { mintAddressIdentity } from "../../core/address-signature.mjs";
 import { parseUnnormalizedAddress, toInteger, toNumber, toText } from "../../core/query-table.mjs";
 
 export const SOURCE_SYSTEM = "duval_appraiser";
@@ -137,6 +138,16 @@ export function mapTransformedFilesToQueryTableRow({ parcelId, files, seedRow })
   const lotAreaSqft = toNumber(lot.lot_area_sqft);
   const lotSizeAcre = toNumber(lot.lot_size_acre) ?? (lotAreaSqft !== null ? lotAreaSqft / 43_560 : null);
 
+  const addressStreet = parsed.street;
+  const addressZip = parsed.postalCode ?? toText(seedRow?.zip);
+  const identity = mintAddressIdentity({
+    country: "us",
+    state: STATE_CODE,
+    postalCode: addressZip,
+    street: addressStreet,
+    unit: toText(address.unit_identifier),
+  });
+
   return {
     property_id: duvalPropertyId(parcelId),
     property_cid: null,
@@ -145,9 +156,11 @@ export function mapTransformedFilesToQueryTableRow({ parcelId, files, seedRow })
     source_system: SOURCE_SYSTEM,
     county_name: COUNTY_NAME,
     state_code: STATE_CODE,
-    address_street: parsed.street,
+    address_street: addressStreet,
     address_city: parsed.city ?? toText(seedRow?.city),
-    address_zip: parsed.postalCode ?? toText(seedRow?.zip),
+    address_zip: addressZip,
+    elephant_uuid: identity?.elephantUuid ?? null,
+    elephant_token: identity?.elephantToken ?? null,
     latitude: toNumber(geometry.latitude) ?? toNumber(seedRow?.latitude),
     longitude: toNumber(geometry.longitude) ?? toNumber(seedRow?.longitude),
     lot_size_acre: lotSizeAcre,

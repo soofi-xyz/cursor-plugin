@@ -35,6 +35,7 @@ Maps to `parcels`, `properties`, `addresses`, `unnormalizedAddresses` in query-d
 | Property type / use | `propertyType`, `propertyUsageType`, `zoning`, `subdivision` |
 | Site address (normalized) | `addresses` — `streetName`, `cityName`, `municipalityName`, `postalCode`, `stateCode` |
 | Site address (raw) | `unnormalizedAddresses` — `fullAddress`, `latitude`, `longitude` |
+| Address identity (`address:v1`) | Query table: `elephant_uuid`, `elephant_token`. Consolidated JSON: `address.elephantUuid`, `address.elephantToken`. SHA-256 token + UUIDv5 of country/state/ZIP5/street/unit. Not `normalizedAddressHash`. |
 | Normalized key / hash | `addresses.normalizedAddressKey`, `addresses.normalizedAddressHash` |
 | Owner | `ownerships`, `people`, `companies` under appraisal subtree |
 
