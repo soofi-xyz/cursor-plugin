@@ -357,6 +357,6 @@ describe("syncMcpJson against a copy of the real repo-root mcp.json", () => {
         written.mcpServers.elephant.env
           .PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS,
       ).duval,
-    ).toBe("QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS");
+    ).toBe("QmVHFSRuitqRWpiLBJY5Mnor1PRiWHnFDHkkwSaytoeTCD");
   });
 });
