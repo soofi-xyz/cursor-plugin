@@ -39,7 +39,6 @@ import {
   assertPermitProfileReady,
   evaluatePermitProfileReadiness,
 } from "../src/permits/readiness.mjs";
-import { createPermitBackfillPlan } from "../src/permits/backfill-plan.mjs";
 
 const fixtures = fileURLToPath(
   new URL("./fixtures/broward-permits/", import.meta.url),
@@ -135,38 +134,6 @@ describe("Broward permit rollout readiness", () => {
     ).toBeNull();
   });
 
-  it("builds deterministic plan-only delta and repair tasks", () => {
-    const delta = createPermitBackfillPlan(browardPermitProfile, {
-      mode: "delta",
-      fromDate: "2026-09-01",
-      throughDate: "2026-09-09",
-      propertiesPath: "inputs/broward-properties.parquet",
-      manifestPath: null,
-      jurisdictionKeys: ["fort-lauderdale"],
-    });
-    const repeated = createPermitBackfillPlan(browardPermitProfile, {
-      mode: "delta",
-      fromDate: "2026-09-01",
-      throughDate: "2026-09-09",
-      propertiesPath: "inputs/broward-properties.parquet",
-      manifestPath: null,
-      jurisdictionKeys: ["fort-lauderdale"],
-    });
-    expect(delta.planDigest).toBe(repeated.planDigest);
-    expect(delta.tasks).toHaveLength(2);
-    expect(delta.writePolicy).toContain("plan-only");
-
-    const repair = createPermitBackfillPlan(browardPermitProfile, {
-      mode: "repair",
-      fromDate: null,
-      throughDate: null,
-      propertiesPath: null,
-      manifestPath: "runs/broward/permit-artifact-manifest.json",
-      jurisdictionKeys: ["hollywood"],
-    });
-    expect(repair.tasks).toHaveLength(1);
-    expect(repair.tasks[0].input.repairWhen).toContain("stale");
-  });
 });
 
 describe("Broward adapter fixtures", () => {

@@ -92,6 +92,7 @@ const adapterConfigSchema = z
     apiBaseUrl: z.string().url().nullable().optional(),
     bulkLayerUrl: z.string().url().nullable().optional(),
     bulkPageSize: z.number().int().min(1).max(2000).nullable().optional(),
+    bulkConcurrency: z.number().int().min(1).max(4).optional(),
     agencyCode: z.string().min(1).optional(),
     module: z.string().min(1).optional(),
     contentFrameName: z.string().min(1).nullable().optional(),

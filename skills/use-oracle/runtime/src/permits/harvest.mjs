@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 
+import { permitProfileDigest } from "../counties/permit-profile.mjs";
 import { createPermitAdapter } from "./adapters/index.mjs";
 import {
   normalizedPermitRecordSchema,
@@ -44,6 +46,12 @@ function statusForFailure(classification) {
   return "failed";
 }
 
+function hashFingerprint(value) {
+  return createHash("sha256")
+    .update(`${JSON.stringify(value)}\n`)
+    .digest("hex");
+}
+
 async function readCompletedStatus(filePath) {
   try {
     return parcelPermitStatusSchema.parse(await readJson(filePath));
@@ -61,6 +69,7 @@ async function processProperty({
   adapterOptions,
   resume,
   clock,
+  profileSha256,
 }) {
   const input = propertyInput(row);
   let parcelIdentifier;
@@ -137,9 +146,37 @@ async function processProperty({
     jurisdiction.key,
     parcelIdentifier,
   );
+  const detailFingerprintVersion =
+    jurisdiction.adapterConfig?.detailFingerprintVersion ?? null;
+  const detailRequired = jurisdiction.sources.some(
+    (source) =>
+      (source.adapterRouteKey ?? "primary") === "primary" &&
+      source.access === "public" &&
+      source.contractorDetailCapability === "public-detail",
+  );
+  const sourceFingerprint = hashFingerprint({
+    countyKey: profile.countyKey,
+    profileSha256,
+    jurisdictionKey: jurisdiction.key,
+    detailFingerprintVersion,
+    detailRequired,
+  });
+  const completionFingerprint = hashFingerprint({
+    sourceFingerprint,
+    parcelIdentifier,
+    propertyId: input.propertyId,
+  });
   if (resume) {
     const completed = await readCompletedStatus(paths.status);
-    if (completed) {
+    const matchingCompletion =
+      completed?.status === "done" &&
+      completed.sourceFingerprint === sourceFingerprint &&
+      completed.completionFingerprint === completionFingerprint &&
+      (!detailRequired || completed.detailComplete === true);
+    const matchingBlocker =
+      completed?.status === "blocked" &&
+      completed.sourceFingerprint === sourceFingerprint;
+    if (matchingCompletion || matchingBlocker) {
       const extracted = await readJson(paths.extracted);
       return {
         status: completed,
@@ -187,6 +224,10 @@ async function processProperty({
       failureCount: 1,
       attempts: 1,
       completedAt: nowIso(clock),
+      sourceFingerprint,
+      completionFingerprint,
+      detailFingerprintVersion,
+      detailComplete: false,
     });
     await Promise.all([
       atomicWriteJson(paths.raw, {
@@ -279,6 +320,10 @@ async function processProperty({
     failureCount: failures.length,
     attempts: adapterOptions.maxAttempts ?? 3,
     completedAt: nowIso(clock),
+    sourceFingerprint,
+    completionFingerprint,
+    detailFingerprintVersion,
+    detailComplete: failures.length === 0,
   });
   await Promise.all([
     atomicWriteJson(paths.raw, {
@@ -326,6 +371,7 @@ export async function harvestPermitProperties({
     throw new Error("Permit harvest concurrency must be between 1 and 8");
   }
   assertPermitProfileReady(profile);
+  const profileSha256 = permitProfileDigest(profile);
   await mkdir(outputDir, { recursive: true });
   const results = await mapConcurrent(properties, concurrency, (row) =>
     processProperty({
@@ -336,6 +382,7 @@ export async function harvestPermitProperties({
       adapterOptions,
       resume,
       clock,
+      profileSha256,
     }),
   );
   const uniqueRecords = new Map();

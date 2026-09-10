@@ -4,9 +4,8 @@ import {
   createStablePermitId,
   normalizedPermitRecordSchema,
 } from "../contracts.mjs";
-import {
-  normalizeSourcePayload,
-} from "../normalization.mjs";
+import { sha256Json } from "../backfill-inputs.mjs";
+import { normalizeSourcePayload } from "../normalization.mjs";
 import { PermitHttpClient } from "../http.mjs";
 import { PermitSourceError } from "../errors.mjs";
 
@@ -33,7 +32,9 @@ const configSchema = z.object({
   parcelField: z.string().min(1).nullable(),
   fieldMap: z.record(z.string(), z.string()).default({}),
   bulkPageSize: z.number().int().min(1).max(2000).default(1000),
+  bulkConcurrency: z.number().int().min(1).max(4).default(2),
   maximumResultRecords: z.number().int().min(1).max(10000).default(2000),
+  minimumDelayMs: z.number().int().min(250).default(500),
   detailFingerprintVersion: z.string().min(1).default("arcgis-v1"),
 });
 
@@ -69,6 +70,51 @@ function queryUrl(layerUrl, parameters) {
     url.searchParams.set(key, String(value));
   }
   return url.toString();
+}
+
+function combineWhere(...clauses) {
+  const values = clauses.filter((value) => value && value !== "1=1");
+  return values.length === 0
+    ? "1=1"
+    : values.map((value) => `(${value})`).join(" AND ");
+}
+
+function dateWhere(config, fromDate, throughDate) {
+  if (!fromDate && !throughDate) return null;
+  const dateField =
+    config.fieldMap.issuedAt ?? config.fieldMap.appliedAt ?? null;
+  if (!dateField) {
+    throw new PermitSourceError(
+      "ArcGIS delta enumeration requires a configured source date field",
+      {
+        classification: "permanent",
+        code: "arcgis_date_field_unavailable",
+      },
+    );
+  }
+  const nextDay = new Date(`${throughDate}T00:00:00.000Z`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  return `${dateField} >= DATE ${sqlLiteral(fromDate)} AND ${dateField} < DATE ${sqlLiteral(nextDay.toISOString().slice(0, 10))}`;
+}
+
+async function mapConcurrent(values, concurrency, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, Math.max(values.length, 1)) },
+      () => worker(),
+    ),
+  );
+  return results;
 }
 
 function publicSourceAttributes(attributes) {
@@ -234,11 +280,61 @@ export function createArcgisFeatureServiceAdapter(
     return payload;
   }
 
-  async function enumerate({ where = "1=1", limit } = {}) {
+  async function sourceCount(where) {
+    const payload = await executeQuery({
+      where,
+      returnCountOnly: true,
+      outFields: "",
+    });
+    if (!Number.isInteger(payload.count) || payload.count < 0) {
+      throw new PermitSourceError("ArcGIS source did not return a valid count", {
+        classification: "permanent",
+        code: "arcgis_count_unavailable",
+      });
+    }
+    return payload.count;
+  }
+
+  async function sourceSnapshot(where) {
+    const [count, idsPayload] = await Promise.all([
+      sourceCount(where),
+      executeQuery({
+        where,
+        returnIdsOnly: true,
+        outFields: "",
+      }),
+    ]);
+    const objectIds = [...(idsPayload.objectIds ?? [])].sort((left, right) =>
+      String(left).localeCompare(String(right), undefined, {
+        numeric: true,
+      }),
+    );
+    if (
+      objectIds.length !== count ||
+      new Set(objectIds.map(String)).size !== count
+    ) {
+      throw new PermitSourceError(
+        `ArcGIS source identity reconciliation failed: count=${count}, ids=${objectIds.length}`,
+        {
+          classification: "permanent",
+          code: "arcgis_source_reconciliation_failed",
+        },
+      );
+    }
+    return {
+      count,
+      objectIds,
+      objectIdsSha256: sha256Json(objectIds.map(String)),
+      where,
+    };
+  }
+
+  async function enumerateBounded({ where = "1=1", limit } = {}) {
     const maximum = Math.min(
       limit ?? config.maximumResultRecords,
       config.maximumResultRecords,
     );
+    const reportedCount = await sourceCount(where);
     const features = [];
     let offset = 0;
     while (features.length < maximum) {
@@ -258,22 +354,147 @@ export function createArcgisFeatureServiceAdapter(
     return {
       features,
       count: features.length,
-      truncated: features.length >= maximum,
+      reportedCount,
+      truncated: features.length < reportedCount,
+    };
+  }
+
+  async function enumerateAll({
+    where = "1=1",
+    fromDate = null,
+    throughDate = null,
+    pageConcurrency = config.bulkConcurrency,
+    loadPageCheckpoint = async () => null,
+    onPage = async () => {},
+  } = {}) {
+    if (
+      !Number.isInteger(pageConcurrency) ||
+      pageConcurrency < 1 ||
+      pageConcurrency > config.bulkConcurrency
+    ) {
+      throw new Error(
+        `ArcGIS page concurrency must be between 1 and ${config.bulkConcurrency}`,
+      );
+    }
+    const boundedWhere = combineWhere(
+      where,
+      dateWhere(config, fromDate, throughDate),
+    );
+    const startingSnapshot = await sourceSnapshot(boundedWhere);
+    const pages = [];
+    for (
+      let offset = 0;
+      offset < startingSnapshot.objectIds.length;
+      offset += config.bulkPageSize
+    ) {
+      pages.push(
+        startingSnapshot.objectIds.slice(
+          offset,
+          offset + config.bulkPageSize,
+        ),
+      );
+    }
+    let received = 0;
+    let resumedPages = 0;
+    await mapConcurrent(pages, pageConcurrency, async (objectIds, index) => {
+      const pageKey = `page-${String(index + 1).padStart(6, "0")}`;
+      const pageIdentity = {
+        pageKey,
+        pageIndex: index,
+        objectIds: objectIds.map(String),
+        objectIdsSha256: sha256Json(objectIds.map(String)),
+        snapshotSha256: startingSnapshot.objectIdsSha256,
+      };
+      const checkpoint = await loadPageCheckpoint(pageIdentity);
+      if (
+        checkpoint?.status === "complete" &&
+        checkpoint.snapshotSha256 === pageIdentity.snapshotSha256 &&
+        checkpoint.objectIdsSha256 === pageIdentity.objectIdsSha256 &&
+        checkpoint.receivedCount === objectIds.length
+      ) {
+        received += objectIds.length;
+        resumedPages += 1;
+        return;
+      }
+      const payload = await executeQuery({
+        objectIds: objectIds.join(","),
+        where: boundedWhere,
+        orderByFields: `${config.objectIdField} ASC`,
+      });
+      const features = payload.features ?? [];
+      const receivedIds = features.map((feature) =>
+        String(feature.attributes?.[config.objectIdField] ?? ""),
+      );
+      const expectedIds = new Set(objectIds.map(String));
+      if (
+        payload.exceededTransferLimit ||
+        features.length !== objectIds.length ||
+        new Set(receivedIds).size !== receivedIds.length ||
+        receivedIds.some((objectId) => !expectedIds.has(objectId))
+      ) {
+        throw new PermitSourceError(
+          `ArcGIS page ${pageKey} reconciliation failed`,
+          {
+            classification: "permanent",
+            code: "arcgis_page_reconciliation_failed",
+          },
+        );
+      }
+      const records = features.map((feature) =>
+        normalizeArcgisPermitFeature(feature, {
+          countyKey,
+          countyName,
+          jurisdiction,
+          config,
+          requestedParcelIdentifier:
+            stringValue(
+              feature.attributes?.[field(config, "parcelIdentifier")],
+            )?.replace(/[-\s]/g, "") ?? "unlinked",
+          requestedPropertyId: null,
+        }),
+      );
+      await onPage({
+        ...pageIdentity,
+        status: "complete",
+        receivedCount: features.length,
+        records,
+      });
+      received += features.length;
+    });
+    const endingSnapshot = await sourceSnapshot(boundedWhere);
+    if (
+      endingSnapshot.count !== startingSnapshot.count ||
+      endingSnapshot.objectIdsSha256 !==
+        startingSnapshot.objectIdsSha256 ||
+      received !== startingSnapshot.count
+    ) {
+      throw new PermitSourceError(
+        "ArcGIS source drifted during enumeration; completion is refused",
+        {
+          classification: "transient",
+          code: "arcgis_source_drift",
+        },
+      );
+    }
+    return {
+      status: "complete",
+      sourceCount: startingSnapshot.count,
+      receivedCount: received,
+      pageCount: pages.length,
+      resumedPageCount: resumedPages,
+      snapshotSha256: startingSnapshot.objectIdsSha256,
+      where: boundedWhere,
     };
   }
 
   return {
     key: "arcgis-feature-service",
     async probe() {
-      const payload = await executeQuery({
-        where: "1=1",
-        returnCountOnly: true,
-        outFields: "",
-      });
+      const count = await sourceCount("1=1");
       return {
         status: "ready",
-        ok: Number.isInteger(payload.count),
-        count: payload.count ?? null,
+        ok: true,
+        count,
         parcelSearch: Boolean(config.parcelField),
       };
     },
@@ -288,7 +509,7 @@ export function createArcgisFeatureServiceAdapter(
           },
         );
       }
-      const result = await enumerate({
+      const result = await enumerateBounded({
         where: `${config.parcelField} = ${sqlLiteral(parcelIdentifier)}`,
       });
       const references = result.features.map((feature) => ({
@@ -299,6 +520,7 @@ export function createArcgisFeatureServiceAdapter(
       return Object.assign(references, {
         reconciliation: {
           returned: result.count,
+          reported: result.reportedCount,
           truncated: result.truncated,
         },
       });
@@ -316,7 +538,7 @@ export function createArcgisFeatureServiceAdapter(
     },
 
     async enumerate(options) {
-      const result = await enumerate(options);
+      const result = await enumerateBounded(options);
       return {
         ...result,
         records: result.features.map((feature) =>
@@ -334,5 +556,6 @@ export function createArcgisFeatureServiceAdapter(
         ),
       };
     },
+    enumerateAll,
   };
 }

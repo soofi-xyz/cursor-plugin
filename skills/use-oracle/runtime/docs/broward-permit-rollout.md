@@ -101,28 +101,154 @@ npm run permits:probe-broward --prefix skills/use-oracle/runtime -- \
   --limit 2
 ```
 
-## Idempotent plan-only backfill
+## Approved delta and repair execution
 
-Create a delta plan without executing ingestion or writing a database:
+The backfill command writes local private artifacts only. It has no database,
+truncate, publication, or Filebase path, so it cannot mutate the existing
+1,276,328 published Broward rows or the 16,084 rows retained from blocked
+systems. Loading and publication remain separate reviewed operations.
+
+### Required operator inputs
+
+Keep all input and output paths outside Git:
+
+- A schema-valid Broward property JSONL or Parquet file. Each row needs
+  `property_id`, `parcel_identifier`, and city or address routing evidence.
+- A source-checkpoint JSON file using
+  `elephant.permit-source-checkpoints.v1`. Each successful source entry binds
+  `jurisdictionKey`, `sourceKey`, `throughDate`, `profileSha256`,
+  `detailFingerprintVersion`, and its prior `executionFingerprint`.
+- For repair mode, a JSONL manifest using
+  `elephant.permit-repair-candidate.v1`. Each row identifies one property/source
+  and records prior status, profile digest, detail fingerprint, and whether
+  full detail was completed.
+- Independent review and approval of the generated `planDigest`. Do not put
+  credentials, database URLs, cookies, private rows, or secret values in plans
+  or logs.
+
+For a first bounded run, the reviewed checkpoint file is:
+
+```json
+{
+  "schemaVersion": "elephant.permit-source-checkpoints.v1",
+  "countyKey": "broward",
+  "generatedAt": "2026-09-10T00:00:00.000Z",
+  "sources": []
+}
+```
+
+Later runs use the executor-produced `source-checkpoints.json`; do not
+hand-advance dates. A repair manifest is JSONL, one strict object per line:
+
+```json
+{"schemaVersion":"elephant.permit-repair-candidate.v1","countyKey":"broward","jurisdictionKey":"hollywood","sourceKey":"accela-current","property":{"propertyId":"00000000000000000000000000000001","parcelIdentifier":"514111160001","city":"Hollywood","workAddress":"1 Example Street"},"prior":{"status":"missing","profileSha256":null,"detailFingerprintVersion":null,"detailComplete":false}}
+```
+
+The planner reads and validates every input. It stores only byte counts, row
+counts, content SHA-256 digests, candidate summaries, and execution
+fingerprints—never local paths or property rows. Moving identical input bytes
+does not change the plan.
+
+### Delta plan
+
+Every source with a compatible successful checkpoint starts one day before its
+last `throughDate`, providing the required overlap. A source without a
+compatible checkpoint is labeled `initial-bounded-backfill`; it is never called
+a delta and requires both a bounded `--initial-from` date and a separate
+execution approval flag.
 
 ```bash
-npm run permits:backfill-plan --prefix skills/use-oracle/runtime -- \
+npm run permits:backfill --prefix skills/use-oracle/runtime -- plan \
   --county broward \
   --mode delta \
-  --from 2026-09-01 \
-  --through 2026-09-09 \
-  --properties /approved/path/broward-properties.parquet
+  --through 2026-09-10 \
+  --initial-from 2025-01-01 \
+  --properties /approved/private/broward-properties.parquet \
+  --checkpoints /approved/private/source-checkpoints.json \
+  --output /approved/private/plans/broward-delta-plan.json
 ```
 
-Create a repair plan for missing, failed, or stale detail fingerprints:
+Omit `--initial-from` only when every selected source has a compatible
+successful checkpoint. Use repeatable `--jurisdiction <key>` arguments to
+create a deliberately narrower plan.
+
+### Repair plan
+
+Repair selection includes missing, failed, transient, stale-profile,
+stale-detail-fingerprint, and summary-only candidates when full contractor
+detail is required. Matching completed detail is excluded, and explicit access
+blockers remain blocked. If an ArcGIS bulk task has any selected repair
+candidate, its approved repair executes a full reconciled source enumeration;
+the bulk-only HCED source cannot safely repair by parcel.
 
 ```bash
-npm run permits:backfill-plan --prefix skills/use-oracle/runtime -- \
+npm run permits:backfill --prefix skills/use-oracle/runtime -- plan \
   --county broward \
   --mode repair \
-  --manifest /approved/path/permit-artifact-manifest.json
+  --manifest /approved/private/broward-repair-candidates.jsonl \
+  --output /approved/private/plans/broward-repair-plan.json
 ```
 
-Use repeatable `--jurisdiction <key>` arguments to bound either plan. The CLI
-refuses `--execute`; broad capture and database writes require a separate
-approved operator action and credentials.
+### Execute an approved plan
+
+Review the immutable plan and copy its exact `planDigest` into the approval
+record. Execution re-reads and hashes the supplied inputs, rejects a changed
+plan or input, and binds the output directory to that plan.
+
+Delta:
+
+```bash
+npm run permits:backfill --prefix skills/use-oracle/runtime -- execute \
+  --plan /approved/private/plans/broward-delta-plan.json \
+  --approved-plan-sha256 <reviewed-plan-digest> \
+  --properties /approved/private/broward-properties.parquet \
+  --checkpoints /approved/private/source-checkpoints.json \
+  --output /approved/private/runs/broward-delta-2026-09-10 \
+  --owner broward-delta-2026-09-10 \
+  --concurrency 2 \
+  --page-concurrency 2 \
+  --lease-seconds 120 \
+  --approve-initial-backfill
+```
+
+Remove `--approve-initial-backfill` when the plan contains only true delta
+tasks. Repair:
+
+```bash
+npm run permits:backfill --prefix skills/use-oracle/runtime -- execute \
+  --plan /approved/private/plans/broward-repair-plan.json \
+  --approved-plan-sha256 <reviewed-plan-digest> \
+  --manifest /approved/private/broward-repair-candidates.jsonl \
+  --output /approved/private/runs/broward-repair-2026-09-10 \
+  --owner broward-repair-2026-09-10 \
+  --concurrency 2 \
+  --page-concurrency 2 \
+  --lease-seconds 120
+```
+
+Run only after review, approved source access, and approved US egress are in
+place. Do not run either execute command as part of code review.
+
+### Durable completion rules
+
+- All 20 automatable source surfaces are separate source tasks; the 17 explicit
+  blockers are recorded in the plan and never instantiated.
+- The output directory contains a durable lease with a monotonically
+  increasing fencing token, per-work receipts, stable-ID record receipts,
+  source checkpoints, and a final summary. A stale or expired writer cannot
+  commit after takeover.
+- Resume skips only matching completed detail. Failed work is retried,
+  matching access blockers are preserved, and stale summary-only work is
+  retried when the source requires contractor detail.
+- The two ArcGIS routes freeze and hash the complete object-ID inventory,
+  partition it into pages of at most 1,000 with concurrency at most two,
+  checkpoint each reconciled page, and compare the ending inventory to the
+  starting inventory. A cap, missing row, duplicate ID, count mismatch, or
+  source drift prevents a successful source checkpoint.
+
+Monitor durable rollups rather than rescanning record files. Read
+`<run-dir>/_control/lease.json` for owner, expiry, and fencing token;
+`<run-dir>/_checkpoints/<task-id>/progress.json` or `task-summary.json` for
+property-first progress; and page checkpoints in the same task directory for
+ArcGIS progress. `backfill-summary.json` is terminal only. A failed or blocked
+summary is not a completeness claim and must not be handed to a loader.

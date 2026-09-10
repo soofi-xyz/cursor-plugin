@@ -23,6 +23,7 @@ function publicSource({
   contractor = "unknown",
   enumerationStatus = "bounded-only",
   implementationStatus = "adapter-implemented",
+  reportedCount = null,
 }) {
   return {
     key,
@@ -36,6 +37,7 @@ function publicSource({
     implementationStatus,
     enumerationStatus,
     anonymousAccess: true,
+    ...(reportedCount === null ? {} : { reportedCount }),
   };
 }
 
@@ -216,6 +218,7 @@ export const browardPermitProfile = validatePermitProfile({
           boundary:
             "Official HCED reference layer is bulk-enumerable but exposes no certified BCPA parcel field; records remain unlinked until reconciled.",
           enumerationStatus: "bounded-only",
+          reportedCount: 7_369,
         }),
       ],
       adapterRoutes: [
@@ -241,6 +244,7 @@ export const browardPermitProfile = validatePermitProfile({
               contractorQualifier: "QUALIFIER",
             },
             bulkPageSize: 1_000,
+            bulkConcurrency: 2,
             maximumResultRecords: 2_000,
             minimumDelayMs: 500,
             detailFingerprintVersion: "hced-arcgis-v1",
@@ -329,6 +333,7 @@ export const browardPermitProfile = validatePermitProfile({
             "Official open-data layer; parcel-linked bulk records supplement, but do not replace, Accela detail.",
           contractor: "not-exposed",
           enumerationStatus: "certified",
+          reportedCount: 91_027,
         }),
       ],
       adapterRoutes: [
@@ -358,6 +363,7 @@ export const browardPermitProfile = validatePermitProfile({
               contractorLicense: "CONTRACTID",
             },
             bulkPageSize: 1_000,
+            bulkConcurrency: 2,
             maximumResultRecords: 2_000,
             minimumDelayMs: 500,
             detailFingerprintVersion: "fort-lauderdale-arcgis-v1",
