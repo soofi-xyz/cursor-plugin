@@ -4,6 +4,7 @@ import { permitRepairCandidateSchema } from "../src/permits/backfill-inputs.mjs"
 import {
   analyzeRoofingCohort,
   classifyRoofingPermit,
+  chooseControls,
   clusterSupplementalPermits,
   deduplicateSourcePermits,
   evaluatePermitLifecycle,
@@ -434,49 +435,247 @@ describe("source identity and project clustering", () => {
 });
 
 describe("old-roof inference and cohort output", () => {
-  it("requires complete ten-year authority and predecessor coverage", () => {
-    expect(
-      inferOldRoofControl(
-        property({
-          coverage: {
-            ...property().coverage,
-            predecessorComplete: false,
-          },
-        }),
-        [],
-      ),
-    ).toMatchObject({
-      eligible: false,
-      reasonCode: "incomplete_authority_or_predecessor_coverage",
-    });
-  });
-
-  it("returns the required proven-window wording and inferred age", () => {
-    expect(inferOldRoofControl(property(), [])).toMatchObject({
+  it("prefers completion, final, and close dates over issue date", () => {
+    const result = inferOldRoofControl(property(), [
+      permit({
+        status: "Complete",
+        dates: {
+          ...permit().dates,
+          issued: "2015-12-01",
+          completion: "2016-01-01",
+          finalInspection: "2016-01-02",
+          closed: "2016-01-03",
+        },
+      }),
+    ]);
+    expect(result).toMatchObject({
       eligible: true,
-      reasonCode: "no_replacement_found_in_proven_window",
-      statement:
-        "No roof replacement permit found in the proven window 2016-09-10 through 2026-09-10.",
-      inferredAgeBasis: {
-        kind: "structure_built_year",
-        inferredAgeLowerBoundYears: 36,
+      label: "estimated",
+      confidence: "high",
+      estimatedInstallationAnchor: "2016-01-03",
+      basis: {
+        kind: "closed_replacement",
+        dateKind: "close",
+        issueDateFallback: false,
       },
     });
   });
 
-  it("excludes replacement and new-construction evidence in the window", () => {
-    expect(inferOldRoofControl(property(), [permit()]).eligible).toBe(
-      false,
-    );
+  it("uses issue date only as a lower-confidence terminal fallback", () => {
     expect(
       inferOldRoofControl(property(), [
         permit({
+          status: "Complete",
+          dates: {
+            ...permit().dates,
+            issued: "2015-12-01",
+            completion: null,
+            finalInspection: null,
+            closed: null,
+          },
+        }),
+      ]),
+    ).toMatchObject({
+      eligible: true,
+      confidence: "medium",
+      estimatedInstallationAnchor: "2015-12-01",
+      basis: { issueDateFallback: true },
+    });
+  });
+
+  it("flags open replacement work without resetting estimated age", () => {
+    expect(inferOldRoofControl(property(), [permit()])).toMatchObject({
+      eligible: false,
+      reasonCode: "active_replacement_pending_or_in_progress",
+      activeReplacementPermits: [{ permitNumber: "BLD-1" }],
+    });
+  });
+
+  it("does not reset estimated age for repair permits", () => {
+    expect(
+      inferOldRoofControl(property(), [
+        permit({
+          status: "Complete",
+          workClass: "Roof repair",
+          scope: "Repair roof flashing",
+          dates: {
+            ...permit().dates,
+            issued: "2025-09-10",
+            completion: "2025-09-11",
+            closed: "2025-09-11",
+          },
+        }),
+      ]),
+    ).toMatchObject({
+      eligible: true,
+      confidence: "low",
+      basis: { kind: "property_built_year", builtYear: 1990 },
+    });
+  });
+
+  it("labels built-year inference as a low-confidence max-age estimate", () => {
+    expect(inferOldRoofControl(property(), [])).toMatchObject({
+      eligible: true,
+      label: "estimated",
+      confidence: "low",
+      estimatedInstallationRange: {
+        fromDate: "1990-01-01",
+        throughDate: "1990-12-31",
+      },
+      basis: { kind: "property_built_year", builtYear: 1990 },
+    });
+  });
+
+  it("lets the latest closed replacement supersede older anchors", () => {
+    const oldReplacement = permit({
+      sourceRecordKey: "old",
+      permitNumber: "OLD-1",
+      status: "Complete",
+      dates: {
+        ...permit().dates,
+        issued: "2010-01-01",
+        completion: "2010-02-01",
+        closed: "2010-02-01",
+      },
+    });
+    const laterReplacement = permit({
+      sourceRecordKey: "later",
+      permitNumber: "LATER-1",
+      status: "Complete",
+      dates: {
+        ...permit().dates,
+        issued: "2018-01-01",
+        completion: "2018-02-01",
+        closed: "2018-02-01",
+      },
+    });
+    expect(
+      inferOldRoofControl(property(), [
+        oldReplacement,
+        laterReplacement,
+      ]),
+    ).toMatchObject({
+      eligible: false,
+      reasonCode: "estimated_anchor_after_threshold",
+      estimatedInstallationRange: { throughDate: "2018-02-01" },
+    });
+  });
+
+  it("keeps incomplete source history eligible only as a caveated low estimate", () => {
+    const result = inferOldRoofControl(
+      property({
+        coverage: {
+          fromDate: null,
+          throughDate: null,
+          authorityComplete: false,
+          predecessorComplete: false,
+          sourceSystems: [],
+        },
+      }),
+      [],
+    );
+    expect(result).toMatchObject({
+      eligible: true,
+      confidence: "low",
+      availableHistoryWindow: {
+        completeForThreshold: false,
+      },
+    });
+    expect(result.caveat).toMatch(/not a verified roof age/i);
+    expect(result.caveat).toMatch(/predecessor_history_incomplete/);
+  });
+
+  it("includes an authoritative anchor exactly on the threshold boundary", () => {
+    expect(
+      inferOldRoofControl(property(), [
+        permit({
+          status: "Complete",
+          dates: {
+            ...permit().dates,
+            issued: "2016-09-01",
+            completion: "2016-09-10",
+            closed: "2016-09-10",
+          },
+        }),
+      ]),
+    ).toMatchObject({
+      eligible: true,
+      confidence: "high",
+      estimatedInstallationAnchor: "2016-09-10",
+    });
+  });
+
+  it("uses completed new construction as a medium original-roof anchor", () => {
+    expect(
+      inferOldRoofControl(property(), [
+        permit({
+          status: "Complete",
           permitType: "Building",
           workClass: "New SFR",
           scope: "New single-family residence",
+          trade: "Building",
+          dates: {
+            ...permit().dates,
+            issued: "2009-12-01",
+            completion: "2010-06-01",
+            closed: "2010-06-01",
+          },
         }),
-      ]).reasonCode,
-    ).toBe("new_construction_in_window");
+      ]),
+    ).toMatchObject({
+      eligible: true,
+      confidence: "medium",
+      basis: { kind: "new_construction" },
+      estimatedInstallationAnchor: "2010-06-01",
+    });
+  });
+
+  it("downgrades a future completion date to issue-date fallback", () => {
+    const result = inferOldRoofControl(property(), [
+      permit({
+        status: "Complete",
+        dates: {
+          ...permit().dates,
+          issued: "2015-12-01",
+          completion: "2026-09-11",
+          closed: null,
+        },
+      }),
+    ]);
+    expect(result).toMatchObject({
+      eligible: true,
+      confidence: "medium",
+      basis: { issueDateFallback: true },
+    });
+    expect(result.caveat).toMatch(/completion_future/);
+  });
+
+  it("prefers high and medium controls before low estimates", () => {
+    const candidates = [
+      {
+        parcelIdentifier: "514111160003",
+        authority: "hollywood",
+        usageType: "Residential",
+        confidence: "low",
+      },
+      {
+        parcelIdentifier: "514111160001",
+        authority: "hollywood",
+        usageType: "Residential",
+        confidence: "high",
+      },
+      {
+        parcelIdentifier: "514111160002",
+        authority: "hollywood",
+        usageType: "Residential",
+        confidence: "medium",
+      },
+    ];
+    expect(
+      chooseControls(candidates, [], 2).map(
+        (candidate) => candidate.confidence,
+      ),
+    ).toEqual(["high", "medium"]);
   });
 
   it("emits strict repair candidates for supported missing detail only", () => {
