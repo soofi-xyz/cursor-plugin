@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { writeQueryTableParquet } from "../core/query-table.mjs";
 import { permitProfileDigest } from "../counties/permit-profile.mjs";
+import { resolveRoofAge } from "../roof-age/rule.mjs";
 import {
   normalizedPermitRecordSchema,
   parcelPermitStatusSchema,
@@ -162,7 +163,22 @@ function buildPermitCoverage({ records, statuses, profile, exportedAt }) {
   });
 }
 
-function rewritePropertyRows(propertyRows, records) {
+function parseRoofLineage(value) {
+  if (value !== null && typeof value === "object") return value;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function rewritePropertyRows(
+  propertyRows,
+  records,
+  { permitPolicy, asOfDate },
+) {
   const propertyIds = new Set();
   const parcelByProperty = new Map();
   for (const row of propertyRows) {
@@ -174,7 +190,7 @@ function rewritePropertyRows(propertyRows, records) {
     propertyIds.add(row.property_id);
     parcelByProperty.set(row.property_id, row.parcel_identifier ?? null);
   }
-  const counts = new Map();
+  const recordsByPropertyId = new Map();
   for (const record of records) {
     if (!record.property_id || !propertyIds.has(record.property_id)) {
       throw new Error(
@@ -189,14 +205,38 @@ function rewritePropertyRows(propertyRows, records) {
         `Permit ${record.property_improvement_id} parcel link does not match its property row`,
       );
     }
-    counts.set(record.property_id, (counts.get(record.property_id) ?? 0) + 1);
+    const propertyRecords =
+      recordsByPropertyId.get(record.property_id) ?? [];
+    propertyRecords.push(record);
+    recordsByPropertyId.set(record.property_id, propertyRecords);
   }
   return propertyRows.map((row) => {
-    const permitCount = counts.get(row.property_id) ?? 0;
-    return {
+    const propertyRecords = recordsByPropertyId.get(row.property_id) ?? [];
+    const roofState = resolveRoofAge({
+      propertyId: row.property_id,
+      explicitRoofDate: row.roof_date,
+      explicitRoofAgeYears: row.roof_age_years,
+      builtYear: row.built_year,
+      explicitSource: row.roof_date_source,
+      existingLineage: parseRoofLineage(row.roof_date_lineage),
+      permits: propertyRecords,
+      permitPolicy,
+      sourceSystem: row.source_system,
+      sourceRecordKey: row.request_identifier,
+      asOfDate,
+    });
+    const rewritten = {
       ...row,
-      has_permits: permitCount > 0,
-      permit_count: permitCount,
+      has_permits: propertyRecords.length > 0,
+      permit_count: propertyRecords.length,
+    };
+    if (roofState === null) return rewritten;
+    return {
+      ...rewritten,
+      roof_date: roofState.roofDate,
+      roof_age_years: roofState.roofAgeYears,
+      roof_date_source: roofState.roofDateSource,
+      roof_date_lineage: JSON.stringify(roofState.roofDateLineage),
     };
   });
 }
@@ -257,7 +297,10 @@ export async function exportPermitArtifacts({
     );
   }
   const propertyRows = await readParquetRows(inputPropertyParquet);
-  const rewrittenProperties = rewritePropertyRows(propertyRows, records);
+  const rewrittenProperties = rewritePropertyRows(propertyRows, records, {
+    permitPolicy: profile.roofAgePolicy,
+    asOfDate: exportedAt,
+  });
   const permitCoverage = buildPermitCoverage({
     records,
     statuses,

@@ -24,6 +24,7 @@ import {
   writeQueryTableParquet,
   buildCoverageSnapshot,
 } from "../../core/query-table.mjs";
+import { normalizeAsOfDate } from "../../roof-age/rule.mjs";
 import {
   mapTransformedFilesToQueryTableRow,
   QUERY_TABLE_SCHEMA_FIELDS,
@@ -208,6 +209,7 @@ async function zipDataDirectory(dataDir, zipPath) {
  * @property {string} htmlDir - Directory of `<strap>.html` fixture/cache files.
  * @property {string} outputDir - Run directory; one `<strap>/` subdirectory is created per parcel.
  * @property {boolean} [liveFetch] - When true, fetch missing HTML from PCPAO. Defaults to false (fail closed).
+ * @property {string | Date} [asOfDate] - Frozen date for roof-age derivation. Defaults to the current UTC date.
  */
 
 /**
@@ -231,7 +233,14 @@ async function zipDataDirectory(dataDir, zipPath) {
  * @returns {Promise<{ county: string, outputDir: string, results: ParcelTransformResult[] }>}
  *   Run manifest, also written to `<outputDir>/manifest.json`.
  */
-export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFetch = false }) {
+export async function captureAndTransform({
+  seedRows,
+  htmlDir,
+  outputDir,
+  liveFetch = false,
+  asOfDate = new Date(),
+}) {
+  const roofAgeAsOfDate = normalizeAsOfDate(asOfDate);
   await mkdir(outputDir, { recursive: true });
   /** @type {ParcelTransformResult[]} */
   const results = [];
@@ -270,6 +279,7 @@ export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFe
         scriptNames: ALL_TRANSFORM_SCRIPTS,
         workDir: parcelDir,
         resultFile: "data/property.json",
+        roofAgeAsOfDate,
       });
 
       await zipDataDirectory(dataDir, path.join(parcelDir, "transformed.zip"));
@@ -289,7 +299,12 @@ export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFe
       });
     }
   }
-  const manifest = { county: COUNTY_KEY, outputDir, results };
+  const manifest = {
+    county: COUNTY_KEY,
+    outputDir,
+    roofAgeAsOfDate,
+    results,
+  };
   await writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }

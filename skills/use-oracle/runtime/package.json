@@ -25,7 +25,8 @@
     "catalog:update": "node scripts/catalog/update-published-county-catalog.mjs",
     "catalog:mcp-maps": "node scripts/catalog/print-mcp-env-maps.mjs",
     "catalog:merge-mcp-maps": "node scripts/catalog/merge-mcp-env-maps.mjs",
-    "catalog:sync-mcp-json": "node scripts/catalog/sync-mcp-json.mjs"
+    "catalog:sync-mcp-json": "node scripts/catalog/sync-mcp-json.mjs",
+    "demo:duval-roof-age": "node scripts/demo-duval-roof-age.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-batch": "^3.1127.0",

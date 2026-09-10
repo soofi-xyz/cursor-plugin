@@ -1,0 +1,226 @@
+{
+  "schemaVersion": "elephant.roof-age-coverage-inventory.v1",
+  "capturedAt": "2026-09-09T18:20:35Z",
+  "catalogGeneratedAt": "2026-09-08T18:02:22.201Z",
+  "catalogRevision": "ae4bfb88e8f18da2ac0bced190e064bd99b9d83788ed5ddf118846c630cdef2e",
+  "method": {
+    "source": "Elephant MCP published property and permit Parquet",
+    "propertySchemaTool": "getPropertyQuerySchema",
+    "propertyCountTool": "queryProperties",
+    "permitSchemaTool": "getPermitQuerySchema",
+    "permitCountTool": "queryPermits",
+    "timeoutHandling": "One retry; repeated gateway timeouts are reported as null, never zero."
+  },
+  "summary": {
+    "publishedCountyCount": 13,
+    "propertyTablesWithCanonicalRoofContract": 0,
+    "propertyTablesWithYearBuiltField": 13,
+    "publishedPermitTableCount": 4,
+    "strictOverlayReadyPermitTables": 1,
+    "strictOverlayReadyCounties": ["duval"]
+  },
+  "counties": [
+    {
+      "countyKey": "broward",
+      "stateCode": "FL",
+      "publicationScope": "partial",
+      "propertyRowCount": null,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": true,
+      "strictPermitOverlayReady": false,
+      "notes": [
+        "Property and permit count queries timed out twice.",
+        "Permit schema has linkage, terminal status, and completion-date fields, but no county-reviewed roof overlay policy is configured."
+      ]
+    },
+    {
+      "countyKey": "chester",
+      "stateCode": "PA",
+      "publicationScope": "pilot",
+      "propertyRowCount": 5093,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 0,
+      "roofMaterialPopulatedCount": 0,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false
+    },
+    {
+      "countyKey": "duval",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 403885,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 362349,
+      "roofMaterialPopulatedCount": 331183,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": true,
+      "permitRowCount": 3415527,
+      "roofPermitCount": 375267,
+      "finalizedDatedRoofPermitCount": 270198,
+      "strictOverlayCandidateCount": 179052,
+      "strictPermitOverlayReady": true,
+      "notes": [
+        "Strict candidates require Roofing Permit, exact Finalized status, completion_date, and explicit replacement or upgrade text.",
+        "Finalized - NIF is intentionally not treated as terminal for roof overlay."
+      ]
+    },
+    {
+      "countyKey": "hillsborough",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 524196,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 0,
+      "roofMaterialPopulatedCount": 478367,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false
+    },
+    {
+      "countyKey": "lee",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 511695,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false,
+      "notes": [
+        "Dataset metadata reports 511,695 appraisal rows and permit coverage in the coverage artifact, but no public permit query table is cataloged.",
+        "Property count query timed out twice."
+      ]
+    },
+    {
+      "countyKey": "miami-dade",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": null,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false,
+      "notes": ["Property count query timed out twice."]
+    },
+    {
+      "countyKey": "montgomery",
+      "stateCode": "PA",
+      "publicationScope": "full",
+      "propertyRowCount": null,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": true,
+      "strictPermitOverlayReady": false,
+      "notes": [
+        "Property and permit count queries timed out twice.",
+        "Published permit schema has is_roof_permit but no completion, close, or final-inspection date and no property_id linkage."
+      ]
+    },
+    {
+      "countyKey": "orange",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 489557,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 438508,
+      "roofMaterialPopulatedCount": 0,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false
+    },
+    {
+      "countyKey": "palm-beach",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": null,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false,
+      "notes": ["Property count query timed out twice."]
+    },
+    {
+      "countyKey": "pinellas",
+      "stateCode": "FL",
+      "publicationScope": "pilot",
+      "propertyRowCount": null,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": null,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false,
+      "notes": ["Property count query timed out twice."]
+    },
+    {
+      "countyKey": "polk",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 438612,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 352934,
+      "roofMaterialPopulatedCount": 251777,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false
+    },
+    {
+      "countyKey": "rock-island",
+      "stateCode": "IL",
+      "publicationScope": "full",
+      "propertyRowCount": 65806,
+      "yearBuiltField": "built_year",
+      "yearBuiltPopulatedCount": 52762,
+      "roofMaterialPopulatedCount": 0,
+      "existingRoofAgeField": null,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": true,
+      "permitRowCount": 47385,
+      "roofPermitCount": 9185,
+      "terminalRoofPermitCount": 0,
+      "strictPermitOverlayReady": false,
+      "notes": [
+        "Published permit schema has is_roof_permit but no completion, close, or final-inspection date and no property_id linkage."
+      ]
+    },
+    {
+      "countyKey": "seminole",
+      "stateCode": "FL",
+      "publicationScope": "full",
+      "propertyRowCount": 181218,
+      "yearBuiltField": "year_built",
+      "yearBuiltPopulatedCount": 161979,
+      "roofMaterialPopulatedCount": null,
+      "existingRoofAgeField": "roof_age",
+      "existingRoofAgePopulatedCount": 161979,
+      "canonicalRoofFieldsPublished": false,
+      "permitTablePublished": false,
+      "strictPermitOverlayReady": false,
+      "notes": [
+        "Existing roof_age is a county-specific derived field, not the canonical roof_date, roof_age_years, roof_date_source, and lineage contract."
+      ]
+    }
+  ]
+}

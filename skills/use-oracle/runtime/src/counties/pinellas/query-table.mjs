@@ -158,6 +158,14 @@ export function mapTransformedFilesToQueryTableRow({ strap, files, seedRow }) {
     lot_area_sqft: lotAreaSqft,
     exterior_wall_material: toText(structure.exterior_wall_material_primary) ?? toText(structure.exterior_wall_material),
     roof_covering_material: toText(structure.roof_covering_material),
+    roof_date: toText(structure.roof_date),
+    roof_age_years: toInteger(structure.roof_age_years),
+    roof_date_source: toText(structure.roof_date_source),
+    roof_date_lineage:
+      structure.roof_date_lineage === null ||
+      structure.roof_date_lineage === undefined
+        ? null
+        : JSON.stringify(structure.roof_date_lineage),
     property_type: toText(property.property_type),
     property_usage_type: toText(property.property_usage_type),
     built_year: toInteger(property.property_structure_built_year) ?? toInteger(buildingLayout.built_year),
@@ -204,6 +212,10 @@ export const QUERY_TABLE_SCHEMA_FIELDS = Object.freeze({
   lot_area_sqft: { type: "DOUBLE", optional: true },
   exterior_wall_material: { type: "UTF8", optional: true },
   roof_covering_material: { type: "UTF8", optional: true },
+  roof_date: { type: "UTF8", optional: true },
+  roof_age_years: { type: "INT64", optional: true },
+  roof_date_source: { type: "UTF8", optional: true },
+  roof_date_lineage: { type: "UTF8", optional: true },
   property_type: { type: "UTF8", optional: true },
   property_usage_type: { type: "UTF8", optional: true },
   built_year: { type: "INT64", optional: true },

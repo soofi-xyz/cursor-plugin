@@ -6,6 +6,53 @@ export const duvalPermitProfile = validatePermitProfile({
   stateCode: "FL",
   countyFips: "12031",
   parcelIdentifierPattern: "^\\d{6}-\\d{4}$",
+  roofAgePolicy: {
+    policyVersion: "duval-roof-age.v1",
+    sources: [
+      {
+        sourceSystem: "duval_jaxepics_bid_map",
+        terminalStatuses: ["Finalized"],
+        roofPermitTypes: ["Roofing Permit"],
+        replacementTerms: [
+          "reroof",
+          "re-roof",
+          "roof replacement",
+          "replace roof",
+          "replace existing roof",
+          "roof upgrade",
+        ],
+        excludedTerms: [
+          "new construction",
+          "new building",
+          "new residence",
+          "new home",
+          "addition",
+        ],
+        allowPermitTypeOnly: false,
+      },
+      {
+        sourceSystem: "JaxEPICS",
+        terminalStatuses: ["Finalized"],
+        roofPermitTypes: ["Roofing Permit"],
+        replacementTerms: [
+          "reroof",
+          "re-roof",
+          "roof replacement",
+          "replace roof",
+          "replace existing roof",
+          "roof upgrade",
+        ],
+        excludedTerms: [
+          "new construction",
+          "new building",
+          "new residence",
+          "new home",
+          "addition",
+        ],
+        allowPermitTypeOnly: false,
+      },
+    ],
+  },
   jurisdictions: [
     {
       key: "jacksonville",
