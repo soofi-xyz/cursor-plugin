@@ -1,0 +1,247 @@
+schema_version: elephant.duval-mcp-gap-closure.v1
+county: duval
+fips: "12031"
+source_system: duval_appraiser
+frozen_at: "2026-09-08T04:45:00Z"
+
+protected_publications:
+  property_query_table:
+    label: oracle-query-table-duval
+    network_key: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
+    input_cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
+    cid: QmeWMT7HWoSDX9PLahXDaRuWbXtktSpb5t2kZBvqTNRi5b
+    sha256: e2de98650d33d0280a666401b5778d8e4d8168ca420fd78ca6d167916a43fb29
+    bytes: 187692636
+    mutation_policy: approved post-enrichment repoint completed once
+  permit_table:
+    label: oracle-permit-table-duval
+    network_key: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
+    cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
+    sha256: 6cd60ee4ea6337f3fa55a7a515b516eacef7b7761a3be06078da4b2c81267c5e
+    bytes: 1108488548
+    mutation_policy: immutable for this workflow
+  dataset_coverage:
+    label: oracle-dataset-coverage-duval
+    network_key: k51qzi5uqu5dgqc52fnea1o42e27dr4os0mrdf5ixonuv8kdztdnxclflazf4w
+    cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
+    refrozen_at: "2026-09-08T14:35:57.784Z"
+    refreeze_reason: Corrected permit-mediated BBB publication; this gap workflow consumes that query snapshot and must not repoint coverage.
+    mutation_policy: immutable for this workflow
+  identity_evidence:
+    - source: Filebase Names API
+      observed_at: "2026-09-08T04:45:00Z"
+      result: all three label, network-key, and CID tuples matched this catalog
+    - source: public IPFS gateway response headers
+      observed_at: "2026-09-08T04:45:00Z"
+      result: all three x-ipfs-roots and ETags matched the Filebase Names API CIDs
+    - source: BBB publication receipt plus Filebase Names API and public immutable gateway
+      observed_at: "2026-09-08T14:40:56.006Z"
+      result: query and coverage resolve to the corrected permit-mediated BBB artifacts; permit identity remains unchanged
+
+frozen_counts:
+  appraisal_properties: 403885
+  appraisal_expected: 404023
+  permits: 3415527
+  permit_source_records: 3624986
+  sunbiz_records: 691288
+  sunbiz_linked_properties: 42184
+  independently_published_bbb_profiles: 698
+  properties_with_permits: 336451
+  properties_with_sunbiz: 42184
+  properties_with_bbb_contractor: 171134
+  bbb_properties_without_permits: 0
+  property_cid_non_null: 0
+  avm_value_non_null: 0
+  hoa_flag_non_null: 0
+
+owner_occupied_source:
+  status: qualified
+  source: Florida DOR 2026 Preliminary NAL
+  url: https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/Tax%20Roll%20Data%20Files/NAL/2026P/Duval%2026%20Preliminary%20NAL%202026.zip
+  source_sha256: 4ae67aa7550d9d9051c44f01a52ab335897af4959e9625e9ae1e007d77521691
+  source_bytes: 29080532
+  field: AV_HMSTD
+  source_rows: 404023
+  published_property_intersection: 403885
+  output_sha256: 4504bf852552ad24db03ed565d88b6feb39eef750240a14a1c1324bad53df493
+  output_bytes: 21825424
+  derived_split:
+    true: 212959
+    false: 0
+    null: 190926
+  smoke_parcels:
+    "164634-0000": null
+    "096925-0000": null
+  rule: AV_HMSTD greater than zero is true, explicit zero is false, and blank/unparseable/unmatched is null
+
+sunbiz_input:
+  status: qualified-existing-artifact
+  aws_stack: DuvalTask8BatchStack
+  run_id: duval-task8-2026q3-ddaa7c4d-r2
+  handoff_key: runs/duval-task8-2026q3-ddaa7c4d-r2/handoffs/sunbiz.json
+  input_query_table_sha256: 0477a8f2c7cf343eb3171deacf37c84ac2b75d10ee7ad9480a7fc5867bbeb7eb
+  enriched_query_table_sha256: da2b8e7d7be05efc3807db6b8eecb5054dc3d98a2b510358a48a01159abef95c
+  property_links_sha256: 2c7bd954f6835ff151db17a1406858bd27a2a0b9d750ce0d65d820777120d561
+  source_records: 691288
+  linked_properties: 42184
+  links: 73127
+  bbb_dependency: none
+  public_field_policy:
+    include:
+      - schemaVersion
+      - source
+      - documentNumber
+      - entityName
+      - statusCode
+      - status
+      - filingTypeCode
+      - filingType
+      - filedDate
+      - lastTransactionDate
+      - stateCountry
+      - annualReports
+      - linkage.matchMethod
+    exclude:
+      - principalAddress
+      - mailingAddress
+      - registeredAgent
+      - officers
+      - feiNumber
+      - rawRecordLength
+      - matchedAddresses
+
+dedicated_destinations:
+  property_documents:
+    bucket: elephant-oracle-open-data-duval
+    label: oracle-open-data-duval
+    preflight: absent_at_2026_09_08T04_45Z
+  places:
+    bucket: elephant-oracle-open-data-duval-places
+    label: oracle-open-data-duval-places
+    preflight: absent_at_2026_09_08T04_45Z
+
+hoa_gap:
+  status: blocked
+  column: hoa_flag
+  observed_coverage: 0_percent
+  classification: platform_source_gap
+  explanation: No county has an association-membership ingest. The query-table column is a schema-stability placeholder, not a missed Duval transform.
+  evaluated_sources:
+    - source: Florida DBPR condominium and managing-entity public records
+      url: https://www2.myfloridalicense.com/condos-timeshares-mobile-homes/public-records/
+      fit: association identity and management candidates
+      blocker: no complete authoritative parcel-membership or authoritative-negative contract
+    - source: FloridaCommerce Official List of Special Districts
+      url: https://www.floridajobs.org/community-planning-and-development/special-districts/special-district-accountability-program/official-list-of-special-districts
+      fit: CDD identity and district boundary provenance
+      blocker: The list identifies districts but does not provide centralized parcel boundaries; CDD coverage is not HOA membership and must not set hoa_flag
+    - source: City of Jacksonville GIS or Clerk records
+      fit: requested source for parcel-level membership or boundaries
+      blocker: no reviewed complete parcel-linkable publication available in the runtime
+  lexicon_mapping:
+    vertices:
+      - common_interest_community
+      - community_association
+      - community_development_district
+      - company
+    relationships:
+      - association_governs_community
+      - property_has_association_membership
+      - property_within_cdd
+      - company_manages_association
+    rules:
+      - hoa_flag true requires effective authoritative parcel membership
+      - hoa_flag false requires complete authoritative negative coverage
+      - partial, candidate, management-only, and CDD-only evidence remains null
+  blocker:
+    owner: Oracle Data Partnerships
+    missing_requirement: Complete parcel-linkable source, publication rights, and Lexicon owner approval
+    next_action: Request DBPR/public-records access plus Jacksonville GIS or Clerk parcel records, then route the reusable schema through the Lexicon owner
+
+avm_gap:
+  status: blocked
+  column: avm_value
+  query_db_path: property_valuations.current_avm_value
+  affected_paths:
+    - src/counties/duval/query-table.mjs
+    - downstream consolidated property JSON
+    - downstream property query-table Parquet
+  observed_coverage: 0_percent
+  classification: platform_source_gap
+  explanation: The Oracle runtime has no named AVM vendor, ingest skill, credential, or permitted-use contract. Appraisal market_value is not an AVM.
+  required_load_contract:
+    property_key: Duval folio or RE Number
+    fields:
+      - current_avm_value
+      - valuation_date
+      - valuation_method_type
+      - confidence_score
+      - valuation_high
+      - valuation_low
+      - vendor_property_id
+      - publication_permitted
+      - immutable_source_provenance
+    selection: latest approved method and valuation date
+  blocker:
+    owner: Oracle Data Partnerships
+    missing_requirement: Named vendor, credential, folio-keyed feed, and permitted-use contract
+    next_action: Select and contract the intended AVM provider, then implement the reusable idempotent loader
+
+execution_guard:
+  aws_account: "282516654782"
+  aws_region: us-east-1
+  aws_profile_policy: operator-selected verified profile; never hardcode a developer profile
+  aws_auth_at_freeze: verified_after_sso_refresh
+  remote_writes_allowed: true
+  approval_plan_sha256: 8ba5fb19f4f3dcb1713a2d97898d0790e3a781b7907f861e2b3238b2022cc050
+  approval_record_sha256: 650cf8d6490845c0d010420e125c3627c41e343d59c8b4f8360506e3c262a5ef
+  live_run_id: duval-mcp-gap-20260909-publish-r1
+  live_job_id: 8bbf36e0-6c1b-4321-a537-6d5b535fa76b
+  publication_completed_at: "2026-09-09T14:33:25.609Z"
+  forbidden:
+    - appraisal reingest
+    - permit reingest
+    - BBB submission or harvest
+    - permit IPNS repoint
+    - coverage IPNS repoint
+
+publication:
+  status: published
+  property_documents:
+    bucket: elephant-oracle-open-data-duval
+    label: oracle-open-data-duval
+    network_key: k51qzi5uqu5dilwt7bkcn08hx0ys1fr60yc89mfvk3vkohx0s5hllpcckrdnsn
+    index_cid: QmQuDQ4pHx9sYXccG3ZzLV4GQ6e99sARpCBsVi7uNqHkp4
+    manifest_cid: QmRbz3CGdCjK8YZJNNEMYtkagrbSNRLQ7x8ZWp3tf4qmaU
+    property_count: 403885
+    total_bytes: 2639899112
+  query_table:
+    bucket: elephant-oracle-query-table
+    label: oracle-query-table-duval
+    network_key: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
+    cid: QmeWMT7HWoSDX9PLahXDaRuWbXtktSpb5t2kZBvqTNRi5b
+    sha256: e2de98650d33d0280a666401b5778d8e4d8168ca420fd78ca6d167916a43fb29
+    bytes: 187692636
+  places:
+    bucket: elephant-oracle-open-data-duval-places
+    label: oracle-open-data-duval-places
+    network_key: k51qzi5uqu5dm3737urhv9d68outordu5bs5ie8bffidz6njp6hkklw47kpc9g
+    directory_cid: bafybeib3pm2cbmudpz3uumj4ev3jmsybgj7p6ztk4uyzw24ixsgmwwdmm4
+    table_cid: QmUKW7dTVRZbjdGQYrFSjNBrSpsJSHUBruFSjCchEWBmd3
+    table_sha256: 076ed6396e221e38d54cc26ce22c5816a9f5105fa9fd3c88ab832412da270faf
+    table_bytes: 6623705
+    row_count: 57574
+    overture_release: 2026-08-19.0
+    pii_gate: human-approved-contact-free
+  preserved_publications:
+    permit_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
+    coverage_cid: QmcVZjQuAivZoyWMpMdgRfcATQb3tujMNk5FVHvGVNVWDy
+  published_counts:
+    property_cid_non_null: 403885
+    owner_occupied_true: 212959
+    owner_occupied_false: 0
+    owner_occupied_null: 190926
+    properties_with_sunbiz: 42184
+    properties_with_permits: 336451
+    properties_with_bbb_contractor: 171134
+    bbb_properties_without_permits: 0

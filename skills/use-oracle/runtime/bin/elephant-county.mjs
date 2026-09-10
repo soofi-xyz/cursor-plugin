@@ -66,6 +66,13 @@ import {
   fileIntegrity,
   readJson,
 } from "../src/permits/storage.mjs";
+import { duvalGapProfile } from "../src/counties/duval/gap-profile.mjs";
+import { extractDuvalOwnerOccupied } from "../src/gaps/dor-owner-occupied.mjs";
+import { buildPropertyConsolidation } from "../src/gaps/property-consolidation.mjs";
+import { enrichQueryTableFile } from "../src/gaps/query-table-enrichment.mjs";
+import { extractContactFreeOverturePlaces } from "../src/gaps/overture-places.mjs";
+import { publishDuvalGapArtifacts } from "../src/gaps/filebase-publication.mjs";
+import { materializeSunbizHandoff } from "../src/gaps/sunbiz-handoff.mjs";
 
 const execFileAsync = promisify(execFile);
 const RUNTIME_DIR = path.resolve(
@@ -957,6 +964,178 @@ async function runPermitPublishCommand(argv) {
   );
 }
 
+function assertNoBbbFlags(flags) {
+  const forbidden = Object.keys(flags).filter((name) =>
+    name.toLowerCase().includes("bbb"),
+  );
+  if (forbidden.length > 0) {
+    throw new Error(
+      `Duval gap commands reject BBB flags: ${forbidden.join(", ")}`,
+    );
+  }
+}
+
+function optionalStringFlag(flags, name) {
+  const value = flags[name];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+async function runGapConsolidateCommand(argv) {
+  const flags = parseFlags(argv);
+  assertNoBbbFlags(flags);
+  const county = requireStringFlag(flags, "county");
+  const profile = county === "duval" ? duvalGapProfile : null;
+  if (profile === null) throw new Error("gap-consolidate supports only duval");
+  const result = await buildPropertyConsolidation({
+    county,
+    queryTableParquet: requireStringFlag(flags, "input-parquet"),
+    permitParquet: requireStringFlag(flags, "permit-parquet"),
+    sunbizExtractDir: requireStringFlag(flags, "sunbiz-extract"),
+    sunbizLinksPath: requireStringFlag(flags, "sunbiz-links"),
+    ownerOccupiedPath: requireStringFlag(flags, "owner-occupied"),
+    hoaPath: optionalStringFlag(flags, "hoa"),
+    avmPath: optionalStringFlag(flags, "avm"),
+    outputDir: requireStringFlag(flags, "output"),
+    frozenAt: requireStringFlag(flags, "frozen-at"),
+    expectedPropertyCount: optionalPositiveInteger(
+      flags["expected-properties"],
+      "expected-properties",
+      profile.expectedPropertyCount,
+    ),
+    expectedPermitCount: optionalPositiveInteger(
+      flags["expected-permits"],
+      "expected-permits",
+      profile.expectedPermitCount,
+    ),
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: "gap_consolidation_complete",
+        propertyCount: result.manifest.propertyCount,
+        indexCid: result.indexCid,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runGapOwnerOccupiedCommand(argv) {
+  const flags = parseFlags(argv);
+  assertNoBbbFlags(flags);
+  const county = requireStringFlag(flags, "county");
+  if (county !== "duval") {
+    throw new Error("gap-owner-occupied supports only duval");
+  }
+  const result = await extractDuvalOwnerOccupied({
+    outputDir: requireStringFlag(flags, "output"),
+    cacheDir: requireStringFlag(flags, "cache"),
+    frozenAt: requireStringFlag(flags, "frozen-at"),
+    sourceUrl:
+      optionalStringFlag(flags, "source-url") ?? undefined,
+    expectedSourceSha256: optionalStringFlag(flags, "source-sha256"),
+  });
+  console.log(
+    JSON.stringify(
+      { event: "gap_owner_occupied_complete", ...result },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runGapSunbizHandoffCommand(argv) {
+  const flags = parseFlags(argv);
+  assertNoBbbFlags(flags);
+  const result = await materializeSunbizHandoff({
+    bucket: requireStringFlag(flags, "bucket"),
+    handoffKey: requireStringFlag(flags, "handoff-key"),
+    outputDir: requireStringFlag(flags, "output"),
+    region: optionalStringFlag(flags, "region") ?? "us-east-1",
+    concurrency: optionalPositiveInteger(flags.concurrency, "concurrency", 8),
+  });
+  console.log(
+    JSON.stringify({ event: "gap_sunbiz_materialized", ...result }, null, 2),
+  );
+}
+
+async function runGapQueryTableCommand(argv) {
+  const flags = parseFlags(argv);
+  assertNoBbbFlags(flags);
+  const county = requireStringFlag(flags, "county");
+  if (county !== "duval") throw new Error("gap-query-table supports only duval");
+  const result = await enrichQueryTableFile({
+    county,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    outputParquet: requireStringFlag(flags, "output-parquet"),
+    schemaFields: requireEnrichmentProfile(county).queryTable.schemaFields,
+    cidManifestPath: requireStringFlag(flags, "cid-manifest"),
+    ownerOccupiedPath: requireStringFlag(flags, "owner-occupied"),
+    hoaPath: optionalStringFlag(flags, "hoa"),
+    avmPath: optionalStringFlag(flags, "avm"),
+    outputManifest: requireStringFlag(flags, "output-manifest"),
+    expectedRowCount: optionalPositiveInteger(
+      flags["expected-properties"],
+      "expected-properties",
+      duvalGapProfile.expectedPropertyCount,
+    ),
+    expectedCounts: {
+      ownerOccupiedSourceCount:
+        duvalGapProfile.expectedOwnerOccupiedSourceCount,
+      permitPropertyCount: duvalGapProfile.expectedPermitPropertyCount,
+      linkedPermitCount: duvalGapProfile.expectedLinkedPermitCount,
+      sunbizPropertyCount: duvalGapProfile.expectedSunbizPropertyCount,
+      bbbPropertyCount: duvalGapProfile.expectedBbbPropertyCount,
+      bbbWithoutPermitsCount: 0,
+      ownerOccupiedTrueCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.true,
+      ownerOccupiedFalseCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.false,
+      ownerOccupiedNullCount:
+        duvalGapProfile.expectedOwnerOccupiedSplit.null,
+    },
+    frozenAt: requireStringFlag(flags, "frozen-at"),
+  });
+  console.log(JSON.stringify({ event: "gap_query_table_complete", ...result }, null, 2));
+}
+
+async function runGapPlacesCommand(argv) {
+  const flags = parseFlags(argv);
+  assertNoBbbFlags(flags);
+  const county = requireStringFlag(flags, "county");
+  if (county !== "duval") throw new Error("gap-places supports only duval");
+  const result = await extractContactFreeOverturePlaces({
+    county,
+    countyFips: duvalGapProfile.countyFips,
+    release: requireStringFlag(flags, "release"),
+    boundarySource: requireStringFlag(flags, "boundary-source"),
+    outputDir: requireStringFlag(flags, "output"),
+    cacheDir: requireStringFlag(flags, "cache"),
+    frozenAt: requireStringFlag(flags, "frozen-at"),
+    limit: optionalPositiveInteger(flags.limit, "limit"),
+  });
+  console.log(JSON.stringify({ event: "gap_places_complete", ...result }, null, 2));
+}
+
+async function runGapPublishCommand(argv) {
+  const flags = parseFlags(argv, ["dry-run"]);
+  assertNoBbbFlags(flags);
+  const county = requireStringFlag(flags, "county");
+  if (county !== "duval") throw new Error("gap-publish supports only duval");
+  const result = await publishDuvalGapArtifacts({
+    profile: duvalGapProfile,
+    propertyOutputDir: requireStringFlag(flags, "property-output"),
+    placesOutputDir: requireStringFlag(flags, "places-output"),
+    queryTablePath: requireStringFlag(flags, "query-table"),
+    approvalPath: optionalStringFlag(flags, "approve"),
+    receiptPath: requireStringFlag(flags, "receipt"),
+    dryRun: flags["dry-run"] === true,
+    env: process.env,
+  });
+  console.log(JSON.stringify({ event: "gap_publish_complete", result }, null, 2));
+}
+
 /**
  * @returns {Promise<void>} Resolves once the requested subcommand finishes.
  */
@@ -998,8 +1177,22 @@ async function main() {
   if (command === "permit-publish") {
     return runPermitPublishCommand(rest);
   }
+  if (command === "gap-consolidate") {
+    return runGapConsolidateCommand(rest);
+  }
+  if (command === "gap-owner-occupied") {
+    return runGapOwnerOccupiedCommand(rest);
+  }
+  if (command === "gap-sunbiz-handoff") {
+    return runGapSunbizHandoffCommand(rest);
+  }
+  if (command === "gap-query-table") {
+    return runGapQueryTableCommand(rest);
+  }
+  if (command === "gap-places") return runGapPlacesCommand(rest);
+  if (command === "gap-publish") return runGapPublishCommand(rest);
   console.error(
-    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
+    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish|gap-owner-occupied|gap-sunbiz-handoff|gap-consolidate|gap-query-table|gap-places|gap-publish> [...flags]\n" +
       "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
@@ -1023,7 +1216,13 @@ async function main() {
       "  permit-reconcile --county <profile-key> --harvest <dir>\n" +
       "  permit-export --county <profile-key> --job-id <id> --harvest <dir> --input-parquet <parquet> --input-coverage <json> --output <dir>\n" +
       "  permit-bulk-export --county <profile-key> --job-id <id> --input-parquet <parquet> --input-coverage <json> --output <dir> [--max-pages N]\n" +
-      "  permit-publish --county <profile-key> --input <dir> --approve <manifest> --receipt <json>",
+      "  permit-publish --county <profile-key> --input <dir> --approve <manifest> --receipt <json>\n" +
+      "  gap-owner-occupied --county duval --cache <dir> --frozen-at <iso> --output <dir> [--source-sha256 <digest>]\n" +
+      "  gap-sunbiz-handoff --bucket <aws-bucket> --handoff-key <s3-key> --output <dir> [--region us-east-1]\n" +
+      "  gap-consolidate --county duval --input-parquet <parquet> --permit-parquet <parquet> --sunbiz-extract <dir> --sunbiz-links <jsonl> --owner-occupied <jsonl> --frozen-at <iso> --output <dir>\n" +
+      "  gap-query-table --county duval --input-parquet <parquet> --cid-manifest <json> --owner-occupied <jsonl> --frozen-at <iso> --output-parquet <parquet> --output-manifest <json>\n" +
+      "  gap-places --county duval --release <YYYY-MM-DD.n> --boundary-source tiger/tl_2024_us_county --cache <dir> --frozen-at <iso> --output <dir>\n" +
+      "  gap-publish --county duval --property-output <dir> --places-output <dir> --query-table <parquet> --receipt <json> [--dry-run|--approve <json>]",
   );
   process.exitCode = 1;
 }
@@ -1061,4 +1260,10 @@ export {
   runPermitHarvestCommand,
   runPermitReconcileCommand,
   runPermitExportCommand,
+  runGapOwnerOccupiedCommand,
+  runGapSunbizHandoffCommand,
+  runGapConsolidateCommand,
+  runGapQueryTableCommand,
+  runGapPlacesCommand,
+  runGapPublishCommand,
 };
