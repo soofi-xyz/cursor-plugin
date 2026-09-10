@@ -68,3 +68,16 @@ Dimension order:
 - Evidence: merge to the default branch unconditionally runs production deployment while documented provider, alarm, metric, compliance, or scale prerequisites remain open.
 - Production safety gate: `Failed`.
 - Verdict: `NOT_CERTIFIED`, even when no PROD stack currently exists.
+
+## I. Focused template-rendering diagnostic
+
+- Request: compare only Email template rendering and handoff with the pinned SMS reference.
+- Mapping: dimension 4, `rendering_and_handoff` — weight 10.
+- Evidence: reviewed Git inventory, deterministic renderer tests, and a commit-linked small DEV artifact exist, but durable per-row rendering-failure evidence is absent.
+- Band: `50%`.
+- Score: `5/10`.
+- Mode: `FOCUSED_DIAGNOSTIC`.
+- Certification verdict: not evaluated.
+- Overall score: not calculated.
+
+Do not score the other seven dimensions or evaluate certification gates. This result does not establish end-to-end readiness.

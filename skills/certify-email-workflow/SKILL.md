@@ -1,11 +1,11 @@
 ---
 name: certify-email-workflow
-description: "Certifies the complete Spring Oaks Email Workflow against pinned SMS workflow capability parity using deterministic scoring and read-only GitHub and AWS evidence. Use when assessing email workflow readiness, handoff quality, or production certification."
+description: "Certifies the complete Spring Oaks Email Workflow or scores selected capabilities against pinned SMS workflow parity using deterministic, read-only GitHub and AWS evidence. Use for focused diagnostics, workflow readiness, handoff quality, or production certification."
 ---
 
 # Certify Email Workflow
 
-Use this skill to evaluate an existing end-to-end Email Workflow. Do not use it to implement or repair the workflow.
+Use this skill to certify an existing end-to-end Email Workflow or diagnose explicitly selected capabilities. Do not use it to implement or repair the workflow.
 
 ## Load first
 
@@ -37,8 +37,24 @@ Collect:
 - target environment and AWS region
 - operator-selected AWS profile
 - optional existing DEV execution ARN
+- optional focused capability or scorecard dimensions
 
 Resolve both refs to commit SHAs and record them before scoring. When the SMS reference is omitted, resolve the current HEAD of `Spring-Oaks-Capital-LLC/sms-workflow@main` once at the start of the run. A branch name is input convenience, not report identity; score only the resolved SHA and do not re-resolve it during the run.
+
+## Select the mode
+
+Use **certification mode** unless the operator explicitly asks to compare or score only particular capabilities.
+
+Use **focused diagnostic mode** for an explicit partial-scope request:
+
+1. Map the requested scope to one or more of the eight existing scorecard dimensions.
+2. State the mapping before collecting evidence.
+3. Score only those dimensions with the standard bands and point lookup.
+4. Report each selected result as `points/weight`.
+5. Do not calculate a subtotal or overall `/100` score.
+6. Label the report `FOCUSED_DIAGNOSTIC`; do not return `CERTIFIED`, `NOT_CERTIFIED`, or a full-workflow readiness claim.
+
+Ask one focused question only when the requested capability cannot be mapped unambiguously. Do not invent or reweight dimensions.
 
 ## Capability model
 
@@ -65,8 +81,9 @@ Use SMS as the capability reference, not a demand for identical code:
 2. Pin the email and SMS commit SHAs.
 3. Identify the evaluated email scope and runtime components.
 4. Create the evidence registry.
-5. Evaluate all five gates using `gates-and-verdicts.md`.
-6. Distinguish:
+5. In certification mode, evaluate all five gates using `gates-and-verdicts.md`.
+6. In focused mode, record only source linkage, access, safety, or runtime limitations that materially constrain the selected dimensions. Do not assign certification-gate outcomes.
+7. For certification findings, distinguish:
    - `Failed`: implementation or submitted evidence contradicts the requirement;
    - `Blocked`: evaluator access or missing provenance prevents a conclusion;
    - `Pass`: direct evidence resolves the gate.
@@ -75,7 +92,7 @@ Do not stop diagnostic scoring because a gate failed.
 
 ## Phase 2: product and runtime evidence
 
-Collect only the evidence allowed by `evidence-contract.md`.
+Collect only the evidence allowed by `evidence-contract.md`. In focused mode, inspect only the selected capabilities and the dependencies necessary to evaluate them; do not expand the run into full certification.
 
 Evaluate:
 
@@ -92,17 +109,17 @@ Evaluate:
 
 Runtime evidence must be linked to the evaluated email commit. A successful execution from an unknown deployment revision is useful context but cannot prove that revision.
 
-Require existing successful evidence at:
+In certification mode, require existing successful evidence at:
 
 - 100 rows;
 - 10,000 rows;
 - 100,000 rows.
 
-For each size, require input, selected, overflow, and hourly count reconciliation plus immutable manifest or digest evidence. Never start these runs during certification.
+For each size, require input, selected, overflow, and hourly count reconciliation plus immutable manifest or digest evidence. In focused mode, require these scale runs only when the selected dimension's band criteria depend on them. Never start these runs during evaluation.
 
 ## Phase 3: independent review and score
 
-Ask the following agents for read-only findings against the same refs:
+Ask only the relevant agents for read-only findings against the same refs:
 
 - Xatu for audience and compliance;
 - Oranguru for runtime, scheduling, outputs, and scale;
@@ -118,6 +135,17 @@ Each reviewer returns:
 - confidence.
 
 Reconcile conflicts from evidence, not majority vote. Score implementation only after product/runtime findings are complete.
+
+In certification mode, score all eight dimensions, evaluate every gate, and apply the verdict thresholds.
+
+In focused mode:
+
+- score only the mapped dimensions;
+- retain each dimension's original weight;
+- apply evidence caps and scale requirements that belong to that dimension;
+- mark unavailable evidence as a limitation or blocker for that dimension;
+- use the focused report shape in `report-contract.md`;
+- do not apply certification gates or verdict thresholds.
 
 ## Safety
 
@@ -135,10 +163,9 @@ Reconcile conflicts from evidence, not majority vote. Score implementation only 
 
 - both source revisions are immutable SHAs;
 - evidence is timestamped and identified;
-- all gates have concrete reasons;
-- all eight dimensions use allowed bands and exact points;
-- points sum to 100 or less without arithmetic drift;
-- verdict follows the gate and threshold rules;
+- certification mode gives all gates concrete reasons, scores all eight dimensions, sums points exactly, and follows the verdict rules;
+- focused mode names the selected dimensions, scores only those dimensions, and omits certification verdicts and aggregate scores;
+- every scored dimension uses an allowed band and exact point lookup;
 - solver evidence is not presented as full-workflow proof;
 - report follows `report-contract.md`;
 - no mutation or protected-data action occurred.

@@ -19,6 +19,19 @@ Do not interpolate. Use this exact point lookup:
 | 15 | 0 | 4 | 8 | 11 | 15 |
 | 10 | 0 | 3 | 5 | 8 | 10 |
 
+## Focused diagnostic scoring
+
+When the operator explicitly requests only part of the workflow:
+
+- map the request to one or more dimensions below;
+- preserve each selected dimension's definition, weight, evidence caps, and point lookup;
+- report each result separately as `points/weight`;
+- do not score unselected dimensions;
+- do not calculate a selected-dimension subtotal, normalized percentage, or overall `/100` score;
+- do not apply the certification verdict thresholds.
+
+Label the result `FOCUSED_DIAGNOSTIC`. A high focused score proves only the selected capability and never implies full-workflow certification.
+
 ## Dimensions
 
 ### 1. Audience and compliance — 15
@@ -107,6 +120,8 @@ Prove:
 - reproducible evidence IDs for all claims.
 
 ## Verdict thresholds
+
+Apply this section only in certification mode.
 
 Return `CERTIFIED` only when:
 

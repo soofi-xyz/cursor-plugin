@@ -2,6 +2,8 @@
 
 Evaluate every gate before assigning the final verdict. Continue diagnostic scoring after a failed gate.
 
+Apply certification gates and verdicts only in full certification mode. In focused diagnostic mode, report source linkage, access, safety, and runtime limitations only when they affect a selected dimension. Do not assign gate outcomes or infer a certification verdict from a partial assessment.
+
 Use:
 
 - `Pass`: direct evidence satisfies the gate.
