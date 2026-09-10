@@ -4,6 +4,19 @@ import { z } from "zod";
 
 const COUNTY_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const JURISDICTION_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const PERMIT_ADAPTER_KEYS = Object.freeze([
+  "accela",
+  "arcgis-feature-service",
+  "bcs-posse",
+  "citizenserve",
+  "click2gov",
+  "coconut-creek-status",
+  "jaxepics",
+  "smartgov",
+  "tyler-civic-access",
+  "tyler-esuite",
+]);
+const permitAdapterKeySchema = z.enum(PERMIT_ADAPTER_KEYS);
 
 const recordsRequestSchema = z
   .object({
@@ -25,6 +38,39 @@ const sourceSurfaceSchema = z
       "records-information",
     ]),
     access: z.enum(["public", "blocked", "manual-only", "unavailable"]),
+    historicalBoundary: z.string().min(1).optional(),
+    contractorDetailCapability: z
+      .enum(["public-detail", "not-exposed", "unknown"])
+      .optional(),
+    adapterKey: permitAdapterKeySchema.nullable().optional(),
+    adapterRouteKey: z
+      .string()
+      .regex(JURISDICTION_KEY_PATTERN)
+      .nullable()
+      .optional(),
+    implementationStatus: z.string().min(1).optional(),
+    historyStartDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    predecessorBoundary: z.string().min(1).optional(),
+    enumerationStatus: z
+      .enum(["certified", "bounded-only", "blocked", "unknown"])
+      .optional(),
+    reportedCount: z.number().int().nonnegative().nullable().optional(),
+    anonymousAccess: z.boolean().optional(),
+    blockerType: z
+      .enum([
+        "captcha",
+        "login",
+        "api-authorization",
+        "custodian-only",
+        "source-unavailable",
+        "identity-unproven",
+        "adapter-unavailable",
+      ])
+      .optional(),
   })
   .strict()
   .superRefine((surface, context) => {
@@ -39,26 +85,103 @@ const sourceSurfaceSchema = z
 
 const adapterConfigSchema = z
   .object({
-    baseUrl: z.string().url(),
-    apiBaseUrl: z.string().url().nullable(),
-        bulkLayerUrl: z.string().url().nullable().optional(),
-        bulkPageSize: z.number().int().min(1).max(2000).nullable().optional(),
-    municipalityId: z.string().min(1).nullable(),
-    parcelFieldNames: z.array(z.string().min(1)),
-    minimumDelayMs: z.number().int().min(250),
+    baseUrl: z.string().url().optional(),
+    fallbackBaseUrls: z.array(z.string().url()).max(5).optional(),
+    listingOnlyBaseUrls: z.array(z.string().url()).max(5).optional(),
+    pinConfiguredHost: z.boolean().optional(),
+    apiBaseUrl: z.string().url().nullable().optional(),
+    bulkLayerUrl: z.string().url().nullable().optional(),
+    bulkPageSize: z.number().int().min(1).max(2000).nullable().optional(),
+    bulkConcurrency: z.number().int().min(1).max(4).optional(),
+    agencyCode: z.string().min(1).optional(),
+    module: z.string().min(1).optional(),
+    contentFrameName: z.string().min(1).nullable().optional(),
+    layerUrl: z.string().url().optional(),
+    objectIdField: z.string().min(1).optional(),
+    parcelField: z.string().min(1).nullable().optional(),
+    fieldMap: z.record(z.string(), z.string()).optional(),
+    maximumResultRecords: z.number().int().min(1).max(10000).optional(),
+    detailFingerprintVersion: z
+      .string()
+      .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/)
+      .optional(),
+    historyBoundary: z.string().min(1).optional(),
+    searchUrl: z.string().url().optional(),
+    listingOnly: z.boolean().optional(),
+    municipalityId: z.string().min(1).nullable().optional(),
+    parcelFieldNames: z.array(z.string().min(1)).optional(),
+    parcelSegmentLengths: z.array(z.number().int().positive()).optional(),
+    minimumDelayMs: z.number().int().min(250).optional(),
+    countyKey: z.string().regex(COUNTY_KEY_PATTERN).optional(),
+    countyName: z.string().min(1).optional(),
+    sourceSystem: z
+      .string()
+      .regex(/^[a-z0-9_]+_permits$/)
+      .optional(),
+    expectedTenantId: z.string().min(1).optional(),
+    expectedTenantName: z.string().min(1).optional(),
+    maximumSearchPages: z.number().int().min(1).max(20).optional(),
+    maximumContactPages: z.number().int().min(1).max(10).optional(),
+    maximumDetailRecords: z.number().int().min(1).max(100).optional(),
+    installationId: z.number().int().positive().optional(),
+    jurisdictionTokens: z.array(z.string().min(1)).optional(),
+    contractorDetailCapability: z
+      .enum(["public-detail", "not-exposed", "unknown"])
+      .optional(),
   })
   .strict()
   .superRefine((config, context) => {
-    for (const key of ["baseUrl", "apiBaseUrl"]) {
-      if (config[key] && new URL(config[key]).protocol !== "https:") {
+    const configuredUrls = [
+      config.baseUrl,
+      config.apiBaseUrl,
+      config.layerUrl,
+      config.searchUrl,
+      ...(config.fallbackBaseUrls ?? []),
+      ...(config.listingOnlyBaseUrls ?? []),
+    ].filter(Boolean);
+    for (const configuredUrl of configuredUrls) {
+      if (new URL(configuredUrl).protocol !== "https:") {
         context.addIssue({
           code: "custom",
-          path: [key],
+          path: ["baseUrl"],
           message: "Permit adapter URLs must use HTTPS",
         });
       }
     }
+    const sourceUrls = [
+      config.baseUrl,
+      ...(config.fallbackBaseUrls ?? []),
+    ].filter(Boolean);
+    for (const listingOnlyUrl of config.listingOnlyBaseUrls ?? []) {
+      if (!sourceUrls.includes(listingOnlyUrl)) {
+        context.addIssue({
+          code: "custom",
+          path: ["listingOnlyBaseUrls"],
+          message:
+            "Listing-only adapter URLs must also be configured source URLs",
+        });
+      }
+    }
+    if (
+      (config.expectedTenantId === undefined) !==
+      (config.expectedTenantName === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["expectedTenantName"],
+        message:
+          "Tyler tenant ID and tenant name must be configured together",
+      });
+    }
   });
+
+const adapterRouteSchema = z
+  .object({
+    key: z.string().regex(JURISDICTION_KEY_PATTERN),
+    adapterKey: permitAdapterKeySchema,
+    adapterConfig: adapterConfigSchema,
+  })
+  .strict();
 
 const jurisdictionSchema = z
   .object({
@@ -66,12 +189,18 @@ const jurisdictionSchema = z
     name: z.string().min(1),
     routingCities: z.array(z.string().min(1)),
     defaultForUnmatchedCity: z.boolean().default(false),
-    status: z.enum(["supported", "blocked", "manual-only", "unavailable"]),
+    status: z.enum([
+      "supported",
+      "blocked",
+      "manual-only",
+      "unavailable",
+      "delegated",
+      "custodian-only",
+    ]),
     historicalRecords: z.boolean(),
-    adapterKey: z
-      .enum(["jaxepics", "click2gov", "etrakit"])
-      .nullable(),
+    adapterKey: permitAdapterKeySchema.nullable(),
     adapterConfig: adapterConfigSchema.nullable(),
+    adapterRoutes: z.array(adapterRouteSchema).default([]),
     parcelSearchFormat: z.enum(["duval-re", "digits-only", "source-specific"]),
     sources: z.array(sourceSurfaceSchema).min(1),
     recordsRequest: recordsRequestSchema.nullable(),
@@ -97,7 +226,12 @@ const jurisdictionSchema = z
       });
     }
     if (
-      ["blocked", "manual-only"].includes(jurisdiction.status) &&
+      [
+        "blocked",
+        "manual-only",
+        "delegated",
+        "custodian-only",
+      ].includes(jurisdiction.status) &&
       jurisdiction.recordsRequest === null
     ) {
       context.addIssue({
@@ -118,6 +252,29 @@ const jurisdictionSchema = z
           "Permit adapter key and adapter configuration must both be present or absent",
       });
     }
+    const routeKeys = new Set(["primary"]);
+    for (const route of jurisdiction.adapterRoutes) {
+      if (routeKeys.has(route.key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["adapterRoutes"],
+          message: `Duplicate permit adapter route "${route.key}"`,
+        });
+      }
+      routeKeys.add(route.key);
+    }
+    for (const [index, source] of jurisdiction.sources.entries()) {
+      if (
+        source.adapterRouteKey &&
+        !routeKeys.has(source.adapterRouteKey)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["sources", index, "adapterRouteKey"],
+          message: `Unknown permit adapter route "${source.adapterRouteKey}"`,
+        });
+      }
+    }
   });
 
 export const permitProfileSchema = z
@@ -127,6 +284,12 @@ export const permitProfileSchema = z
     stateCode: z.string().length(2).regex(/^[A-Z]{2}$/),
     countyFips: z.string().regex(/^\d{5}$/),
     parcelIdentifierPattern: z.string().min(1),
+    parcelIdentifierFormat: z
+      .enum(["duval-re", "broward-folio"])
+      .default("duval-re"),
+    defaultRoutingPolicy: z
+      .enum(["fallback", "explicit-only"])
+      .default("fallback"),
     jurisdictions: z.array(jurisdictionSchema).min(1),
     publication: z
       .object({

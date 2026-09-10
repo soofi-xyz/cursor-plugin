@@ -1,20 +1,27 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.3.1",
+  "version": "0.7.0",
   "private": true,
-  "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Ships Pinellas and Duval county adapters.",
+  "description": "Self-contained Elephant county-ingestion, enrichment, and coverage-only repair runtime bundled with the soofi-xyz-team-kit plugin. Includes canonical Broward permit routing and bounded backfill planning.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
   },
   "bin": {
-    "elephant-county": "bin/elephant-county.mjs"
+    "elephant-county": "bin/elephant-county.mjs",
+    "permit-backfill": "bin/permit-backfill.mjs",
+    "permit-source-coverage": "bin/permit-source-coverage.mjs",
+    "probe-broward-permits": "bin/probe-broward-permits.mjs"
   },
   "scripts": {
     "test": "vitest run && npm run test:transforms",
     "test:watch": "vitest",
     "test:transforms": "node scripts/run-transform-tests.mjs",
     "test:catalog": "vitest run tests/catalog",
+    "permits:backfill": "node bin/permit-backfill.mjs",
+    "permits:backfill-plan": "node bin/permit-backfill.mjs",
+    "permits:coverage": "node bin/permit-source-coverage.mjs",
+    "permits:probe-broward": "node bin/probe-broward-permits.mjs",
     "batch:build": "tsc -p tsconfig.batch.json",
     "batch:typecheck": "tsc -p tsconfig.batch.json --noEmit",
     "batch:plan": "tsx bin/enrichment-batch.ts plan",
@@ -35,6 +42,7 @@
     "@dsnp/parquetjs": "^1.8.7",
     "adm-zip": "^0.6.0",
     "cheerio": "^1.1.2",
+    "pg": "^8.23.0",
     "puppeteer-core": "^25.10.0",
     "zod": "^4.5.4"
   },

@@ -8,6 +8,7 @@ import { PermitSourceError } from "../errors.mjs";
 import { PermitHttpClient } from "../http.mjs";
 import {
   isRoofPermit,
+  normalizeBrowardParcelIdentifier,
   normalizeDuvalParcelIdentifier,
   parsePortalDate,
   parsePortalMoney,
@@ -101,14 +102,22 @@ export function parseClick2GovDetailHtml(html, fallbackPermitNumber) {
 
 export function normalizeClick2GovPermit(
   parsed,
-  { requestedParcelIdentifier, requestedPropertyId, sourceUrl },
-) {
-  const requestedParcel = normalizeDuvalParcelIdentifier(
+  {
     requestedParcelIdentifier,
-  );
-  const sourceParcel = normalizeDuvalParcelIdentifier(
-    parsed.parcelIdentifier,
-  );
+    requestedPropertyId,
+    sourceUrl,
+    countyKey = "duval",
+    countyName = "Duval",
+    jurisdictionKey = "jacksonville-beach",
+    sourceSystem = "CentralSquare Click2Gov",
+  },
+) {
+  const normalizeParcel =
+    countyKey === "broward"
+      ? normalizeBrowardParcelIdentifier
+      : normalizeDuvalParcelIdentifier;
+  const requestedParcel = normalizeParcel(requestedParcelIdentifier);
+  const sourceParcel = normalizeParcel(parsed.parcelIdentifier);
   if (sourceParcel !== requestedParcel) {
     throw new PermitSourceError(
       `Click2Gov permit ${parsed.permitNumber} returned parcel ${sourceParcel}, expected ${requestedParcel}`,
@@ -122,8 +131,8 @@ export function normalizeClick2GovPermit(
   return normalizedPermitRecordSchema.parse({
     schemaVersion: "elephant.normalized-permit-record.v1",
     property_improvement_id: createStablePermitId({
-      countyKey: "duval",
-      jurisdictionKey: "jacksonville-beach",
+      countyKey,
+      jurisdictionKey,
       sourceRecordId,
     }),
     property_id: requestedPropertyId,
@@ -139,14 +148,14 @@ export function normalizeClick2GovPermit(
     completion_date: parsePortalDate(parsed.finalDate),
     expiration_date: parsePortalDate(parsed.expirationDate),
     opened_date: parsePortalDate(parsed.applicationDate),
-    source_system: "CentralSquare Click2Gov",
-    county_name: "Duval",
+    source_system: sourceSystem,
+    county_name: countyName,
     project_description: parsed.description,
     description: parsed.description,
     estimated_job_value: parsed.estimatedJobValue,
     fee: parsed.fee,
-    countyKey: "duval",
-    jurisdictionKey: "jacksonville-beach",
+    countyKey,
+    jurisdictionKey,
     sourceRecordId,
     sourceUrl,
     requestedParcelIdentifier: requestedParcel,
@@ -219,15 +228,41 @@ export function createClick2GovAdapter(jurisdiction, options = {}) {
       };
     },
     async searchParcel(parcelIdentifier) {
-      const requestedParcel =
-        normalizeDuvalParcelIdentifier(parcelIdentifier);
+      const isBroward = config.countyKey === "broward";
+      const requestedParcel = isBroward
+        ? normalizeBrowardParcelIdentifier(parcelIdentifier)
+        : normalizeDuvalParcelIdentifier(parcelIdentifier);
+      let segments;
+      if (isBroward) {
+        const lengths = config.parcelSegmentLengths;
+        if (
+          !Array.isArray(lengths) ||
+          lengths.reduce((total, length) => total + length, 0) !== 12 ||
+          lengths.length !== config.parcelFieldNames.length
+        ) {
+          throw new PermitSourceError(
+            "Click2Gov Broward folio segmentation is not certified",
+            {
+              classification: "blocked",
+              code: "click2gov_parcel_segmentation_unproven",
+            },
+          );
+        }
+        let offset = 0;
+        segments = lengths.map((length) => {
+          const segment = requestedParcel.slice(offset, offset + length);
+          offset += length;
+          return segment;
+        });
+      } else {
+        segments = requestedParcel.split("-");
+      }
       const { body: initialHtml } = await createSession(
         client,
         config.baseUrl,
       );
       const $ = cheerio.load(initialHtml);
       const csrf = $('input[name="OWASP_CSRFTOKEN"]').val();
-      const segments = requestedParcel.split("-");
       const form = new URLSearchParams({
         searchResultsView: "true",
         searchType: "2",
@@ -290,6 +325,11 @@ export function createClick2GovAdapter(jurisdiction, options = {}) {
       return normalizeClick2GovPermit(parsed, {
         ...request,
         sourceUrl: config.baseUrl,
+        countyKey: config.countyKey ?? "duval",
+        countyName: config.countyName ?? "Duval",
+        jurisdictionKey: jurisdiction.key,
+        sourceSystem:
+          config.sourceSystem ?? "CentralSquare Click2Gov",
       });
     },
   });

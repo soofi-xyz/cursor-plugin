@@ -71,6 +71,7 @@ const contractorSchema = z
     businessName: z.string().trim().min(1),
     licenseNumber: nullableText,
     qualifierName: nullableText,
+    sourceRole: nullableText.optional(),
     phone: nullableText,
     email: nullableText,
   })
@@ -158,6 +159,10 @@ export const parcelPermitStatusSchema = z
     failureCount: z.number().int().nonnegative(),
     attempts: z.number().int().positive(),
     completedAt: z.string().datetime({ offset: true }),
+    sourceFingerprint: z.string().regex(SHA256_PATTERN).optional(),
+    completionFingerprint: z.string().regex(SHA256_PATTERN).optional(),
+    detailFingerprintVersion: nullableText.optional(),
+    detailComplete: z.boolean().optional(),
   })
   .strict();
 
