@@ -202,6 +202,18 @@ export function classifyRoofingPermit(permit) {
         )?.[0] ?? null,
     };
   }
+  const authoritativeRoofingField = [
+    ["permit_type", permit.permitType],
+    ["work_class", permit.workClass],
+    ["trade", permit.trade],
+  ].find(([, value]) => ROOFING.test(normalizedText(value)));
+  if (authoritativeRoofingField) {
+    return {
+      classification: "confirmed_roofing",
+      reasonCode: "authoritative_roofing_type_or_work_class",
+      sourceField: authoritativeRoofingField[0],
+    };
+  }
   if (ROOFING.test(combined)) {
     return {
       classification: "needs_review",
@@ -572,7 +584,11 @@ function projectResult(project, identities, window, asOfDate) {
   });
   const qualifyingRows = permitRows.filter(
     (row) =>
-      ["confirmed_replacement", "roofing_nonreplacement"].includes(
+      [
+        "confirmed_replacement",
+        "confirmed_roofing",
+        "roofing_nonreplacement",
+      ].includes(
         row.roofing.classification,
       ) &&
       row.work.state === "confirmed" &&
@@ -1032,7 +1048,11 @@ export function analyzeRoofingCohort({
       .filter(
         (row) =>
           row.lifecycle.state === "open" &&
-          ["confirmed_replacement", "roofing_nonreplacement"].includes(
+          [
+            "confirmed_replacement",
+            "confirmed_roofing",
+            "roofing_nonreplacement",
+          ].includes(
             row.roofing.classification,
           ) &&
           row.verifiedLicenses.length > 0,
@@ -1168,6 +1188,7 @@ export function analyzeRoofingCohort({
   });
   const seedClassificationCounts = {
     confirmed_replacement: 0,
+    confirmed_roofing: 0,
     roofing_nonreplacement: 0,
     not_roofing: 0,
     needs_review: 0,

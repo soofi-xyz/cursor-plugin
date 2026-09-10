@@ -186,12 +186,23 @@ describe("deterministic roofing classification", () => {
     expect(
       classifyRoofingPermit(
         permit({
-          permitType: "Roofing",
+          permitType: "Building",
           workClass: null,
           scope: "Roof",
+          trade: null,
         }),
       ).classification,
     ).toBe("needs_review");
+    expect(
+      classifyRoofingPermit(
+        permit({
+          permitType: "Residential New Roof - Legacy",
+          workClass: "Residential New Roof - Legacy",
+          scope: "New tile roof",
+          trade: null,
+        }),
+      ).classification,
+    ).toBe("confirmed_roofing");
   });
 
   it("hard-excludes the Sunrise condensate-lines false positive", () => {
@@ -546,6 +557,7 @@ describe("old-roof inference and cohort output", () => {
     });
     expect(result.summary.seedClassificationCounts).toEqual({
       confirmed_replacement: 1,
+      confirmed_roofing: 0,
       roofing_nonreplacement: 0,
       not_roofing: 0,
       needs_review: 0,
