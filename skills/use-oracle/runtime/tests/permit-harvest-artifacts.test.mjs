@@ -15,6 +15,10 @@ import { duvalPermitProfile } from "../src/counties/duval/permit-profile.mjs";
 import { duvalEnrichmentProfile } from "../src/counties/duval/enrichment-profile.mjs";
 import { writeQueryTableParquet } from "../src/core/query-table.mjs";
 import { normalizeJaxEpicsPermit } from "../src/permits/adapters/jaxepics.mjs";
+import {
+  createStablePermitId,
+  normalizedPermitRecordSchema,
+} from "../src/permits/contracts.mjs";
 import { exportPermitArtifacts } from "../src/permits/artifacts.mjs";
 import { exportJaxPermitBulkArtifacts } from "../src/permits/bulk-export.mjs";
 import { harvestPermitProperties } from "../src/permits/harvest.mjs";
@@ -97,6 +101,9 @@ describe("permit public artifact export", () => {
           property_id: propertyId,
           parcel_identifier: "044280-0505",
           address_city: "Jacksonville",
+          source_system: "duval_appraiser",
+          request_identifier: "0442800505R",
+          built_year: 1980,
           has_permits: false,
           permit_count: 0,
         },
@@ -127,9 +134,28 @@ describe("permit public artifact export", () => {
       requestedParcelIdentifier: "044280-0505",
       requestedPropertyId: propertyId,
     });
+    const roofRecord = normalizedPermitRecordSchema.parse({
+      ...record,
+      property_improvement_id: createStablePermitId({
+        countyKey: "duval",
+        jurisdictionKey: "jacksonville",
+        sourceRecordId: "roof-overlay-fixture",
+      }),
+      permit_number: "R-24-00001.000",
+      improvement_type: "Roofing Permit",
+      improvement_status: "Finalized",
+      improvement_action: "Re-roof existing building",
+      project_description: "Residential",
+      description: "Replace existing shingle roof",
+      completion_date: "2024-06-15",
+      permit_close_date: "2024-06-16",
+      final_inspection_date: "2024-06-14",
+      sourceRecordId: "roof-overlay-fixture",
+      isRoofPermit: true,
+    });
     await atomicWriteJson(
       path.join(harvestDir, "extracted/jacksonville/record.json"),
-      { records: [record] },
+      { records: [record, roofRecord] },
     );
     await atomicWriteJson(
       path.join(harvestDir, "status/jacksonville/record.json"),
@@ -140,7 +166,7 @@ describe("permit public artifact export", () => {
         propertyId,
         jurisdictionKey: "jacksonville",
         status: "done",
-        permitCount: 1,
+        permitCount: 2,
         failureCount: 0,
         attempts: 1,
         completedAt: "2026-09-06T05:00:00.000Z",
@@ -159,7 +185,7 @@ describe("permit public artifact export", () => {
       exportedAt: "2026-09-06T05:00:00.000Z",
     });
     expect(exported.permitCoverage).toMatchObject({
-      linkedPermits: 1,
+      linkedPermits: 2,
       validUnlinkedPermits: 0,
       availability: "supported_partial",
     });
@@ -168,7 +194,7 @@ describe("permit public artifact export", () => {
         (dataset) => dataset.source === "permits",
       ),
     ).toMatchObject({
-      ingested_count: 1,
+      ingested_count: 2,
       linked_property_count: 1,
     });
 
@@ -179,8 +205,16 @@ describe("permit public artifact export", () => {
     await propertyReader.close();
     expect(propertyRow).toMatchObject({
       has_permits: true,
-      permit_count: 1n,
+      permit_count: 2n,
+      roof_date: "2024-06-15",
+      roof_age_years: 2n,
+      roof_date_source: "permit",
     });
+    const lineage = JSON.parse(propertyRow.roof_date_lineage);
+    expect(lineage.history.map((event) => event.source)).toEqual([
+      "derived-from-construction-year",
+      "permit",
+    ]);
 
     const permitReader = await ParquetReader.openFile(
       exported.paths.permitPath,
@@ -210,6 +244,9 @@ describe("permit public artifact export", () => {
           property_id: jacksonvilleId,
           parcel_identifier: "1646340000",
           address_city: "Jacksonville",
+          source_system: "duval_appraiser",
+          request_identifier: "1646340000R",
+          built_year: 1980,
         },
         {
           property_id: beachId,
@@ -231,7 +268,11 @@ describe("permit public artifact export", () => {
         "utf8",
       ),
     );
-    const linked = fixture.features[0];
+    const linked = structuredClone(fixture.features[0]);
+    linked.attributes.PermitTypeID = 8;
+    linked.attributes.FullPermitNumber = "R-95-24104.000";
+    linked.attributes.TypeOfWork = "Re-roof existing building";
+    linked.attributes.Comments = "Replace existing shingle roof";
     const unlinked = structuredClone(fixture.features[1]);
     unlinked.attributes.OBJECTID = 2;
     unlinked.attributes.RecordID = 5500;
@@ -298,5 +339,22 @@ describe("permit public artifact export", () => {
     expect(exported.approval.status).toBe(
       "pending_human_approval",
     );
+    const propertyReader = await ParquetReader.openFile(
+      path.join(outputDir, "query-table.parquet"),
+    );
+    const propertyRows = [];
+    const cursor = propertyReader.getCursor();
+    let propertyRow = await cursor.next();
+    while (propertyRow) {
+      propertyRows.push(propertyRow);
+      propertyRow = await cursor.next();
+    }
+    await propertyReader.close();
+    expect(
+      propertyRows.find((row) => row.property_id === jacksonvilleId),
+    ).toMatchObject({
+      roof_date: "1995-05-30",
+      roof_date_source: "permit",
+    });
   });
 });

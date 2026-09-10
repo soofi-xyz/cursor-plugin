@@ -5,6 +5,34 @@ import { z } from "zod";
 const COUNTY_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const JURISDICTION_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+const roofAgeSourcePolicySchema = z
+  .object({
+    sourceSystem: z.string().min(1),
+    terminalStatuses: z.array(z.string().min(1)).min(1),
+    roofPermitTypes: z.array(z.string().min(1)).min(1),
+    replacementTerms: z.array(z.string().min(1)).min(1),
+    excludedTerms: z.array(z.string().min(1)).min(1),
+    allowPermitTypeOnly: z.boolean().default(false),
+  })
+  .strict();
+
+const roofAgePolicySchema = z
+  .object({
+    policyVersion: z.string().min(1),
+    sources: z.array(roofAgeSourcePolicySchema).min(1),
+  })
+  .strict()
+  .superRefine((policy, context) => {
+    const sourceSystems = policy.sources.map((source) => source.sourceSystem);
+    if (new Set(sourceSystems).size !== sourceSystems.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["sources"],
+        message: "Roof-age source-system policies must be unique",
+      });
+    }
+  });
+
 const recordsRequestSchema = z
   .object({
     recipientOffice: z.string().min(1),
@@ -127,6 +155,7 @@ export const permitProfileSchema = z
     stateCode: z.string().length(2).regex(/^[A-Z]{2}$/),
     countyFips: z.string().regex(/^\d{5}$/),
     parcelIdentifierPattern: z.string().min(1),
+    roofAgePolicy: roofAgePolicySchema,
     jurisdictions: z.array(jurisdictionSchema).min(1),
     publication: z
       .object({

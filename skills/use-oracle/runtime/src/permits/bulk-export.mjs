@@ -13,6 +13,10 @@ import {
 import { toParquetRecord } from "../core/query-table.mjs";
 import { permitProfileDigest } from "../counties/permit-profile.mjs";
 import {
+  resolveRoofAge,
+  selectQualifyingRoofPermit,
+} from "../roof-age/rule.mjs";
+import {
   permitArtifactManifestSchema,
   permitCoverageSchema,
   permitTableSchemaFields,
@@ -116,6 +120,9 @@ async function rewritePropertyTable({
   outputParquet,
   schemaFields,
   permitCounts,
+  roofPermitCandidates,
+  permitPolicy,
+  asOfDate,
 }) {
   const temporaryPath = `${outputParquet}.tmp-${process.pid}`;
   const reader = await ParquetReader.openFile(inputParquet);
@@ -130,11 +137,43 @@ async function rewritePropertyTable({
     while (row) {
       const propertyId = String(row.property_id);
       const count = permitCounts.get(propertyId) ?? 0;
+      let existingLineage = null;
+      if (typeof row.roof_date_lineage === "string") {
+        try {
+          existingLineage = JSON.parse(row.roof_date_lineage);
+        } catch {
+          existingLineage = null;
+        }
+      }
+      const roofPermit = roofPermitCandidates.get(propertyId)?.permit;
+      const roofState = resolveRoofAge({
+        propertyId,
+        explicitRoofDate: row.roof_date,
+        explicitRoofAgeYears: row.roof_age_years,
+        builtYear: row.built_year,
+        explicitSource: row.roof_date_source,
+        existingLineage,
+        permits: roofPermit === undefined ? [] : [roofPermit],
+        permitPolicy,
+        sourceSystem: row.source_system,
+        sourceRecordKey: row.request_identifier,
+        asOfDate,
+      });
       await writer.appendRow(
         toParquetRecord({
           ...row,
           has_permits: count > 0,
           permit_count: count,
+          ...(roofState === null
+            ? {}
+            : {
+                roof_date: roofState.roofDate,
+                roof_age_years: roofState.roofAgeYears,
+                roof_date_source: roofState.roofDateSource,
+                roof_date_lineage: JSON.stringify(
+                  roofState.roofDateLineage,
+                ),
+              }),
         }),
       );
       rowCount += 1;
@@ -314,6 +353,7 @@ export async function exportJaxPermitBulkArtifacts({
   exclusionsGzip.pipe(exclusionsOutput);
   const seenPermits = new Set();
   const permitCounts = new Map();
+  const roofPermitCandidates = new Map();
   const dateRange = { first: null, last: null };
   const counters = {
     pages: 0,
@@ -399,6 +439,32 @@ export async function exportJaxPermitBulkArtifacts({
               property.propertyId,
               (permitCounts.get(property.propertyId) ?? 0) + 1,
             );
+            const roofCandidate = selectQualifyingRoofPermit({
+              permits: [record],
+              propertyId: property.propertyId,
+              builtYear: null,
+              asOfDate: exportedAt,
+              permitPolicy: profile.roofAgePolicy,
+            });
+            const existingRoofCandidate = roofPermitCandidates.get(
+              property.propertyId,
+            );
+            if (
+              roofCandidate !== null &&
+              (existingRoofCandidate === undefined ||
+                roofCandidate.eventDate >
+                  existingRoofCandidate.eventDate ||
+                (roofCandidate.eventDate ===
+                  existingRoofCandidate.eventDate &&
+                  record.property_improvement_id >
+                    existingRoofCandidate.permit
+                      .property_improvement_id))
+            ) {
+              roofPermitCandidates.set(
+                property.propertyId,
+                roofCandidate,
+              );
+            }
           } else {
             counters.validUnlinkedRows += 1;
           }
@@ -445,6 +511,9 @@ export async function exportJaxPermitBulkArtifacts({
     outputParquet: paths.property,
     schemaFields: propertySchemaFields,
     permitCounts,
+    roofPermitCandidates,
+    permitPolicy: profile.roofAgePolicy,
+    asOfDate: exportedAt,
   });
   if (propertyRows !== propertyIndex.rowCount) {
     throw new Error(

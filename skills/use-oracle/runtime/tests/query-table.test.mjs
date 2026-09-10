@@ -114,6 +114,7 @@ describe("Pinellas query-table row mapping (Gate B fixture)", () => {
         htmlDir: path.join(FIXTURE_DIR, "html"),
         outputDir,
         liveFetch: false,
+        asOfDate: "2026-09-09",
       });
       expect(manifest.results).toEqual([
         { parcelId: STRAP, transformSuccess: true, propertyUsageType: "Residential", error: null },

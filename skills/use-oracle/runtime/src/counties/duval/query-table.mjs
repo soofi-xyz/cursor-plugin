@@ -154,6 +154,14 @@ export function mapTransformedFilesToQueryTableRow({ parcelId, files, seedRow })
     lot_area_sqft: lotAreaSqft,
     exterior_wall_material: toText(structure.exterior_wall_material_primary),
     roof_covering_material: toText(structure.roof_covering_material),
+    roof_date: toText(structure.roof_date),
+    roof_age_years: toInteger(structure.roof_age_years),
+    roof_date_source: toText(structure.roof_date_source),
+    roof_date_lineage:
+      structure.roof_date_lineage === null ||
+      structure.roof_date_lineage === undefined
+        ? null
+        : JSON.stringify(structure.roof_date_lineage),
     property_type: toText(property.property_type),
     property_usage_type: toText(property.property_usage_type),
     built_year: toInteger(property.property_structure_built_year),

@@ -21,6 +21,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 
+import { populateRoofAgeDefaultsInDataDir } from "../roof-age/transform.mjs";
+
 const require = createRequire(import.meta.url);
 
 /**
@@ -29,12 +31,14 @@ const require = createRequire(import.meta.url);
  * @property {readonly string[]} scriptNames - Script filenames, executed in this order.
  * @property {string} workDir - Absolute directory with `input.html` + seed JSON already written.
  * @property {string} [resultFile] - Path (relative to `workDir`) read back as the return value. Defaults to `data/property.json`.
+ * @property {string | Date | null} [roofAgeAsOfDate] - Frozen date used to populate shared roof-age fields. Null skips post-processing.
  */
 
 /**
  * @typedef {object} RunCountyTransformResult
  * @property {Record<string, unknown>} result - Parsed `resultFile` JSON.
  * @property {string} dataDir - Absolute path to `workDir/data`.
+ * @property {{ structureCount: number, updatedStructureCount: number, defaultedStructureCount: number } | null} roofAgePopulation - Shared roof-age post-processing counters.
  */
 
 /**
@@ -70,7 +74,13 @@ function forgetScript(scriptPath) {
  * @param {RunCountyTransformOptions} options - Scripts, working directory, and result file.
  * @returns {RunCountyTransformResult} Parsed result JSON plus the data directory path.
  */
-export function runCountyTransform({ scriptsDir, scriptNames, workDir, resultFile = "data/property.json" }) {
+export function runCountyTransform({
+  scriptsDir,
+  scriptNames,
+  workDir,
+  resultFile = "data/property.json",
+  roofAgeAsOfDate = null,
+}) {
   const previousCwd = process.cwd();
   const previousExit = process.exit;
   const previousLog = console.log;
@@ -87,9 +97,18 @@ export function runCountyTransform({ scriptsDir, scriptNames, workDir, resultFil
     if (!fs.existsSync(resultPath)) {
       throw new Error(`County transform did not write ${resultFile}`);
     }
+    const dataDir = path.join(workDir, path.dirname(resultFile));
+    const roofAgePopulation =
+      roofAgeAsOfDate === null
+        ? null
+        : populateRoofAgeDefaultsInDataDir({
+            dataDir,
+            asOfDate: roofAgeAsOfDate,
+          });
     return {
       result: JSON.parse(fs.readFileSync(resultPath, "utf8")),
-      dataDir: path.join(workDir, path.dirname(resultFile)),
+      dataDir,
+      roofAgePopulation,
     };
   } finally {
     process.exit = previousExit;

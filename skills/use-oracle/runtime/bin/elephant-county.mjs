@@ -60,6 +60,7 @@ import {
   reconcilePermitHarvest,
 } from "../src/permits/artifacts.mjs";
 import { exportJaxPermitBulkArtifacts } from "../src/permits/bulk-export.mjs";
+import { backfillRoofAgeParquet } from "../src/roof-age/backfill.mjs";
 import { writePermitRunRevision } from "../src/permits/orchestration.mjs";
 import {
   atomicWriteJson,
@@ -168,6 +169,10 @@ async function runIngest(argv) {
     htmlDir: String(flags["html-dir"]),
     outputDir: String(flags.output),
     liveFetch: flags["live-fetch"] === true,
+    asOfDate:
+      typeof flags["as-of-date"] === "string"
+        ? flags["as-of-date"]
+        : undefined,
   });
   if (flags["skip-validate"] !== true) {
     const validation = await adapter.validateRun(manifest, { allowEmpty: flags["allow-empty"] === true });
@@ -957,6 +962,25 @@ async function runPermitPublishCommand(argv) {
   );
 }
 
+async function runRoofAgeBackfillCommand(argv) {
+  const flags = parseFlags(argv);
+  const county = requireStringFlag(flags, "county");
+  const profile = requirePermitProfile(county);
+  const enrichmentProfile = requireEnrichmentProfile(county);
+  const result = await backfillRoofAgeParquet({
+    countyKey: county,
+    inputPropertyParquet: requireStringFlag(flags, "input-parquet"),
+    inputPermitParquet: requireStringFlag(flags, "permit-parquet"),
+    outputDir: requireStringFlag(flags, "output"),
+    propertySchemaFields: enrichmentProfile.queryTable.schemaFields,
+    permitPolicy: profile.roofAgePolicy,
+    asOfDate: requireStringFlag(flags, "as-of-date"),
+  });
+  console.log(
+    JSON.stringify({ event: "roof_age_backfill_complete", ...result }, null, 2),
+  );
+}
+
 /**
  * @returns {Promise<void>} Resolves once the requested subcommand finishes.
  */
@@ -998,9 +1022,12 @@ async function main() {
   if (command === "permit-publish") {
     return runPermitPublishCommand(rest);
   }
+  if (command === "roof-age-backfill") {
+    return runRoofAgeBackfillCommand(rest);
+  }
   console.error(
-    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
-      "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
+    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish|roof-age-backfill> [...flags]\n" +
+      "  ingest  --county <key> --seed <csv> --html-dir <dir> [--as-of-date <YYYY-MM-DD>] [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
       "  export-coverage --county <key> --evidence <json> --output <publish-dir>\n" +
@@ -1023,7 +1050,8 @@ async function main() {
       "  permit-reconcile --county <profile-key> --harvest <dir>\n" +
       "  permit-export --county <profile-key> --job-id <id> --harvest <dir> --input-parquet <parquet> --input-coverage <json> --output <dir>\n" +
       "  permit-bulk-export --county <profile-key> --job-id <id> --input-parquet <parquet> --input-coverage <json> --output <dir> [--max-pages N]\n" +
-      "  permit-publish --county <profile-key> --input <dir> --approve <manifest> --receipt <json>",
+      "  permit-publish --county <profile-key> --input <dir> --approve <manifest> --receipt <json>\n" +
+      "  roof-age-backfill --county <profile-key> --input-parquet <query-table.parquet> --permit-parquet <permit-table.parquet> --as-of-date <YYYY-MM-DD> --output <dir>",
   );
   process.exitCode = 1;
 }

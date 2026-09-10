@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { runCountyTransform } from "../../core/transform-runner.mjs";
 import { readTransformedZipJsonFiles, writeQueryTableParquet, buildCoverageSnapshot } from "../../core/query-table.mjs";
 import { classifyFailure, appendFailure } from "../../core/run-state.mjs";
+import { normalizeAsOfDate } from "../../roof-age/rule.mjs";
 import {
   mapTransformedFilesToQueryTableRow,
   COUNTY_KEY,
@@ -310,6 +311,7 @@ async function zipDataDirectory(dataDir, zipPath) {
  * @property {string} outputDir - Run directory; one `<parcel_id>/` subdirectory is created per parcel.
  * @property {boolean} [liveFetch] - When true, fetch missing HTML from COJ. Defaults to false (fail closed).
  * @property {string} [jobId] - Retry-ledger job id (see `core/run-state.mjs`). Defaults to {@link DEFAULT_JOB_ID}.
+ * @property {string | Date} [asOfDate] - Frozen date for roof-age derivation. Defaults to the current UTC date.
  */
 
 /**
@@ -339,7 +341,15 @@ async function zipDataDirectory(dataDir, zipPath) {
  * @returns {Promise<{ county: string, outputDir: string, jobId: string, results: ParcelTransformResult[], reconciled: import("./validate.mjs").ManifestReconciliation }>}
  *   Run manifest, also written to `<outputDir>/manifest.json`.
  */
-export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFetch = false, jobId = DEFAULT_JOB_ID }) {
+export async function captureAndTransform({
+  seedRows,
+  htmlDir,
+  outputDir,
+  liveFetch = false,
+  jobId = DEFAULT_JOB_ID,
+  asOfDate = new Date(),
+}) {
+  const roofAgeAsOfDate = normalizeAsOfDate(asOfDate);
   await mkdir(outputDir, { recursive: true });
   /** @type {ParcelTransformResult[]} */
   const results = [];
@@ -379,6 +389,7 @@ export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFe
         scriptNames: TRANSFORM_SCRIPTS,
         workDir: parcelDir,
         resultFile: "data/property.json",
+        roofAgeAsOfDate,
       });
 
       const address = JSON.parse(await readFile(path.join(dataDir, "address.json"), "utf8"));
@@ -422,7 +433,14 @@ export async function captureAndTransform({ seedRows, htmlDir, outputDir, liveFe
     permanentFailure: results.filter((row) => row.classification === "permanent_failure").length,
     retryableFailure: results.filter((row) => row.classification === "retryable_failure").length,
   };
-  const manifest = { county: COUNTY_KEY, outputDir, jobId, results, reconciled };
+  const manifest = {
+    county: COUNTY_KEY,
+    outputDir,
+    jobId,
+    roofAgeAsOfDate,
+    results,
+    reconciled,
+  };
   await writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }
