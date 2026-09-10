@@ -17,12 +17,17 @@ const SEED_FOLIOS = Object.freeze([
   "494026050080",
   "504032160260",
 ]);
+const COUNTY_SEEDS = Object.freeze({
+  broward: SEED_FOLIOS,
+  hillsborough: Object.freeze(["1949120000"]),
+});
 
 function usage() {
   return [
-    "Export an exact, read-only private Broward evidence slice for offline analysis.",
+    "Export an exact, county-bounded private evidence slice for offline analysis.",
     "",
-    "  broward-roofing-readonly-export --database-url-env DATABASE_URL",
+    "  roofing-readonly-export --county hillsborough --authority tampa",
+    "    --database-url-env DATABASE_URL",
     "    --identity-evidence <official-identity-records.jsonl>",
     "    --output <new-private-evidence.jsonl>",
     "    --catalog-sha256 <sha256> --profile-sha256 <sha256>",
@@ -47,6 +52,8 @@ function parseArguments(argv) {
     "--as-of",
     "--folio",
     "--license",
+    "--county",
+    "--authority",
   ]);
   const values = new Map();
   const folios = [];
@@ -60,7 +67,7 @@ function parseArguments(argv) {
     }
     if (key === "--folio") {
       const folio = value.trim().toUpperCase();
-      if (!/^[A-Z0-9]{12}$/.test(folio)) {
+      if (!/^[A-Z0-9][A-Z0-9.-]{4,63}$/.test(folio)) {
         throw new Error(`Invalid folio "${value}"`);
       }
       folios.push(folio);
@@ -87,7 +94,12 @@ function parseArguments(argv) {
     profileSha256: values.get("--profile-sha256"),
     repositoryCommit: values.get("--repository-commit"),
     asOfDate: values.get("--as-of") ?? "2026-09-10",
-    folios: folios.length ? folios : SEED_FOLIOS,
+    countyKey: values.get("--county") ?? "broward",
+    authority: values.get("--authority") ?? null,
+    folios:
+      folios.length
+        ? folios
+        : (COUNTY_SEEDS[values.get("--county") ?? "broward"] ?? []),
     licenses,
   };
 }
@@ -153,9 +165,19 @@ function sourceMaps() {
 
 const SOURCE_MAP = sourceMaps();
 
-function sourceIdentity(sourceSystem, city = null) {
+function sourceIdentity(sourceSystem, city = null, context = {}) {
   const configured = SOURCE_MAP.get(sourceSystem);
   if (configured) return configured;
+  if (context.countyKey && context.countyKey !== "broward") {
+    return {
+      authority: context.authority,
+      jurisdictionKey: context.authority,
+      sourceKey: "private-query-db",
+      sourceSystem,
+      access: "supported",
+      predecessorComplete: false,
+    };
+  }
   const routed = routePermitJurisdiction(browardPermitProfile, city);
   const authority =
     routed?.key ??
@@ -311,14 +333,21 @@ const SELECTED_PERMITS_CTE = `
              UPPER(COALESCE(pc.license_number, '')),
              '[^A-Z0-9]+', '', 'g'
            ) = ANY($2::text[])
+  ),
+  county_selected_permits AS (
+    SELECT sp.property_improvement_id
+      FROM selected_permits sp
+      JOIN public.property_improvements pi
+        ON pi.property_improvement_id = sp.property_improvement_id
+     WHERE pi.source_system LIKE $3
   )`;
 
-async function readPermits(client, folios, licenses) {
+async function readPermits(client, folios, licenses, context) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pi.*, a.city_name, a.unnormalized_address,
             count(pc.permit_contact_id)::int AS contact_count
-       FROM selected_permits sp
+       FROM county_selected_permits sp
        JOIN public.property_improvements pi
          ON pi.property_improvement_id = sp.property_improvement_id
        LEFT JOIN public.addresses a ON a.address_id = pi.address_id
@@ -326,10 +355,14 @@ async function readPermits(client, folios, licenses) {
          ON pc.property_improvement_id = pi.property_improvement_id
       GROUP BY pi.property_improvement_id, a.city_name, a.unnormalized_address
       ORDER BY pi.source_system, pi.source_record_key`,
-    [folios, licenses],
+    [folios, licenses, context.sourceSystemPrefix],
   );
   return result.rows.map((row) => {
-    const source = sourceIdentity(row.source_system, row.city_name);
+    const source = sourceIdentity(
+      row.source_system,
+      row.city_name,
+      context,
+    );
     const evidenceSha256 =
       /^[a-f0-9]{64}$/.test(row.source_record_hash ?? "")
         ? row.source_record_hash
@@ -339,7 +372,7 @@ async function readPermits(client, folios, licenses) {
       propertyImprovementId: row.property_improvement_id,
       propertyId: row.property_id,
       parcelIdentifier: row.parcel_identifier,
-      countyKey: "broward",
+      countyKey: context.countyKey,
       authority: source.authority,
       jurisdictionKey: source.jurisdictionKey,
       sourceKey: source.sourceKey,
@@ -393,19 +426,19 @@ async function readPermits(client, folios, licenses) {
   });
 }
 
-async function readContacts(client, folios, licenses) {
+async function readContacts(client, folios, licenses, context) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pc.property_improvement_id, pc.contact_role, pc.raw_name,
             pc.company_id, c.name AS company_name, pc.license_number,
             pc.license_type, pc.source_payload, pc.source_system,
             pc.source_record_key, pc.source_record_hash
-       FROM selected_permits sp
+       FROM county_selected_permits sp
        JOIN public.permit_contacts pc
          ON pc.property_improvement_id = sp.property_improvement_id
        LEFT JOIN public.companies c ON c.company_id = pc.company_id
       ORDER BY pc.source_system, pc.source_record_key`,
-    [folios, licenses],
+    [folios, licenses, context.sourceSystemPrefix],
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -432,17 +465,17 @@ async function readContacts(client, folios, licenses) {
   );
 }
 
-async function readEvents(client, folios, licenses) {
+async function readEvents(client, folios, licenses, context) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pe.property_improvement_id, pe.event_type, pe.event_status,
             pe.event_date, pe.source_system, pe.source_record_key,
             pe.source_record_hash
-       FROM selected_permits sp
+       FROM county_selected_permits sp
        JOIN public.permit_events pe
          ON pe.property_improvement_id = sp.property_improvement_id
       ORDER BY pe.source_system, pe.source_record_key`,
-    [folios, licenses],
+    [folios, licenses, context.sourceSystemPrefix],
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -465,17 +498,17 @@ async function readEvents(client, folios, licenses) {
   );
 }
 
-async function readInspections(client, folios, licenses) {
+async function readInspections(client, folios, licenses, context) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT i.property_improvement_id, i.inspection_type,
             i.inspection_status, i.result, i.completed_date,
             i.source_system, i.source_record_key, i.source_record_hash
-       FROM selected_permits sp
+       FROM county_selected_permits sp
        JOIN public.inspections i
          ON i.property_improvement_id = sp.property_improvement_id
       ORDER BY i.source_system, i.source_record_key`,
-    [folios, licenses],
+    [folios, licenses, context.sourceSystemPrefix],
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -496,7 +529,7 @@ async function readInspections(client, folios, licenses) {
   );
 }
 
-async function readProperties(client, permits, folios) {
+async function readProperties(client, permits, folios, context) {
   const propertyIds = [
     ...new Set(permits.map((permit) => permit.propertyId).filter(Boolean)),
   ];
@@ -506,15 +539,22 @@ async function readProperties(client, permits, folios) {
             p.source_record_key, a.city_name, a.unnormalized_address
        FROM public.properties p
        LEFT JOIN public.addresses a ON a.address_id = p.address_id
-      WHERE p.parcel_identifier = ANY($1::text[])
-         OR p.property_id = ANY($2::uuid[])
+      WHERE (
+              p.parcel_identifier = ANY($1::text[])
+              OR p.property_id = ANY($2::uuid[])
+            )
+        AND p.source_system LIKE $3
       ORDER BY p.parcel_identifier`,
-    [folios, propertyIds],
+    [folios, propertyIds, context.sourceSystemPrefix],
   );
   return result.rows.map((row) => {
     const authority =
-      routePermitJurisdiction(browardPermitProfile, row.city_name)?.key ??
-      null;
+      context.countyKey === "broward"
+        ? (routePermitJurisdiction(
+            browardPermitProfile,
+            row.city_name,
+          )?.key ?? null)
+        : context.authority;
     return cohortInputRecordSchema.parse({
       recordType: "property",
       propertyId: row.property_id,
@@ -572,7 +612,7 @@ async function readMatcherState(client, permits) {
   });
 }
 
-function sourceReconciliationRecords(permits, catalogSha256) {
+function sourceReconciliationRecords(permits, catalogSha256, context) {
   const counts = new Map();
   for (const permit of permits) {
     counts.set(
@@ -580,7 +620,13 @@ function sourceReconciliationRecords(permits, catalogSha256) {
       (counts.get(permit.sourceSystem) ?? 0) + 1,
     );
   }
-  return [...SOURCE_MAP.values()].map((source) =>
+  const sources =
+    context.countyKey === "broward"
+      ? [...SOURCE_MAP.values()]
+      : [...counts.keys()].map((sourceSystem) =>
+          sourceIdentity(sourceSystem, null, context),
+        );
+  return sources.map((source) =>
     cohortInputRecordSchema.parse({
       recordType: "source_reconciliation",
       authority: source.authority,
@@ -596,7 +642,10 @@ function sourceReconciliationRecords(permits, catalogSha256) {
       missing: null,
       evidence: [
         {
-          uri: "repo://skills/use-oracle/runtime/docs/broward-sources.yaml",
+          uri:
+            context.countyKey === "broward"
+              ? "repo://skills/use-oracle/runtime/docs/broward-sources.yaml"
+              : "private://hillsborough/source-scope",
           sha256: catalogSha256,
           observedAt: null,
         },
@@ -617,6 +666,23 @@ function sourceReconciliationRecords(permits, catalogSha256) {
 
 async function run(args) {
   await requireAbsent(args.outputPath);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args.countyKey)) {
+    throw new Error(`Invalid county key "${args.countyKey}"`);
+  }
+  if (
+    args.countyKey !== "broward" &&
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(args.authority ?? "")
+  ) {
+    throw new Error("--authority is required outside Broward");
+  }
+  if (args.folios.length === 0) {
+    throw new Error(`No default seed is configured for ${args.countyKey}`);
+  }
+  const context = {
+    countyKey: args.countyKey,
+    authority: args.authority,
+    sourceSystemPrefix: `${args.countyKey.replaceAll("-", "_")}%`,
+  };
   const databaseUrl = process.env[args.databaseUrlEnv]?.trim();
   if (!databaseUrl) {
     throw new Error(
@@ -630,7 +696,7 @@ async function run(args) {
   const identities = parseIdentityEvidence(identityBytes);
   const client = new pg.Client({
     connectionString: databaseUrl,
-    application_name: "broward-roofing-readonly-export",
+    application_name: "roofing-readonly-export",
     options:
       "-c default_transaction_read_only=on -c statement_timeout=120000",
   });
@@ -639,20 +705,20 @@ async function run(args) {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await assertSchema(client);
     const [permits, contacts, events, inspections] = await Promise.all([
-      readPermits(client, args.folios, args.licenses),
-      readContacts(client, args.folios, args.licenses),
-      readEvents(client, args.folios, args.licenses),
-      readInspections(client, args.folios, args.licenses),
+      readPermits(client, args.folios, args.licenses, context),
+      readContacts(client, args.folios, args.licenses, context),
+      readEvents(client, args.folios, args.licenses, context),
+      readInspections(client, args.folios, args.licenses, context),
     ]);
     const [properties, matcherState] = await Promise.all([
-      readProperties(client, permits, args.folios),
+      readProperties(client, permits, args.folios, context),
       readMatcherState(client, permits),
     ]);
     await client.query("COMMIT");
     const manifest = cohortInputRecordSchema.parse({
       recordType: "manifest",
       schemaVersion: ROOFING_COHORT_INPUT_VERSION,
-      countyKey: "broward",
+      countyKey: args.countyKey,
       generatedAt: new Date().toISOString(),
       asOfDate: args.asOfDate,
       sourceCatalogSha256: args.catalogSha256,
@@ -668,7 +734,11 @@ async function run(args) {
       ...events,
       ...inspections,
       ...identities,
-      ...sourceReconciliationRecords(permits, args.catalogSha256),
+      ...sourceReconciliationRecords(
+        permits,
+        args.catalogSha256,
+        context,
+      ),
       matcherState,
     ];
     await writeFile(
@@ -678,7 +748,8 @@ async function run(args) {
     );
     process.stdout.write(
       `${JSON.stringify({
-        event: "broward_roofing_readonly_export_complete",
+        event: "roofing_readonly_export_complete",
+        countyKey: args.countyKey,
         outputPath: args.outputPath,
         sha256: sha256(
           `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,

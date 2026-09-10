@@ -1,8 +1,8 @@
 {
   "name": "@soofi-xyz-team-kit/oracle-runtime",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
-  "description": "Self-contained Elephant county-ingestion, enrichment, coverage-only repair, and private Broward roofing-cohort analysis runtime bundled with the soofi-xyz-team-kit plugin.",
+  "description": "Self-contained Elephant county-ingestion, enrichment, coverage-only repair, and private roofing-cohort analysis runtime bundled with the soofi-xyz-team-kit plugin.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
@@ -11,6 +11,8 @@
     "elephant-county": "bin/elephant-county.mjs",
     "broward-roofing-cohort": "bin/broward-roofing-cohort.mjs",
     "broward-roofing-readonly-export": "bin/broward-roofing-readonly-export.mjs",
+    "roofing-cohort": "bin/broward-roofing-cohort.mjs",
+    "roofing-readonly-export": "bin/broward-roofing-readonly-export.mjs",
     "permit-backfill": "bin/permit-backfill.mjs",
     "permit-source-coverage": "bin/permit-source-coverage.mjs",
     "probe-broward-permits": "bin/probe-broward-permits.mjs"

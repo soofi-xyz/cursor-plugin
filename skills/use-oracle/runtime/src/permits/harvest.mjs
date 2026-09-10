@@ -241,7 +241,11 @@ async function processProperty({
     return { status, records: [], failures: [failure], resumed: false };
   }
 
-  const adapter = createPermitAdapter(jurisdiction, adapterOptions);
+  const adapter = createPermitAdapter(jurisdiction, {
+    countyKey: profile.countyKey,
+    countyName: profile.countyName,
+    ...adapterOptions,
+  });
   const failures = [];
   const records = [];
   let references = [];
@@ -433,7 +437,11 @@ export async function probePermitSources({ profile, adapterOptions = {} }) {
   assertPermitProfileReady(profile);
   const results = [];
   for (const jurisdiction of profile.jurisdictions) {
-    const adapter = createPermitAdapter(jurisdiction, adapterOptions);
+    const adapter = createPermitAdapter(jurisdiction, {
+      countyKey: profile.countyKey,
+      countyName: profile.countyName,
+      ...adapterOptions,
+    });
     if (!adapter) {
       results.push({
         jurisdictionKey: jurisdiction.key,

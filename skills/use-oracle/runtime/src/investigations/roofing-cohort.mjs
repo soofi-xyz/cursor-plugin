@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 
-const SEED_FOLIOS = new Set([
-  "514005211940",
-  "494026050080",
-  "504032160260",
-]);
+const DEFAULT_SEED_PARCELS = Object.freeze({
+  broward: Object.freeze([
+    "514005211940",
+    "494026050080",
+    "504032160260",
+  ]),
+  hillsborough: Object.freeze(["1949120000"]),
+});
 
 const TRAILING_WINDOW = Object.freeze({
   fromDate: "2025-09-10",
@@ -29,7 +32,7 @@ const SOURCE_LIFECYCLES = Object.freeze([
     key: "accela",
     source: /accela|lauderbuild/i,
     open:
-      /^(?:applied|approved|in process|in review|issued|open|permit issued|ready to issue)$/i,
+      /^(?:about to expire|applied|approved|in process|in review|issued|open|permit issued|ready to issue)$/i,
     terminal:
       /^(?:cancelled|canceled|closed|complete|completed|expired|finaled|finalized|void|voided|withdrawn)$/i,
   },
@@ -286,6 +289,20 @@ export function evaluatePermitLifecycle(permit, asOfDate) {
       effectiveDate: latestEvent.date,
     };
   }
+  const expiration = dateState(permit.dates.expiration, asOfDate);
+  if (
+    expiration.state === "valid" &&
+    expiration.date < asOfDate &&
+    currentStates.includes("open")
+  ) {
+    return {
+      state: "terminal",
+      reasonCode: "source_expiration_date_elapsed",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: "Expired",
+      effectiveDate: expiration.date,
+    };
+  }
   if (currentStates.includes("terminal")) {
     return {
       state: "terminal",
@@ -443,7 +460,10 @@ export function deduplicateSourcePermits(permits) {
   });
 }
 
-export function clusterSupplementalPermits(permits) {
+export function clusterSupplementalPermits(
+  permits,
+  { countyKey = "broward" } = {},
+) {
   const groups = new Map();
   for (const permit of permits) {
     const rootPermitNumber =
@@ -461,7 +481,7 @@ export function clusterSupplementalPermits(permits) {
     groups.set(key, rows);
   }
   return [...groups.entries()].map(([key, rows]) => ({
-    projectId: stableId("broward-roofing-project", key),
+    projectId: stableId(`${countyKey}-roofing-project`, key),
     authority: rows[0].authority,
     rootPermitNumber:
       rows[0].masterPermitNumber ??
@@ -593,7 +613,7 @@ function projectResult(project, identities, window, asOfDate) {
   };
 }
 
-function createRepairCandidates(permits, sourceRecords) {
+function createRepairCandidates(permits, sourceRecords, countyKey) {
   const supportedSources = new Set(
     sourceRecords
       .filter((source) => source.access === "supported")
@@ -612,6 +632,7 @@ function createRepairCandidates(permits, sourceRecords) {
       !missingDetail ||
       !supportedSources.has(`${permit.authority}/${permit.sourceKey}`) ||
       !permit.propertyId ||
+      !/^(?:[a-f0-9]{32}|[a-f0-9-]{36})$/i.test(permit.propertyId) ||
       !permit.parcelIdentifier
     ) {
       continue;
@@ -626,7 +647,7 @@ function createRepairCandidates(permits, sourceRecords) {
     selectedScopes.add(scopeKey);
     candidates.push({
       schemaVersion: "elephant.permit-repair-candidate.v1",
-      countyKey: "broward",
+      countyKey,
       jurisdictionKey: permit.jurisdictionKey,
       sourceKey: permit.sourceKey,
       property: {
@@ -979,6 +1000,7 @@ export function analyzeRoofingCohort({
   gapLedger = [],
   trailingWindow = TRAILING_WINDOW,
   oldRoofWindow = OLD_ROOF_WINDOW,
+  seedParcelIdentifiers = DEFAULT_SEED_PARCELS[manifest.countyKey] ?? [],
 }) {
   const identities = records.filter(
     (row) => row.recordType === "license_identity",
@@ -991,20 +1013,26 @@ export function analyzeRoofingCohort({
     (row) => row.recordType === "matcher_state",
   );
   const attached = attachChildRecords(records);
+  const wrongCounty = attached.find(
+    (permit) => permit.countyKey !== manifest.countyKey,
+  );
+  if (wrongCounty) {
+    throw new Error(
+      `Permit ${wrongCounty.sourceRecordKey} belongs to ${wrongCounty.countyKey}, not ${manifest.countyKey}`,
+    );
+  }
+  const seedParcels = new Set(seedParcelIdentifiers);
   const deduplicated = deduplicateSourcePermits(attached);
-  const projects = clusterSupplementalPermits(deduplicated).map((project) =>
-    projectResult(
-      project,
-      identities,
-      trailingWindow,
-      manifest.asOfDate,
-    ),
+  const projects = clusterSupplementalPermits(deduplicated, {
+    countyKey: manifest.countyKey,
+  }).map((project) =>
+    projectResult(project, identities, trailingWindow, manifest.asOfDate),
   );
   const trailingProjects = projects
     .filter(
       (project) =>
         project.supported &&
-        !SEED_FOLIOS.has(project.parcelIdentifier),
+        !seedParcels.has(project.parcelIdentifier),
     )
     .map((project) => ({
       projectId: project.projectId,
@@ -1077,7 +1105,7 @@ export function analyzeRoofingCohort({
   const openCandidates = currentOpenPermits
     .filter(
       (permit) =>
-        !SEED_FOLIOS.has(permit.parcelIdentifier) &&
+        !seedParcels.has(permit.parcelIdentifier) &&
         permit.propertyId &&
         permit.detailComplete,
     )
@@ -1097,7 +1125,7 @@ export function analyzeRoofingCohort({
   }
   const oldRoofCandidates = properties
     .filter(
-      (property) => !SEED_FOLIOS.has(property.parcelIdentifier),
+      (property) => !seedParcels.has(property.parcelIdentifier),
     )
     .map((property) => ({
       property,
@@ -1117,12 +1145,12 @@ export function analyzeRoofingCohort({
   );
   const availability =
     blockedSources.length > 0 ? "supported_partial" : "supported_full";
-  const scopedSeedFolios = new Set(
+  const scopedSeedParcels = new Set(
     [...properties, ...deduplicated]
       .map((record) => record.parcelIdentifier)
-      .filter((folio) => SEED_FOLIOS.has(folio)),
+      .filter((parcel) => seedParcels.has(parcel)),
   );
-  const seedEvidence = [...scopedSeedFolios].sort().map((parcelIdentifier) => {
+  const seedEvidence = [...scopedSeedParcels].sort().map((parcelIdentifier) => {
     const permits = deduplicated.filter(
       (permit) => permit.parcelIdentifier === parcelIdentifier,
     );
@@ -1195,6 +1223,7 @@ export function analyzeRoofingCohort({
     repairCandidates: createRepairCandidates(
       deduplicated,
       sourceRecords,
+      manifest.countyKey,
     ),
     reconciliation: sourceReconciliation(attached, sourceRecords),
     matcherStates,
@@ -1205,7 +1234,7 @@ export function analyzeRoofingCohort({
     gapLedger: completeGapLedger(gapLedger, result),
     summary: {
       schemaVersion: "elephant.roofing-cohort-summary.v1",
-      countyKey: "broward",
+      countyKey: manifest.countyKey,
       asOfDate: manifest.asOfDate,
       trailingWindow,
       oldRoofWindow,
@@ -1234,3 +1263,5 @@ export const BROWARD_ROOFING_WINDOWS = Object.freeze({
   trailing: TRAILING_WINDOW,
   oldRoof: OLD_ROOF_WINDOW,
 });
+
+export const HILLSBOROUGH_ROOFING_WINDOWS = BROWARD_ROOFING_WINDOWS;

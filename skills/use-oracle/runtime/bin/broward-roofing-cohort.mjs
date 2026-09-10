@@ -21,9 +21,9 @@ import {
 
 function usage() {
   return [
-    "Analyze immutable private Broward permit evidence without network or database access.",
+    "Analyze immutable private roofing permit evidence without network or database access.",
     "",
-    "  broward-roofing-cohort --input <evidence.jsonl> --gap-ledger <gap-ledger.jsonl> --output <new-private-directory>",
+    "  roofing-cohort --input <evidence.jsonl> --gap-ledger <gap-ledger.jsonl> --output <new-private-directory>",
     "    --expected-catalog-sha256 <sha256>",
     "    --expected-profile-sha256 <sha256>",
     "    --expected-repository-commit <40-char-sha>",
@@ -125,6 +125,7 @@ async function requireAbsent(filePath) {
 async function writeJson(filePath, value) {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, {
     flag: "wx",
+    mode: 0o600,
   });
 }
 
@@ -132,7 +133,7 @@ async function writeJsonl(filePath, rows) {
   const body = rows.length
     ? `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`
     : "";
-  await writeFile(filePath, body, { flag: "wx" });
+  await writeFile(filePath, body, { flag: "wx", mode: 0o600 });
 }
 
 async function run(args) {
@@ -170,7 +171,7 @@ async function run(args) {
     trailingWindow: BROWARD_ROOFING_WINDOWS.trailing,
     oldRoofWindow: BROWARD_ROOFING_WINDOWS.oldRoof,
   });
-  await mkdir(args.outputPath, { recursive: true });
+  await mkdir(args.outputPath, { recursive: true, mode: 0o700 });
   const cohortRows = [
     ...result.openCohort.map((row) => ({
       cohort: "open-roofing",
@@ -183,7 +184,7 @@ async function run(args) {
   ];
   const reportManifest = {
     schemaVersion: ROOFING_COHORT_REPORT_VERSION,
-    countyKey: "broward",
+    countyKey: input.manifest.countyKey,
     generatedAt: new Date().toISOString(),
     input: {
       sha256: sha256(inputBytes),
@@ -241,7 +242,7 @@ async function run(args) {
   ]);
   process.stdout.write(
     `${JSON.stringify({
-      event: "broward_roofing_cohort_complete",
+      event: "roofing_cohort_complete",
       outputPath: args.outputPath,
       inputSha256: reportManifest.input.sha256,
       ...result.summary,

@@ -39,6 +39,22 @@ export function normalizePermitParcelIdentifier(profile, value) {
   if (profile.parcelIdentifierFormat === "broward-folio") {
     return normalizeBrowardParcelIdentifier(value);
   }
+  if (profile.parcelIdentifierFormat === "source-specific") {
+    const normalized = String(value ?? "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+    if (!new RegExp(profile.parcelIdentifierPattern).test(normalized)) {
+      throw new PermitSourceError(
+        `Invalid ${profile.countyName} parcel identifier`,
+        {
+          classification: "permanent",
+          code: "invalid_parcel_identifier",
+        },
+      );
+    }
+    return normalized;
+  }
   return normalizeDuvalParcelIdentifier(value);
 }
 

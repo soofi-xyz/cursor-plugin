@@ -285,7 +285,7 @@ export const permitProfileSchema = z
     countyFips: z.string().regex(/^\d{5}$/),
     parcelIdentifierPattern: z.string().min(1),
     parcelIdentifierFormat: z
-      .enum(["duval-re", "broward-folio"])
+      .enum(["duval-re", "broward-folio", "source-specific"])
       .default("duval-re"),
     defaultRoutingPolicy: z
       .enum(["fallback", "explicit-only"])

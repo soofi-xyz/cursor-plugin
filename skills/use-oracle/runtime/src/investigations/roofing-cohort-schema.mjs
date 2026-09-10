@@ -9,7 +9,7 @@ export const ROOFING_GAP_VERSION = "elephant.investigation-gap.v1";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const FOLIO = /^[A-Z0-9]{12}$/;
+const PARCEL_IDENTIFIER = /^[A-Z0-9][A-Z0-9.-]{4,63}$/;
 
 const nullableText = z.string().trim().min(1).nullable();
 const nullableDate = z.string().regex(ISO_DATE).nullable();
@@ -27,7 +27,7 @@ export const cohortManifestRecordSchema = z
   .object({
     recordType: z.literal("manifest"),
     schemaVersion: z.literal(ROOFING_COHORT_INPUT_VERSION),
-    countyKey: z.literal("broward"),
+    countyKey: z.string().regex(KEY),
     generatedAt: z.string().datetime({ offset: true }),
     asOfDate: z.string().regex(ISO_DATE),
     sourceCatalogSha256: z.string().regex(SHA256),
@@ -41,7 +41,11 @@ export const cohortPropertyRecordSchema = z
   .object({
     recordType: z.literal("property"),
     propertyId: nullableText,
-    parcelIdentifier: z.string().trim().toUpperCase().regex(FOLIO),
+    parcelIdentifier: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(PARCEL_IDENTIFIER),
     authority: z.string().regex(KEY).nullable(),
     address: nullableText,
     city: nullableText,
@@ -79,7 +83,7 @@ export const cohortPermitRecordSchema = z
     propertyImprovementId: z.string().trim().min(1),
     propertyId: nullableText,
     parcelIdentifier: nullableText,
-    countyKey: z.literal("broward"),
+    countyKey: z.string().regex(KEY),
     authority: z.string().regex(KEY),
     jurisdictionKey: z.string().regex(KEY),
     sourceKey: z.string().regex(KEY),
