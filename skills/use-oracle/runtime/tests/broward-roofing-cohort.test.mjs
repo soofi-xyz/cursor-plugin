@@ -436,23 +436,41 @@ describe("old-roof inference and cohort output", () => {
     });
   });
 
-  it("returns the required proven-window wording and inferred age", () => {
+  it("returns the required proven-window wording and authoritative age", () => {
     expect(inferOldRoofControl(property(), [])).toMatchObject({
       eligible: true,
-      reasonCode: "no_replacement_found_in_proven_window",
+      reasonCode:
+        "no_open_or_closed_roofing_permit_found_in_proven_window",
       statement:
-        "No roof replacement permit found in the proven window 2016-09-10 through 2026-09-10.",
-      inferredAgeBasis: {
+        "No open or closed roofing permit found in the proven window 2016-09-10 through 2026-09-10.",
+      caveat:
+        "This is a permit-history finding, not proof that the roof is definitely old.",
+      ageBasis: {
         kind: "structure_built_year",
-        inferredAgeLowerBoundYears: 36,
+        year: 1990,
+        minimumWholeYearsAsOfDate: 35,
       },
     });
   });
 
-  it("excludes replacement and new-construction evidence in the window", () => {
+  it("excludes every roofing status and new construction in the window", () => {
     expect(inferOldRoofControl(property(), [permit()]).eligible).toBe(
       false,
     );
+    expect(
+      inferOldRoofControl(property(), [
+        permit({
+          status: "Complete",
+          workClass: "Roof coating",
+          scope: "Apply elastomeric roof coating",
+          dates: {
+            ...permit().dates,
+            issued: "2020-01-02",
+            completion: "2020-01-10",
+          },
+        }),
+      ]).reasonCode,
+    ).toBe("open_or_closed_roofing_permit_found_in_window");
     expect(
       inferOldRoofControl(property(), [
         permit({
@@ -462,6 +480,53 @@ describe("old-roof inference and cohort output", () => {
         }),
       ]).reasonCode,
     ).toBe("new_construction_in_window");
+  });
+
+  it("uses the newer effective year and requires it before 2016", () => {
+    expect(
+      inferOldRoofControl(
+        property({ builtYear: 1950, effectiveYear: 2018 }),
+        [],
+      ),
+    ).toMatchObject({
+      eligible: false,
+      reasonCode: "built_or_effective_year_not_older_than_ten_years",
+    });
+    expect(
+      inferOldRoofControl(
+        property({ builtYear: 1950, effectiveYear: 2002 }),
+        [],
+      ),
+    ).toMatchObject({
+      eligible: true,
+      ageBasis: {
+        kind: "structure_effective_year",
+        year: 2002,
+        minimumWholeYearsAsOfDate: 23,
+      },
+    });
+  });
+
+  it("fails closed on an undated roofing or construction permit", () => {
+    expect(
+      inferOldRoofControl(property(), [
+        permit({
+          status: "Complete",
+          dates: {
+            application: null,
+            opened: null,
+            issued: null,
+            finalInspection: null,
+            completion: null,
+            closed: null,
+            expiration: null,
+          },
+        }),
+      ]),
+    ).toMatchObject({
+      eligible: false,
+      reasonCode: "undated_roofing_or_construction_permit",
+    });
   });
 
   it("emits strict repair candidates for supported missing detail only", () => {

@@ -42,7 +42,7 @@ export const hillsboroughPermitProfile = validatePermitProfile({
           role: "historical-search",
           access: "public",
           historicalBoundary:
-            "Anonymous City of Tampa Accela detail and bounded search; predecessor and start-date coverage are not certified.",
+            "Official City of Tampa Comprehensive Permit Summary documentation defines Accela as the permitting-history source for addresses within city limits and accepts explicit start/end dates. Exact reconciled address searches may certify 2016-09-10..2026-09-10 per property; broader predecessor coverage remains uncertified.",
           contractorDetailCapability: "public-detail",
           adapterKey: "accela",
           adapterRouteKey: "primary",

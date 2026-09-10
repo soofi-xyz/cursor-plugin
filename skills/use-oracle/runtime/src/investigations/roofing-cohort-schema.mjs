@@ -3,7 +3,7 @@ import { z } from "zod";
 export const ROOFING_COHORT_INPUT_VERSION =
   "elephant.roofing-cohort-input.v1";
 export const ROOFING_COHORT_REPORT_VERSION =
-  "elephant.roofing-cohort-report.v1";
+  "elephant.roofing-cohort-report.v2";
 export const ROOFING_GAP_VERSION = "elephant.investigation-gap.v1";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -51,6 +51,14 @@ export const cohortPropertyRecordSchema = z
     city: nullableText,
     usageType: nullableText,
     builtYear: z.number().int().min(1700).max(2200).nullable(),
+    effectiveYear: z
+      .number()
+      .int()
+      .min(1700)
+      .max(2200)
+      .nullable()
+      .optional()
+      .default(null),
     sourceSystem: z.string().trim().min(1),
     sourceRecordKey: z.string().trim().min(1),
     coverage: z
@@ -60,6 +68,8 @@ export const cohortPropertyRecordSchema = z
         authorityComplete: z.boolean(),
         predecessorComplete: z.boolean(),
         sourceSystems: z.array(z.string().trim().min(1)),
+        basis: nullableText.optional().default(null),
+        evidence: z.array(evidenceSchema).optional().default([]),
       })
       .strict(),
   })

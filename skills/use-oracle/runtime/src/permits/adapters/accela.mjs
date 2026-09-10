@@ -23,6 +23,10 @@ const SELECTORS = Object.freeze({
   streetNumberTo:
     "#ctl00_PlaceHolderMain_generalSearchForm_txtGSNumber_ChildControl1",
   streetName: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStreetName",
+  streetDirection:
+    "#ctl00_PlaceHolderMain_generalSearchForm_ddlGSDirection",
+  streetSuffix:
+    "#ctl00_PlaceHolderMain_generalSearchForm_ddlGSStreetSuffix",
   licenseNumber:
     "#ctl00_PlaceHolderMain_generalSearchForm_txtGSLicenseNumber",
   submit: "#ctl00_PlaceHolderMain_btnNewSearch",
@@ -132,6 +136,7 @@ export function parseAccelaSearchPage(
         text(anchor.text()) ?? recordNumberFromUrl(detailUrl) ?? detailUrl,
       recordNumber: text(anchor.text()),
       detailUrl,
+      fileDate: cells.map(dateFromUs).find(Boolean) ?? null,
       address:
         text(row.find('[id$="_lblAddress"]').text()) ??
         cells[anchorCellIndex + 1] ??
@@ -404,6 +409,10 @@ export function normalizeAccelaPermitDetail(
   const estimatedValue = valueText
     ? Number(valueText.replaceAll(",", ""))
     : null;
+  const referenceFileDate =
+    /^\d{4}-\d{2}-\d{2}$/.test(String(reference.fileDate ?? ""))
+      ? reference.fileDate
+      : dateFromUs(reference.fileDate);
 
   return normalizedPermitRecordSchema.parse({
     schemaVersion: "elephant.normalized-permit-record.v1",
@@ -424,7 +433,7 @@ export function normalizeAccelaPermitDetail(
     application_received_date: dateFromText(
       text($("#trASIList").text()) ?? "",
       "(?:Application Submitted|Application Acceptance Date)",
-    ),
+    ) ?? referenceFileDate,
     final_inspection_date:
       workflowDate(workflowEvents, /^Inspection$/i, /complete|pass/i) ??
       dateFromText(rawText, "Final Inspection"),
@@ -516,6 +525,11 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
 
   async function openSearch() {
     const page = await (await browser()).newPage();
+    const browserContext = page.browserContext();
+    const cookies = await browserContext.cookies(config.baseUrl);
+    if (cookies.length > 0) {
+      await browserContext.deleteCookie(...cookies);
+    }
     await page.goto(config.baseUrl, {
       waitUntil: "domcontentloaded",
       timeout: options.timeoutMs ?? 60_000,
@@ -556,24 +570,34 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
     try {
       for (const [selector, value] of Object.entries(fields)) {
         if (!(await dom.$(selector))) continue;
-        await dom.$eval(
+        const tagName = await dom.$eval(
           selector,
-          (element, nextValue) => {
-            element.value = nextValue;
-            if (element.tagName === "SELECT") return;
-            element.dispatchEvent(new Event("input", { bubbles: true }));
-            element.dispatchEvent(new Event("change", { bubbles: true }));
-          },
-          value,
+          (element) => element.tagName,
         );
+        if (tagName === "SELECT") {
+          await dom.select(selector, value);
+          continue;
+        }
+        await dom.$eval(selector, (element) => {
+          element.value = "";
+        });
+        if (value) {
+          await dom.type(selector, value);
+        }
       }
-      await Promise.allSettled([
-        dom.waitForNavigation({
-          waitUntil: "domcontentloaded",
-          timeout: options.timeoutMs ?? 60_000,
-        }),
-        dom.click(SELECTORS.submit),
-      ]);
+      await dom.click(SELECTORS.submit);
+      await dom.waitForFunction(
+        () => {
+          const body = document.body?.textContent ?? "";
+          return (
+            document.querySelector('a[href*="/Cap/CapDetail.aspx"]') ||
+            /no records found|no record was found|search returned no results/i.test(
+              body,
+            )
+          );
+        },
+        { timeout: options.timeoutMs ?? 60_000 },
+      );
 
       const references = [];
       let reportedTotal = null;
@@ -635,6 +659,9 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
         });
         references.push(...parsed.references);
         reportedTotal ??= parsed.reportedTotal;
+        if (reportedTotal === null && parsed.noRecords) {
+          reportedTotal = 0;
+        }
         if (!parsed.hasNext) {
           if (references.length === 0 && !parsed.noRecords) {
             throw new PermitSourceError(
@@ -656,19 +683,24 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
             },
           );
         }
-        await Promise.allSettled([
-          dom.waitForNavigation({
-            waitUntil: "domcontentloaded",
-            timeout: options.timeoutMs ?? 60_000,
-          }),
-          dom.evaluate(() => {
-            const next = [...document.querySelectorAll("a")].find(
-              (anchor) =>
-                /^next\s*>?$/i.test(anchor.textContent?.trim() ?? ""),
-            );
-            next?.click();
-          }),
-        ]);
+        const previousFirstHref = await dom.$eval(
+          'a[href*="/Cap/CapDetail.aspx"]',
+          (anchor) => anchor.href,
+        );
+        await dom.evaluate(() => {
+          const next = [...document.querySelectorAll("a")].find(
+            (anchor) =>
+              /^next\s*>?$/i.test(anchor.textContent?.trim() ?? ""),
+          );
+          next?.click();
+        });
+        await dom.waitForFunction(
+          (priorHref) =>
+            document.querySelector('a[href*="/Cap/CapDetail.aspx"]')
+              ?.href !== priorHref,
+          { timeout: options.timeoutMs ?? 60_000 },
+          previousFirstHref,
+        );
       }
 
       const deduped = [
@@ -732,8 +764,8 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
       );
       return searchRecords({
         fields: {
-          [SELECTORS.startDate]: "",
-          [SELECTORS.endDate]: "",
+          [SELECTORS.startDate]: request.fromDate ?? "",
+          [SELECTORS.endDate]: request.throughDate ?? "",
           [SELECTORS.parcel]: parcelIdentifier,
         },
         requestedParcelIdentifier: parcelIdentifier,
@@ -742,7 +774,12 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
     },
 
     async searchAddress(
-      { streetNumber, streetName },
+      {
+        streetNumber,
+        streetName,
+        streetDirection = "",
+        streetSuffix = "",
+      },
       request = {},
     ) {
       if (!/^\d+[A-Z]?$/.test(String(streetNumber ?? "").trim())) {
@@ -757,13 +794,39 @@ export function createAccelaAdapter(jurisdiction, options = {}) {
           code: "accela_invalid_street_name",
         });
       }
+      if (
+        !/^(?:|E|N|NE|NW|S|SE|SW|W)$/i.test(
+          String(streetDirection).trim(),
+        )
+      ) {
+        throw new PermitSourceError(
+          "Accela street direction is invalid",
+          {
+            classification: "permanent",
+            code: "accela_invalid_street_direction",
+          },
+        );
+      }
+      if (
+        !/^(?:|Aly|Ave|Blvd|Br|Cir|Cswy|Ct|Ctr|Dr|Expy|Fwy|Hill|Hwy|Land|Ln|Loop|Mall|Pkwy|Pl|Plz|Pt|Rd|Rnch|Sq|St|Ter|Trail|Vis|Vly|Way)$/i.test(
+          String(streetSuffix).trim(),
+        )
+      ) {
+        throw new PermitSourceError("Accela street suffix is invalid", {
+          classification: "permanent",
+          code: "accela_invalid_street_suffix",
+        });
+      }
       return searchRecords({
         fields: {
-          [SELECTORS.startDate]: "",
-          [SELECTORS.endDate]: "",
+          [SELECTORS.startDate]: request.fromDate ?? "",
+          [SELECTORS.endDate]: request.throughDate ?? "",
           [SELECTORS.streetNumber]: String(streetNumber).trim(),
           [SELECTORS.streetNumberTo]: String(streetNumber).trim(),
           [SELECTORS.streetName]: String(streetName).trim(),
+          [SELECTORS.streetDirection]:
+            String(streetDirection).trim().toUpperCase(),
+          [SELECTORS.streetSuffix]: String(streetSuffix).trim(),
         },
         requestedParcelIdentifier: request.requestedParcelIdentifier
           ? normalizeParcelIdentifier(

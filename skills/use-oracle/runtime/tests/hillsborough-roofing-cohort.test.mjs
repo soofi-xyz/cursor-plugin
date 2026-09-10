@@ -12,6 +12,7 @@ import {
 import { evaluatePermitProfileReadiness } from "../src/permits/readiness.mjs";
 import {
   analyzeRoofingCohort,
+  classifyRoofingPermit,
   evaluatePermitLifecycle,
 } from "../src/investigations/roofing-cohort.mjs";
 
@@ -135,6 +136,7 @@ describe("Hillsborough permit source profile", () => {
       recordType: "Residential Roof Trade Permit",
       address: "58 Bahama Cir T 33606",
       status: "Complete",
+      fileDate: "2024-11-20",
     });
 
     const tampa = hillsboroughPermitProfile.jurisdictions[0];
@@ -150,6 +152,7 @@ describe("Hillsborough permit source profile", () => {
       },
     );
     expect(detail).toMatchObject({
+      application_received_date: "2024-11-20",
       permit_issue_date: "2018-02-16",
       permit_close_date: "2018-04-05",
       expiration_date: "2018-10-09",
@@ -192,6 +195,34 @@ describe("Hillsborough roofing evidence", () => {
     ).toMatchObject({
       state: "terminal",
       reasonCode: "source_expiration_date_elapsed",
+    });
+    expect(
+      evaluatePermitLifecycle(
+        permit({ status: "Closed Per Statute" }),
+        "2026-09-10",
+      ).state,
+    ).toBe("terminal");
+    expect(
+      evaluatePermitLifecycle(
+        permit({ status: "Administrative Closed" }),
+        "2026-09-10",
+      ).state,
+    ).toBe("terminal");
+  });
+
+  it("does not classify roof-mounted electrical equipment as roofing", () => {
+    expect(
+      classifyRoofingPermit(
+        permit({
+          permitType: "Residential Electrical Trade Permit",
+          workClass: "Electrical",
+          scope: "Full PV system roof mounted",
+          trade: "Electrical",
+        }),
+      ),
+    ).toMatchObject({
+      classification: "not_roofing",
+      reasonCode: "nonroof_trade_authority",
     });
   });
 
@@ -263,5 +294,77 @@ describe("Hillsborough roofing evidence", () => {
     expect(result.seedEvidence[0].parcelIdentifier).toBe("1949120000");
     expect(result.openCohort).toEqual([]);
     expect(result.oldRoofControls).toEqual([]);
+  });
+
+  it("selects corrected old-roof controls independently and excludes focused folios", () => {
+    const manifest = {
+      recordType: "manifest",
+      schemaVersion: "elephant.roofing-cohort-input.v1",
+      countyKey: "hillsborough",
+      generatedAt: "2026-09-10T12:00:00.000Z",
+      asOfDate: "2026-09-10",
+      sourceCatalogSha256: SHA,
+      sourceProfileSha256: SHA,
+      repositoryCommit: "b".repeat(40),
+      privacy: "private",
+    };
+    const coverage = {
+      fromDate: "2016-09-10",
+      throughDate: "2026-09-10",
+      authorityComplete: true,
+      predecessorComplete: true,
+      sourceSystems: [
+        "hillsborough_city_of_tampa_accela_permits",
+      ],
+    };
+    const property = (parcelIdentifier) => ({
+      recordType: "property",
+      propertyId: `property-${parcelIdentifier}`,
+      parcelIdentifier,
+      authority: "tampa",
+      address: "8517 N Ashley St",
+      city: "Tampa",
+      usageType: "Single-family residential (DOR 0100)",
+      builtYear: 1950,
+      effectiveYear: 2002,
+      sourceSystem: "hillsborough_appraiser",
+      sourceRecordKey: parcelIdentifier,
+      coverage,
+    });
+    const result = analyzeRoofingCohort({
+      manifest,
+      records: [
+        property("1949120000"),
+        property("1311720106"),
+        property("1000000000"),
+        {
+          recordType: "source_reconciliation",
+          authority: "tampa",
+          sourceKey: "accela-current",
+          sourceSystem: "hillsborough_city_of_tampa_accela_permits",
+          access: "supported",
+          predecessorComplete: true,
+          reported: 0,
+          received: 0,
+          missing: 0,
+          evidence: [],
+          blockerCategory: null,
+          blockerOwner: null,
+          blockerFix: null,
+        },
+      ],
+    });
+
+    expect(result.openCohort).toEqual([]);
+    expect(result.oldRoofReview).toHaveLength(1);
+    expect(result.oldRoofControls).toMatchObject([
+      {
+        parcelIdentifier: "1000000000",
+        reasonCode:
+          "no_open_or_closed_roofing_permit_found_in_proven_window",
+        statement:
+          "No open or closed roofing permit found in the proven window 2016-09-10 through 2026-09-10.",
+      },
+    ]);
   });
 });

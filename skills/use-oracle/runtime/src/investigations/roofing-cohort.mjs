@@ -9,6 +9,11 @@ const DEFAULT_SEED_PARCELS = Object.freeze({
   hillsborough: Object.freeze(["1949120000"]),
 });
 
+const DEFAULT_CONTROL_EXCLUSIONS = Object.freeze({
+  broward: DEFAULT_SEED_PARCELS.broward,
+  hillsborough: Object.freeze(["1949120000", "1311720106"]),
+});
+
 const TRAILING_WINDOW = Object.freeze({
   fromDate: "2025-09-10",
   throughDate: "2026-09-10",
@@ -34,7 +39,7 @@ const SOURCE_LIFECYCLES = Object.freeze([
     open:
       /^(?:about to expire|applied|approved|in process|in review|issued|open|permit issued|ready to issue)$/i,
     terminal:
-      /^(?:cancelled|canceled|closed|complete|completed|expired|finaled|finalized|void|voided|withdrawn)$/i,
+      /^(?:administrative close|administrative closed|cancelled|canceled|closed|closed per statute|complete|completed|expired|finaled|finalized|site plan review complete|void|voided|withdrawn)$/i,
   },
   {
     key: "arcgis",
@@ -76,6 +81,8 @@ const ROOFING_NONREPLACEMENT =
   /\b(?:roof\s+repair|repair\s+(?:the\s+)?roof|roof\s+coating|roof\s+maintenance|roof\s+inspection|flashing\s+repair|gutter|roof\s+drain|waterproofing)\b/i;
 const MECHANICAL =
   /\b(?:mechanical|hvac|air\s+condition(?:er|ing)|condensate|duct(?:work)?|refrigeration|chiller|cooling\s+tower)\b/i;
+const AUTHORITATIVE_NONROOF_TRADE =
+  /\b(?:electrical|fire|gas|mechanical|plumbing|pool|solar|photovoltaic)\b/i;
 const NEW_CONSTRUCTION =
   /\b(?:new\s+(?:single[\s-]?family\s+)?(?:residence|dwelling|home|sfr|building)|new\s+construction|ground[\s-]?up|shell\s+building)\b/i;
 
@@ -167,9 +174,9 @@ export function classifyRoofingPermit(permit) {
     };
   }
   if (
-    MECHANICAL.test(tradeFields) &&
+    AUTHORITATIVE_NONROOF_TRADE.test(tradeFields) &&
     !ROOFING.test(tradeFields) &&
-    !REPLACEMENT.test(tradeFields)
+    !REPLACEMENT.test(combined)
   ) {
     return {
       classification: "not_roofing",
@@ -744,23 +751,73 @@ function sourceReconciliation(permits, sourceRecords) {
   });
 }
 
-function lastConfirmedReplacementBefore(permits, date, asOfDate) {
-  const candidates = [];
-  for (const permit of permits) {
-    if (
-      classifyRoofingPermit(permit).classification !==
-      "confirmed_replacement"
-    ) {
-      continue;
+function permitWindowEvidence(permit, window, asOfDate) {
+  const candidates = [
+    ...Object.entries(permit.dates).map(([kind, value]) => [kind, value]),
+    ...(permit.inspections ?? []).map((inspection) => [
+      "inspection",
+      inspection.completedDate,
+    ]),
+    ...(permit.events ?? []).map((event) => [
+      "permit_event",
+      event.eventDate,
+    ]),
+  ];
+  const evidence = [];
+  for (const [kind, value] of candidates) {
+    const parsed = dateState(value, asOfDate);
+    if (parsed.state === "invalid" || parsed.state === "future") {
+      return {
+        state: "needs_review",
+        reasonCode: `${parsed.state}_permit_history_date`,
+        evidence: [],
+      };
     }
-    const work = evaluateWorkEvidence(
-      permit,
-      { fromDate: "1700-01-01", throughDate: date },
-      asOfDate,
-    );
-    candidates.push(...work.evidence.map((evidence) => evidence.date));
+    if (parsed.state === "valid" && inInclusiveWindow(parsed.date, window)) {
+      evidence.push({ kind, date: parsed.date });
+    }
   }
-  return candidates.sort().at(-1) ?? null;
+  return {
+    state: evidence.length > 0 ? "confirmed" : "not_found",
+    reasonCode:
+      evidence.length > 0
+        ? "permit_record_in_inclusive_window"
+        : "no_permit_record_date_in_window",
+    evidence,
+  };
+}
+
+function authoritativeStructureAge(property, window, asOfDate) {
+  const years = [
+    ["structure_built_year", property.builtYear],
+    ["structure_effective_year", property.effectiveYear],
+  ].filter(([, year]) => Number.isInteger(year));
+  if (years.length === 0) {
+    return {
+      eligible: false,
+      reasonCode: "missing_authoritative_built_or_effective_year",
+    };
+  }
+  const [kind, year] = years.sort((left, right) => right[1] - left[1])[0];
+  const cutoffYear = Number(window.fromDate.slice(0, 4));
+  if (year >= cutoffYear) {
+    return {
+      eligible: false,
+      reasonCode: "built_or_effective_year_not_older_than_ten_years",
+      ageBasis: { kind, year },
+    };
+  }
+  return {
+    eligible: true,
+    ageBasis: {
+      kind,
+      year,
+      minimumWholeYearsAsOfDate: Math.max(
+        0,
+        Number(asOfDate.slice(0, 4)) - year - 1,
+      ),
+    },
+  };
 }
 
 export function inferOldRoofControl(
@@ -784,86 +841,97 @@ export function inferOldRoofControl(
     };
   }
 
+  const age = authoritativeStructureAge(
+    property,
+    window,
+    asOfDate,
+  );
+  if (!age.eligible) return age;
+
   for (const permit of permits) {
-    const work = evaluateWorkEvidence(permit, window, asOfDate);
     const classification = classifyRoofingPermit(permit);
+    const history = permitWindowEvidence(permit, window, asOfDate);
+    const lifecycle = evaluatePermitLifecycle(permit, asOfDate);
+    const roofing =
+      classification.classification !== "not_roofing";
+    const newConstruction = NEW_CONSTRUCTION.test(
+      permitEvidenceText(permit)
+        .map(([, value]) => value)
+        .join(" | "),
+    );
     if (
-      work.state === "needs_review" ||
-      (classification.classification === "needs_review" &&
-        work.state === "confirmed")
+      (roofing || newConstruction) &&
+      history.state === "needs_review"
     ) {
       return {
         eligible: false,
-        reasonCode: "unresolved_permit_or_date_evidence",
+        reasonCode: "unresolved_roofing_or_construction_date_evidence",
+        disqualifyingPermit: {
+          permitNumber: permit.permitNumber,
+          classification,
+          lifecycle,
+        },
       };
     }
     if (
-      classification.classification === "confirmed_replacement" &&
-      work.state === "confirmed"
+      (roofing || newConstruction) &&
+      history.state === "not_found" &&
+      lifecycle.state !== "open"
     ) {
       return {
         eligible: false,
-        reasonCode: "confirmed_replacement_in_window",
+        reasonCode: "undated_roofing_or_construction_permit",
+        disqualifyingPermit: {
+          permitNumber: permit.permitNumber,
+          classification,
+          lifecycle,
+        },
       };
     }
     if (
-      NEW_CONSTRUCTION.test(
-        permitEvidenceText(permit)
-          .map(([, value]) => value)
-          .join(" | "),
-      ) &&
-      work.state === "confirmed"
+      roofing &&
+      (history.state === "confirmed" || lifecycle.state === "open")
+    ) {
+      return {
+        eligible: false,
+        reasonCode: "open_or_closed_roofing_permit_found_in_window",
+        disqualifyingPermit: {
+          permitNumber: permit.permitNumber,
+          classification,
+          lifecycle,
+          windowEvidence: history.evidence,
+        },
+      };
+    }
+    if (
+      newConstruction &&
+      (history.state === "confirmed" || lifecycle.state === "open")
     ) {
       return {
         eligible: false,
         reasonCode: "new_construction_in_window",
+        disqualifyingPermit: {
+          permitNumber: permit.permitNumber,
+          classification,
+          lifecycle,
+          windowEvidence: history.evidence,
+        },
       };
     }
   }
-  if (
-    property.builtYear !== null &&
-    property.builtYear >= Number(window.fromDate.slice(0, 4))
-  ) {
-    return {
-      eligible: false,
-      reasonCode: "built_year_within_exclusion_window",
-    };
-  }
-
-  const priorReplacementDate = lastConfirmedReplacementBefore(
-    permits,
-    window.fromDate,
-    asOfDate,
-  );
-  const basis = priorReplacementDate
-    ? {
-        kind: "older_confirmed_replacement",
-        date: priorReplacementDate,
-        inferredAgeLowerBoundYears: Math.floor(
-          (Date.parse(`${asOfDate}T00:00:00Z`) -
-            Date.parse(`${priorReplacementDate}T00:00:00Z`)) /
-            (365.2425 * 24 * 60 * 60 * 1000),
-        ),
-      }
-    : property.builtYear
-      ? {
-          kind: "structure_built_year",
-          year: property.builtYear,
-          inferredAgeLowerBoundYears:
-            Number(asOfDate.slice(0, 4)) - property.builtYear,
-        }
-      : null;
-  if (!basis) {
-    return {
-      eligible: false,
-      reasonCode: "missing_inferred_age_basis",
-    };
-  }
   return {
     eligible: true,
-    reasonCode: "no_replacement_found_in_proven_window",
-    statement: `No roof replacement permit found in the proven window ${window.fromDate} through ${window.throughDate}.`,
-    inferredAgeBasis: basis,
+    reasonCode: "no_open_or_closed_roofing_permit_found_in_proven_window",
+    statement: `No open or closed roofing permit found in the proven window ${window.fromDate} through ${window.throughDate}.`,
+    caveat:
+      "This is a permit-history finding, not proof that the roof is definitely old.",
+    ageBasis: age.ageBasis,
+    permitSearch: {
+      reviewedPermitCount: permits.length,
+      roofingPermitCount: 0,
+      fromDate: window.fromDate,
+      throughDate: window.throughDate,
+    },
   };
 }
 
@@ -970,6 +1038,10 @@ function completeGapLedger(gaps, result) {
       "broward-roofing-008-old-roof-controls",
       result.oldRoofControls.length === 5 ? "resolved" : "partial",
     ],
+    [
+      "hil-o07-corrected-old-roof-controls",
+      result.oldRoofControls.length === 5 ? "resolved" : "partial",
+    ],
   ]);
   return gaps.map((gap) => ({
     ...gap,
@@ -1022,6 +1094,10 @@ export function analyzeRoofingCohort({
     );
   }
   const seedParcels = new Set(seedParcelIdentifiers);
+  const controlExclusions = new Set([
+    ...seedParcels,
+    ...(DEFAULT_CONTROL_EXCLUSIONS[manifest.countyKey] ?? []),
+  ]);
   const deduplicated = deduplicateSourcePermits(attached);
   const projects = clusterSupplementalPermits(deduplicated, {
     countyKey: manifest.countyKey,
@@ -1123,9 +1199,9 @@ export function analyzeRoofingCohort({
     rows.push(permit);
     permitsByParcel.set(permit.parcelIdentifier, rows);
   }
-  const oldRoofCandidates = properties
+  const oldRoofReview = properties
     .filter(
-      (property) => !seedParcels.has(property.parcelIdentifier),
+      (property) => !controlExclusions.has(property.parcelIdentifier),
     )
     .map((property) => ({
       property,
@@ -1135,7 +1211,8 @@ export function analyzeRoofingCohort({
         oldRoofWindow,
         manifest.asOfDate,
       ),
-    }))
+    }));
+  const oldRoofCandidates = oldRoofReview
     .filter(({ inference }) => inference.eligible)
     .map(({ property, inference }) => ({ ...property, ...inference }));
   const oldRoofControls = chooseControls(oldRoofCandidates, openCohort);
@@ -1219,6 +1296,10 @@ export function analyzeRoofingCohort({
     trailingProjects,
     currentOpenPermits,
     openCohort,
+    oldRoofReview: oldRoofReview.map(({ property, inference }) => ({
+      ...property,
+      ...inference,
+    })),
     oldRoofControls,
     repairCandidates: createRepairCandidates(
       deduplicated,
@@ -1233,7 +1314,7 @@ export function analyzeRoofingCohort({
     ...result,
     gapLedger: completeGapLedger(gapLedger, result),
     summary: {
-      schemaVersion: "elephant.roofing-cohort-summary.v1",
+      schemaVersion: "elephant.roofing-cohort-summary.v2",
       countyKey: manifest.countyKey,
       asOfDate: manifest.asOfDate,
       trailingWindow,
@@ -1250,6 +1331,7 @@ export function analyzeRoofingCohort({
       trailingProjectCount: trailingProjects.length,
       currentOpenPermitCount: currentOpenPermits.length,
       openCohortCount: openCohort.length,
+      oldRoofReviewedCandidateCount: oldRoofReview.length,
       oldRoofControlCount: oldRoofControls.length,
       repairCandidateCount: result.repairCandidates.length,
       blockedSourceCount: blockedSources.length,

@@ -228,6 +228,10 @@ async function run(args) {
       cohortRows,
     ),
     writeJsonl(
+      path.join(args.outputPath, "old-roof-candidate-review.jsonl"),
+      result.oldRoofReview,
+    ),
+    writeJsonl(
       path.join(args.outputPath, "source-reconciliation.jsonl"),
       result.reconciliation,
     ),
