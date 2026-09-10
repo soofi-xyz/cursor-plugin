@@ -1407,6 +1407,8 @@ export function chooseControls(candidates, openCases, target = 5) {
 }
 
 function completeGapLedger(gaps, result) {
+  const selectedLeadCount =
+    result.openCohort.length + result.oldRoofControls.length;
   const statusById = new Map([
     [
       "broward-roofing-001-seed-permit-enumeration",
@@ -1444,11 +1446,11 @@ function completeGapLedger(gaps, result) {
     ],
     [
       "broward-roofing-007-open-roofing-cohort",
-      result.openCohort.length === 5 ? "resolved" : "partial",
+      selectedLeadCount === 10 ? "resolved" : "partial",
     ],
     [
       "broward-roofing-008-old-roof-controls",
-      result.oldRoofControls.length === 5 ? "resolved" : "partial",
+      selectedLeadCount === 10 ? "resolved" : "partial",
     ],
   ]);
   return gaps.map((gap) => ({
@@ -1472,6 +1474,10 @@ function completeGapLedger(gaps, result) {
       openLeadDefinition:
         "confirmed currently open roofing permit with linked property and complete evidence that no contractor is assigned",
       oldRoofControlCount: result.oldRoofControls.length,
+      selectedLeadCount,
+      leadSampleTarget: 10,
+      leadSampleShortfall: Math.max(0, 10 - selectedLeadCount),
+      parcelExportQuality: result.parcelExportQuality,
     },
     status: statusById.get(gap.gapId) ?? gap.status,
   }));
@@ -1493,6 +1499,35 @@ export function analyzeRoofingCohort({
   );
   const matcherStates = records.filter(
     (row) => row.recordType === "matcher_state",
+  );
+  const exportGaps = records.filter(
+    (row) => row.recordType === "export_gap",
+  );
+  const parcelExportQuality = exportGaps.reduce(
+    (summary, gap) => ({
+      excludedPermitCount:
+        summary.excludedPermitCount + gap.excludedPermitCount,
+      excludedPropertyCount:
+        summary.excludedPropertyCount + gap.excludedPropertyCount,
+      excludedChildRecordCount:
+        summary.excludedChildRecordCount +
+        gap.excludedChildRecordCount,
+      losslesslyNormalizedPermitCount:
+        summary.losslesslyNormalizedPermitCount +
+        gap.losslesslyNormalizedPermitCount,
+      losslesslyNormalizedPropertyCount:
+        summary.losslesslyNormalizedPropertyCount +
+        gap.losslesslyNormalizedPropertyCount,
+      evidenceCount: summary.evidenceCount + gap.evidence.length,
+    }),
+    {
+      excludedPermitCount: 0,
+      excludedPropertyCount: 0,
+      excludedChildRecordCount: 0,
+      losslesslyNormalizedPermitCount: 0,
+      losslesslyNormalizedPropertyCount: 0,
+      evidenceCount: 0,
+    },
   );
   const seedFolios = new Set(manifest.seedFolios);
   const attached = attachChildRecords(records);
@@ -1587,7 +1622,11 @@ export function analyzeRoofingCohort({
     }))
     .filter(({ inference }) => inference.eligible)
     .map(({ property, inference }) => ({ ...property, ...inference }));
-  const oldRoofControls = chooseControls(oldRoofCandidates, openCohort);
+  const oldRoofControls = chooseControls(
+    oldRoofCandidates,
+    openCohort,
+    Math.max(0, 10 - openCohort.length),
+  );
   const contractorAssignmentCounts = {
     unassigned_confirmed: currentOpenPermits.filter(
       (permit) =>
@@ -1704,13 +1743,17 @@ export function analyzeRoofingCohort({
     ),
     reconciliation: sourceReconciliation(attached, sourceRecords),
     matcherStates,
+    exportGaps,
+    parcelExportQuality,
     blockedSources,
   };
+  const selectedLeadCount =
+    openCohort.length + oldRoofControls.length;
   return {
     ...result,
     gapLedger: completeGapLedger(gapLedger, result),
     summary: {
-      schemaVersion: "elephant.roofing-cohort-summary.v2",
+      schemaVersion: "elephant.roofing-cohort-summary.v3",
       countyKey: "broward",
       asOfDate: manifest.asOfDate,
       trailingWindow,
@@ -1733,6 +1776,10 @@ export function analyzeRoofingCohort({
       contractorAssignmentCounts,
       oldRoofControlCount: oldRoofControls.length,
       oldRoofControlConfidenceCounts,
+      selectedLeadCount,
+      leadSampleTarget: 10,
+      leadSampleShortfall: Math.max(0, 10 - selectedLeadCount),
+      parcelExportQuality,
       repairCandidateCount: result.repairCandidates.length,
       blockedSourceCount: blockedSources.length,
       publicationPerformed: false,

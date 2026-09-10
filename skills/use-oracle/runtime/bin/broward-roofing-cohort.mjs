@@ -205,6 +205,8 @@ async function run(args) {
       "Prospective roofing leads for handoff; open permits are not Z Roofing projects and receive no Z Roofing license association.",
     openLeadEligibility:
       "Confirmed roofing, currently open, linked property, stable source identity, in-window filing date, and complete evidence that no contractor is assigned.",
+    selectionMethod:
+      "Select up to five eligible open leads, then fill remaining slots to ten with confidence-qualified estimated old-roof leads; never pad below evidence standards.",
     publicationPerformed: false,
     databaseWritesPerformed: false,
   };
@@ -231,8 +233,12 @@ async function run(args) {
       result.currentOpenPermits,
     ),
     writeJsonl(
-      path.join(args.outputPath, "cohort-5-plus-5.jsonl"),
+      path.join(args.outputPath, "cohort-up-to-10-leads.jsonl"),
       cohortRows,
+    ),
+    writeJsonl(
+      path.join(args.outputPath, "parcel-export-gaps.jsonl"),
+      result.exportGaps,
     ),
     writeJsonl(
       path.join(args.outputPath, "source-reconciliation.jsonl"),

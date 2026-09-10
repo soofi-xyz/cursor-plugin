@@ -1,10 +1,12 @@
 import { z } from "zod";
 
 export const ROOFING_COHORT_INPUT_VERSION =
-  "elephant.roofing-cohort-input.v4";
+  "elephant.roofing-cohort-input.v5";
 export const ROOFING_COHORT_REPORT_VERSION =
-  "elephant.roofing-cohort-report.v2";
+  "elephant.roofing-cohort-report.v3";
 export const ROOFING_GAP_VERSION = "elephant.investigation-gap.v1";
+export const ROOFING_EXPORT_GAP_VERSION =
+  "elephant.roofing-cohort-export-gap.v1";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -234,6 +236,34 @@ export const cohortMatcherStateRecordSchema = z
   })
   .strict();
 
+export const cohortExportGapRecordSchema = z
+  .object({
+    recordType: z.literal("export_gap"),
+    schemaVersion: z.literal(ROOFING_EXPORT_GAP_VERSION),
+    gapType: z.literal("parcel_identifier_quarantine"),
+    excludedPermitCount: z.number().int().nonnegative(),
+    excludedPropertyCount: z.number().int().nonnegative(),
+    excludedChildRecordCount: z.number().int().nonnegative(),
+    losslesslyNormalizedPermitCount: z.number().int().nonnegative(),
+    losslesslyNormalizedPropertyCount: z.number().int().nonnegative(),
+    verifiedSeedFolios: z.array(z.string().regex(FOLIO)).min(1),
+    evidence: z.array(
+      z
+        .object({
+          entityType: z.enum(["permit", "property"]),
+          sourceSystem: z.string().trim().min(1),
+          sourceRecordKeySha256: z.string().regex(SHA256),
+          rawParcelSha256: z.string().regex(SHA256),
+          reasonCode: z.enum([
+            "unsupported_broward_parcel_format",
+            "missing_broward_parcel_identifier",
+          ]),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export const cohortInputRecordSchema = z.discriminatedUnion("recordType", [
   cohortManifestRecordSchema,
   cohortPropertyRecordSchema,
@@ -244,6 +274,7 @@ export const cohortInputRecordSchema = z.discriminatedUnion("recordType", [
   cohortIdentityRecordSchema,
   cohortSourceReconciliationRecordSchema,
   cohortMatcherStateRecordSchema,
+  cohortExportGapRecordSchema,
 ]);
 
 export const investigationGapSchema = z

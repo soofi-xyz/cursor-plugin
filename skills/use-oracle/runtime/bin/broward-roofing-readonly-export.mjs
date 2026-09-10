@@ -7,9 +7,13 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 import { browardPermitProfile } from "../src/counties/broward/permit-profile.mjs";
-import { routePermitJurisdiction } from "../src/permits/normalization.mjs";
+import {
+  normalizeBrowardParcelIdentifier,
+  routePermitJurisdiction,
+} from "../src/permits/normalization.mjs";
 import {
   cohortInputRecordSchema,
+  ROOFING_EXPORT_GAP_VERSION,
   ROOFING_COHORT_INPUT_VERSION,
 } from "../src/investigations/roofing-cohort-schema.mjs";
 
@@ -131,6 +135,29 @@ function sha256(value) {
   return createHash("sha256")
     .update(typeof value === "string" ? value : JSON.stringify(value))
     .digest("hex");
+}
+
+export function normalizeExportBrowardParcelIdentifier(value) {
+  const raw = String(value ?? "");
+  try {
+    const normalized = normalizeBrowardParcelIdentifier(raw);
+    return {
+      state:
+        normalized === raw.trim().toUpperCase()
+          ? "already_canonical"
+          : "losslessly_normalized",
+      normalized,
+      reasonCode: null,
+    };
+  } catch {
+    return {
+      state: "quarantined",
+      normalized: null,
+      reasonCode: raw.trim()
+        ? "unsupported_broward_parcel_format"
+        : "missing_broward_parcel_identifier",
+    };
+  }
 }
 
 const LEAD_WINDOW_START = "2025-09-10";
@@ -487,6 +514,18 @@ function selectedPermitParameters(
   ];
 }
 
+function parcelGapEvidence(row, recordType, outcome) {
+  return {
+    entityType: recordType,
+    sourceSystem: String(row.source_system ?? "unknown"),
+    sourceRecordKeySha256: sha256(
+      String(row.source_record_key ?? row.property_improvement_id ?? ""),
+    ),
+    rawParcelSha256: sha256(String(row.parcel_identifier ?? "")),
+    reasonCode: outcome.reasonCode,
+  };
+}
+
 async function readPermits(
   client,
   folios,
@@ -508,7 +547,22 @@ async function readPermits(
       ORDER BY pi.source_system, pi.source_record_key`,
     selectedPermitParameters(folios, licenses, companyNames, asOfDate),
   );
-  return result.rows.map((row) => {
+  const records = [];
+  const quarantineEvidence = [];
+  let losslesslyNormalizedCount = 0;
+  for (const row of result.rows) {
+    const parcel = normalizeExportBrowardParcelIdentifier(
+      row.parcel_identifier,
+    );
+    if (parcel.state === "quarantined") {
+      quarantineEvidence.push(
+        parcelGapEvidence(row, "permit", parcel),
+      );
+      continue;
+    }
+    if (parcel.state === "losslessly_normalized") {
+      losslesslyNormalizedCount += 1;
+    }
     const source = sourceIdentity(row.source_system, row.city_name);
     const evidenceSha256 =
       /^[a-f0-9]{64}$/.test(row.source_record_hash ?? "")
@@ -516,11 +570,11 @@ async function readPermits(
         : sha256(row);
     const contractorAssignmentEvidence =
       inspectContractorAssignmentPayload(row);
-    return cohortInputRecordSchema.parse({
+    records.push(cohortInputRecordSchema.parse({
       recordType: "permit",
       propertyImprovementId: row.property_improvement_id,
       propertyId: row.property_id,
-      parcelIdentifier: row.parcel_identifier,
+      parcelIdentifier: parcel.normalized,
       countyKey: "broward",
       authority: source.authority,
       jurisdictionKey: source.jurisdictionKey,
@@ -575,8 +629,9 @@ async function readPermits(
       contractorAssignmentEvidence,
       sourceArtifactUri: row.source_artifact_uri,
       evidenceSha256,
-    });
-  });
+    }));
+  }
+  return { records, quarantineEvidence, losslesslyNormalizedCount };
 }
 
 async function readContacts(
@@ -715,14 +770,29 @@ async function readProperties(client, permits, folios) {
       ORDER BY p.parcel_identifier`,
     [folios, propertyIds],
   );
-  return result.rows.map((row) => {
+  const records = [];
+  const quarantineEvidence = [];
+  let losslesslyNormalizedCount = 0;
+  for (const row of result.rows) {
+    const parcel = normalizeExportBrowardParcelIdentifier(
+      row.parcel_identifier,
+    );
+    if (parcel.state === "quarantined") {
+      quarantineEvidence.push(
+        parcelGapEvidence(row, "property", parcel),
+      );
+      continue;
+    }
+    if (parcel.state === "losslessly_normalized") {
+      losslesslyNormalizedCount += 1;
+    }
     const authority =
       routePermitJurisdiction(browardPermitProfile, row.city_name)?.key ??
       null;
-    return cohortInputRecordSchema.parse({
+    records.push(cohortInputRecordSchema.parse({
       recordType: "property",
       propertyId: row.property_id,
-      parcelIdentifier: row.parcel_identifier,
+      parcelIdentifier: parcel.normalized,
       authority,
       address: row.unnormalized_address,
       city: row.city_name,
@@ -737,8 +807,9 @@ async function readProperties(client, permits, folios) {
         predecessorComplete: false,
         sourceSystems: [],
       },
-    });
-  });
+    }));
+  }
+  return { records, quarantineEvidence, losslesslyNormalizedCount };
 }
 
 async function readMatcherState(client, permits) {
@@ -843,40 +914,98 @@ async function run(args) {
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await assertSchema(client);
-    const permits = await readPermits(
+    const permitRead = await readPermits(
       client,
       args.folios,
       args.licenses,
       args.companyNames,
       args.asOfDate,
     );
-    const contacts = await readContacts(
+    const permits = permitRead.records;
+    for (const seedFolio of args.folios) {
+      if (
+        !permits.some(
+          (permit) => permit.parcelIdentifier === seedFolio,
+        )
+      ) {
+        throw new Error(
+          `Strict seed folio ${seedFolio} is absent after parcel validation`,
+        );
+      }
+    }
+    const includedPermitIds = new Set(
+      permits.map((permit) => permit.propertyImprovementId),
+    );
+    const allContacts = await readContacts(
       client,
       args.folios,
       args.licenses,
       args.companyNames,
       args.asOfDate,
     );
-    const events = await readEvents(
+    const allEvents = await readEvents(
       client,
       args.folios,
       args.licenses,
       args.companyNames,
       args.asOfDate,
     );
-    const inspections = await readInspections(
+    const allInspections = await readInspections(
       client,
       args.folios,
       args.licenses,
       args.companyNames,
       args.asOfDate,
     );
-    const properties = await readProperties(
+    const contacts = allContacts.filter((record) =>
+      includedPermitIds.has(record.propertyImprovementId),
+    );
+    const events = allEvents.filter((record) =>
+      includedPermitIds.has(record.propertyImprovementId),
+    );
+    const inspections = allInspections.filter((record) =>
+      includedPermitIds.has(record.propertyImprovementId),
+    );
+    const propertyRead = await readProperties(
       client,
       permits,
       args.folios,
     );
+    const properties = propertyRead.records;
+    for (const seedFolio of args.folios) {
+      if (
+        !properties.some(
+          (property) => property.parcelIdentifier === seedFolio,
+        )
+      ) {
+        throw new Error(
+          `Strict seed folio ${seedFolio} has no validated property`,
+        );
+      }
+    }
     const matcherState = await readMatcherState(client, permits);
+    const excludedChildRecordCount =
+      allContacts.length -
+      contacts.length +
+      (allEvents.length - events.length) +
+      (allInspections.length - inspections.length);
+    const exportGap = cohortInputRecordSchema.parse({
+      recordType: "export_gap",
+      schemaVersion: ROOFING_EXPORT_GAP_VERSION,
+      gapType: "parcel_identifier_quarantine",
+      excludedPermitCount: permitRead.quarantineEvidence.length,
+      excludedPropertyCount: propertyRead.quarantineEvidence.length,
+      excludedChildRecordCount,
+      losslesslyNormalizedPermitCount:
+        permitRead.losslesslyNormalizedCount,
+      losslesslyNormalizedPropertyCount:
+        propertyRead.losslesslyNormalizedCount,
+      verifiedSeedFolios: args.folios,
+      evidence: [
+        ...permitRead.quarantineEvidence,
+        ...propertyRead.quarantineEvidence,
+      ],
+    });
     await client.query("COMMIT");
     const manifest = cohortInputRecordSchema.parse({
       recordType: "manifest",
@@ -902,6 +1031,7 @@ async function run(args) {
       ...identities,
       ...sourceReconciliationRecords(permits, args.catalogSha256),
       matcherState,
+      exportGap,
     ];
     await writeFile(
       args.outputPath,
@@ -921,6 +1051,17 @@ async function run(args) {
         eventCount: events.length,
         inspectionCount: inspections.length,
         identityCount: identities.length,
+        excludedMalformedParcelPermitCount:
+          exportGap.excludedPermitCount,
+        excludedMalformedParcelPropertyCount:
+          exportGap.excludedPropertyCount,
+        excludedMalformedParcelChildRecordCount:
+          exportGap.excludedChildRecordCount,
+        losslesslyNormalizedParcelPermitCount:
+          exportGap.losslesslyNormalizedPermitCount,
+        losslesslyNormalizedParcelPropertyCount:
+          exportGap.losslesslyNormalizedPropertyCount,
+        verifiedSeedFolios: exportGap.verifiedSeedFolios,
         databaseWritesPerformed: false,
         excludedPrivateFields: [
           "owner",

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { permitRepairCandidateSchema } from "../src/permits/backfill-inputs.mjs";
-import { inspectContractorAssignmentPayload } from "../bin/broward-roofing-readonly-export.mjs";
+import { cohortInputRecordSchema } from "../src/investigations/roofing-cohort-schema.mjs";
+import {
+  inspectContractorAssignmentPayload,
+  normalizeExportBrowardParcelIdentifier,
+} from "../bin/broward-roofing-readonly-export.mjs";
 import {
   analyzeRoofingCohort,
   classifyRoofingPermit,
@@ -142,7 +146,7 @@ function property(overrides = {}) {
 function manifest(overrides = {}) {
   return {
     recordType: "manifest",
-    schemaVersion: "elephant.roofing-cohort-input.v4",
+    schemaVersion: "elephant.roofing-cohort-input.v5",
     countyKey: "broward",
     generatedAt: "2026-09-10T12:00:00.000Z",
     asOfDate: "2026-09-10",
@@ -399,6 +403,52 @@ describe("work dates and source lifecycles", () => {
 });
 
 describe("prospective open-roofing lead qualification", () => {
+  it("normalizes only lossless Broward parcel formatting", () => {
+    expect(
+      normalizeExportBrowardParcelIdentifier(" 5041-11-16-0200 "),
+    ).toEqual({
+      state: "losslessly_normalized",
+      normalized: "504111160200",
+      reasonCode: null,
+    });
+    expect(
+      normalizeExportBrowardParcelIdentifier("504111160200.0"),
+    ).toMatchObject({
+      state: "quarantined",
+      normalized: null,
+      reasonCode: "unsupported_broward_parcel_format",
+    });
+    expect(
+      normalizeExportBrowardParcelIdentifier(null),
+    ).toMatchObject({
+      state: "quarantined",
+      normalized: null,
+      reasonCode: "missing_broward_parcel_identifier",
+    });
+    expect(() =>
+      cohortInputRecordSchema.parse({
+        recordType: "export_gap",
+        schemaVersion: "elephant.roofing-cohort-export-gap.v1",
+        gapType: "parcel_identifier_quarantine",
+        excludedPermitCount: 1,
+        excludedPropertyCount: 1,
+        excludedChildRecordCount: 2,
+        losslesslyNormalizedPermitCount: 3,
+        losslesslyNormalizedPropertyCount: 3,
+        verifiedSeedFolios: ["514005211940"],
+        evidence: [
+          {
+            entityType: "property",
+            sourceSystem: "broward_appraiser",
+            sourceRecordKeySha256: SHA,
+            rawParcelSha256: SHA,
+            reasonCode: "unsupported_broward_parcel_format",
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   it("handles null contractor result arrays and fails closed", () => {
     const evidence = inspectContractorAssignmentPayload({
       source_payload: {
@@ -943,6 +993,50 @@ describe("old-roof inference and cohort output", () => {
         (candidate) => candidate.confidence,
       ),
     ).toEqual(["high", "medium"]);
+  });
+
+  it("fills remaining ten-lead slots with qualified old-roof estimates", () => {
+    const leadProperties = Array.from({ length: 3 }, (_, index) => {
+      const suffix = String(index + 1).padStart(4, "0");
+      return property({
+        propertyId: `00000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`,
+        parcelIdentifier: `51411116${suffix}`,
+        sourceRecordKey: `lead-property-${index + 1}`,
+      });
+    });
+    const leadPermits = leadProperties.map((leadProperty, index) =>
+      permit({
+        propertyImprovementId: `lead-permit-${index + 1}`,
+        propertyId: leadProperty.propertyId,
+        parcelIdentifier: leadProperty.parcelIdentifier,
+        sourceRecordKey: `lead-source-${index + 1}`,
+        permitNumber: `LEAD-${index + 1}`,
+      }),
+    );
+    const oldProperties = Array.from({ length: 8 }, (_, index) => {
+      const ordinal = index + 101;
+      return property({
+        propertyId: `00000000-0000-0000-0000-${String(ordinal).padStart(12, "0")}`,
+        parcelIdentifier: `51411117${String(index + 1).padStart(4, "0")}`,
+        sourceRecordKey: `old-property-${ordinal}`,
+      });
+    });
+    const result = analyzeRoofingCohort({
+      manifest: manifest(),
+      records: [
+        ...leadPermits,
+        ...leadProperties,
+        ...oldProperties,
+        source(),
+      ],
+    });
+    expect(result.openCohort).toHaveLength(3);
+    expect(result.oldRoofControls).toHaveLength(7);
+    expect(result.summary).toMatchObject({
+      selectedLeadCount: 10,
+      leadSampleTarget: 10,
+      leadSampleShortfall: 0,
+    });
   });
 
   it("emits strict repair candidates for supported missing detail only", () => {
