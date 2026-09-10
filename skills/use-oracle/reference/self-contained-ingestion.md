@@ -105,6 +105,15 @@ and — after a human has actually approved and run it — the resulting
 `queryTableCid`/`coverageCid`/`queryTableIpns`/`coverageIpns` plus the remote readback used
 to confirm the publish (`getOracleDatasetInfo` via MCP, or a direct fetch of the IPNS URL).
 
+### Coverage-only repair
+
+When a published county's query table is healthy but its coverage pointer is stale or
+unreachable, do not run the combined publisher. Use the adapter-independent
+`export-coverage` → `sign-coverage-approval` → `publish-coverage` flow in
+[`coverage-only-publication.md`](./coverage-only-publication.md). It publishes one immutable
+`dataset-coverage.json`, requires a trusted Ed25519 approval bound to its exact digest and
+destination, and refuses to create or mutate a query-table object or IPNS label.
+
 ## 6. Catalog update
 
 Add or refresh a published county (mandatory coverage URL; permit/places URLs may be

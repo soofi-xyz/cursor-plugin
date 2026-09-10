@@ -12,17 +12,81 @@
  * @module core/filebase
  */
 
-import { access, readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import {
+  access,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-
-const require = createRequire(import.meta.url);
-/** @type {{ of: (data: Buffer) => Promise<string> }} */
-const ipfsHash = require("ipfs-only-hash");
+import { z } from "zod";
 
 export const FILEBASE_S3_ENDPOINT = "https://s3.filebase.com";
 export const FILEBASE_NAMES_API = "https://api.filebase.io/v1/names";
 export const FILEBASE_GATEWAY = "https://ipfs.filebase.io";
+export const FILEBASE_APPROVAL_SCHEMA_VERSION =
+  "elephant.filebase-publish-approval.v1";
+
+const approvalArtifactSchema = z
+  .object({
+    bytes: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+const filebaseApprovalSchema = z
+  .object({
+    schemaVersion: z.literal(FILEBASE_APPROVAL_SCHEMA_VERSION),
+    action: z.literal("publish-query-table-and-coverage"),
+    county: z.string().min(1),
+    bucket: z.string().min(1),
+    queryTableIpnsLabel: z.string().min(1),
+    coverageIpnsLabel: z.string().min(1),
+    artifacts: z
+      .object({
+        queryTable: approvalArtifactSchema,
+        coverage: approvalArtifactSchema,
+      })
+      .strict(),
+    approved: z.literal(true),
+    approvedBy: z.string().min(1),
+    approvedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+const permitFilebaseApprovalSchema = z
+  .object({
+    schemaVersion: z.literal(
+      "elephant.filebase-permit-publish-approval.v1",
+    ),
+    action: z.literal(
+      "publish-permit-property-and-coverage",
+    ),
+    county: z.string().min(1),
+    bucket: z.string().min(1),
+    labels: z
+      .object({
+        permitTable: z.string().min(1),
+        queryTable: z.string().min(1),
+        coverage: z.string().min(1),
+      })
+      .strict(),
+    artifacts: z
+      .object({
+        permitTable: approvalArtifactSchema,
+        queryTable: approvalArtifactSchema,
+        coverage: approvalArtifactSchema,
+        permitCoverage: approvalArtifactSchema,
+      })
+      .strict(),
+    approved: z.literal(true),
+    approvedBy: z.string().min(1),
+    approvedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
 
 /**
  * @typedef {object} FilebaseArtifacts
@@ -118,6 +182,55 @@ async function fileExists(candidate) {
   }
 }
 
+function bufferIntegrity(body) {
+  return {
+    bytes: body.length,
+    sha256: createHash("sha256").update(body).digest("hex"),
+  };
+}
+
+export function validateFilebaseApproval(
+  value,
+  artifacts,
+  parquetBody,
+  coverageBody,
+) {
+  const approval = filebaseApprovalSchema.parse(value);
+  const expected = {
+    county: artifacts.county,
+    bucket: artifacts.bucket,
+    queryTableIpnsLabel: artifacts.queryTableIpnsLabel,
+    coverageIpnsLabel: artifacts.coverageIpnsLabel,
+    artifacts: {
+      queryTable: bufferIntegrity(parquetBody),
+      coverage: bufferIntegrity(coverageBody),
+    },
+  };
+  for (const key of [
+    "county",
+    "bucket",
+    "queryTableIpnsLabel",
+    "coverageIpnsLabel",
+  ]) {
+    if (approval[key] !== expected[key]) {
+      throw new Error(
+        `Filebase approval ${key} does not match the publication artifact`,
+      );
+    }
+  }
+  for (const name of ["queryTable", "coverage"]) {
+    if (
+      approval.artifacts[name].bytes !== expected.artifacts[name].bytes ||
+      approval.artifacts[name].sha256 !== expected.artifacts[name].sha256
+    ) {
+      throw new Error(
+        `Filebase approval ${name} integrity does not match the publication artifact`,
+      );
+    }
+  }
+  return approval;
+}
+
 /**
  * Upload one object to Filebase and return its CID.
  *
@@ -129,8 +242,7 @@ async function fileExists(candidate) {
  * @param {string} params.contentType - HTTP content type.
  * @returns {Promise<string>} Filebase CID.
  */
-async function uploadFilebaseObject({ client, bucket, key, body, contentType }) {
-  const localCid = await ipfsHash.of(body);
+export async function uploadFilebaseObject({ client, bucket, key, body, contentType }) {
   const command = new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType });
   /** @type {string | undefined} */
   let headerCid;
@@ -151,12 +263,220 @@ async function uploadFilebaseObject({ client, bucket, key, body, contentType }) 
     },
     { step: "deserialize", name: `captureFilebaseCid-${key}`, priority: "low" },
   );
-  await client.send(command);
-  const cid = headerCid?.trim() || localCid;
+  const sendResult = await client.send(command);
+  const cid = (headerCid ?? sendResult?.headers?.["x-amz-meta-cid"] ?? sendResult?.cid)?.trim();
   if (typeof cid !== "string" || cid.length === 0) {
-    throw new Error(`Filebase returned no CID for ${key}`);
+    throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
   }
   return cid;
+}
+
+async function uploadFilebaseFile({
+  client,
+  bucket,
+  key,
+  filePath,
+  contentType,
+}) {
+  const fileStat = await stat(filePath);
+  const command = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: createReadStream(filePath),
+    ContentLength: fileStat.size,
+    ContentType: contentType,
+  });
+  let headerCid;
+  command.middlewareStack.add(
+    (next) => async (args) => {
+      const result = await next(args);
+      const response = result.response;
+      if (
+        typeof response === "object" &&
+        response !== null &&
+        "headers" in response &&
+        typeof response.headers === "object" &&
+        response.headers !== null
+      ) {
+        headerCid = response.headers["x-amz-meta-cid"];
+      }
+      return result;
+    },
+    {
+      step: "deserialize",
+      name: `captureFilebaseStreamCid-${key}`,
+      priority: "low",
+    },
+  );
+  await client.send(command);
+  const cid = headerCid?.trim();
+  if (typeof cid !== "string" || cid.length === 0) {
+    throw new Error(`Filebase returned no x-amz-meta-cid header for ${key}`);
+  }
+  return cid;
+}
+
+async function fileIntegrity(filePath) {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  let bytes = 0;
+  for await (const chunk of stream) {
+    hash.update(chunk);
+    bytes += chunk.length;
+  }
+  return { bytes, sha256: hash.digest("hex") };
+}
+
+async function writePublicationReceipt(filePath, value) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}`;
+  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporaryPath, filePath);
+}
+
+export async function publishPermitFilebase(artifacts, config) {
+  const env = config.env ?? process.env;
+  fillDerivedFilebaseToken(env);
+  if (!hasFilebaseCredentials(env)) {
+    throw new Error(
+      `Filebase credentials are missing for ${artifacts.county}`,
+    );
+  }
+  if (
+    typeof config.approvalManifestPath !== "string" ||
+    !(await fileExists(config.approvalManifestPath))
+  ) {
+    throw new Error(
+      `Live Filebase permit publish for ${artifacts.county} requires an approval manifest`,
+    );
+  }
+  const paths = {
+    permitTable: artifacts.permitTablePath,
+    queryTable: artifacts.queryTablePath,
+    coverage: artifacts.coveragePath,
+    permitCoverage: artifacts.permitCoveragePath,
+  };
+  const integrity = Object.fromEntries(
+    await Promise.all(
+      Object.entries(paths).map(async ([name, filePath]) => [
+        name,
+        await fileIntegrity(filePath),
+      ]),
+    ),
+  );
+  const approval = permitFilebaseApprovalSchema.parse(
+    JSON.parse(await readFile(config.approvalManifestPath, "utf8")),
+  );
+  const expected = {
+    county: artifacts.county,
+    bucket: artifacts.bucket,
+    labels: {
+      permitTable: artifacts.permitTableIpnsLabel,
+      queryTable: artifacts.queryTableIpnsLabel,
+      coverage: artifacts.coverageIpnsLabel,
+    },
+  };
+  for (const key of ["county", "bucket"]) {
+    if (approval[key] !== expected[key]) {
+      throw new Error(`Permit approval ${key} does not match`);
+    }
+  }
+  for (const [name, label] of Object.entries(expected.labels)) {
+    if (approval.labels[name] !== label) {
+      throw new Error(`Permit approval label ${name} does not match`);
+    }
+  }
+  for (const [name, actual] of Object.entries(integrity)) {
+    if (
+      approval.artifacts[name].bytes !== actual.bytes ||
+      approval.artifacts[name].sha256 !== actual.sha256
+    ) {
+      throw new Error(
+        `Permit approval ${name} integrity does not match`,
+      );
+    }
+  }
+  const receiptPath = config.receiptPath;
+  if (typeof receiptPath !== "string" || receiptPath.trim().length === 0) {
+    throw new Error("Permit publication requires a resumable receipt path");
+  }
+  let receipt = {
+    schemaVersion: "elephant.filebase-permit-publication-receipt.v1",
+    county: artifacts.county,
+    bucket: artifacts.bucket,
+    approvedBy: approval.approvedBy,
+    approvedAt: approval.approvedAt,
+    artifacts: integrity,
+    uploads: {},
+    names: {},
+    status: "publishing",
+  };
+  if (await fileExists(receiptPath)) {
+    const existing = JSON.parse(await readFile(receiptPath, "utf8"));
+    if (
+      existing.county !== receipt.county ||
+      existing.bucket !== receipt.bucket ||
+      JSON.stringify(existing.artifacts) !== JSON.stringify(integrity)
+    ) {
+      throw new Error("Existing permit publication receipt is incompatible");
+    }
+    receipt = existing;
+  }
+  const client = new S3Client({
+    region: "us-east-1",
+    endpoint: config.endpoint ?? FILEBASE_S3_ENDPOINT,
+    credentials: {
+      accessKeyId: env.S3_ACCESS_KEY_ID.trim(),
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY.trim(),
+    },
+    forcePathStyle: true,
+  });
+  const contentTypes = {
+    permitTable: "application/vnd.apache.parquet",
+    queryTable: "application/vnd.apache.parquet",
+    coverage: "application/json",
+    permitCoverage: "application/json",
+  };
+  const objectKeys = {
+    permitTable: `${artifacts.county}/permit-table.parquet`,
+    queryTable: `${artifacts.county}/query-table.parquet`,
+    coverage: `${artifacts.county}/dataset-coverage.json`,
+    permitCoverage: `${artifacts.county}/permit-coverage.json`,
+  };
+  for (const name of Object.keys(paths)) {
+    if (!receipt.uploads[name]) {
+      receipt.uploads[name] = {
+        key: objectKeys[name],
+        cid: await uploadFilebaseFile({
+          client,
+          bucket: artifacts.bucket,
+          key: objectKeys[name],
+          filePath: paths[name],
+          contentType: contentTypes[name],
+        }),
+      };
+      await writePublicationReceipt(receiptPath, receipt);
+    }
+  }
+  const token = env.FILEBASE_API_TOKEN.trim();
+  const labels = {
+    permitTable: artifacts.permitTableIpnsLabel,
+    queryTable: artifacts.queryTableIpnsLabel,
+    coverage: artifacts.coverageIpnsLabel,
+  };
+  for (const [name, label] of Object.entries(labels)) {
+    if (!receipt.names[name]) {
+      receipt.names[name] = await upsertFilebaseName(
+        token,
+        label,
+        receipt.uploads[name].cid,
+      );
+      await writePublicationReceipt(receiptPath, receipt);
+    }
+  }
+  receipt.status = "complete";
+  receipt.completedAt = new Date().toISOString();
+  await writePublicationReceipt(receiptPath, receipt);
+  return receipt;
 }
 
 /**
@@ -165,10 +485,12 @@ async function uploadFilebaseObject({ client, bucket, key, body, contentType }) 
  * @param {string} token - Filebase platform API bearer token.
  * @param {string} label - Existing IPNS label.
  * @param {string} cid - Target CID.
+ * @param {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} [fetchImpl]
+ *   Fetch implementation. Defaults to global fetch.
  * @returns {Promise<{ label: string, network_key: string, cid: string }>} Updated name record.
  */
-async function upsertFilebaseName(token, label, cid) {
-  const listResponse = await fetch(FILEBASE_NAMES_API, {
+export async function upsertFilebaseName(token, label, cid, fetchImpl = fetch) {
+  const listResponse = await fetchImpl(FILEBASE_NAMES_API, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
   if (!listResponse.ok) {
@@ -181,12 +503,12 @@ async function upsertFilebaseName(token, label, cid) {
   );
   const response =
     existing === undefined
-      ? await fetch(FILEBASE_NAMES_API, {
+      ? await fetchImpl(FILEBASE_NAMES_API, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ label, cid, enabled: true }),
         })
-      : await fetch(`${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`, {
+      : await fetchImpl(`${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`, {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({ cid }),
@@ -195,6 +517,73 @@ async function upsertFilebaseName(token, label, cid) {
     throw new Error(`Filebase IPNS upsert failed for ${label}: ${response.status}`);
   }
   return await response.json();
+}
+
+/**
+ * Update an existing Filebase IPNS label after proving that it resolves to
+ * the expected network key. Coverage-only repairs use this stricter path so
+ * a typo cannot create a second label or move another county's pointer.
+ *
+ * @param {string} token - Filebase platform API bearer token.
+ * @param {string} label - Existing coverage IPNS label.
+ * @param {string} expectedNetworkKey - Current resolvable k51... name.
+ * @param {string} cid - New coverage artifact CID.
+ * @param {(input: string | URL | Request, init?: RequestInit) => Promise<Response>} [fetchImpl]
+ *   Fetch implementation. Defaults to global fetch.
+ * @returns {Promise<{ label: string, network_key: string, cid: string }>} Updated name record.
+ */
+export async function updateExistingFilebaseName(
+  token,
+  label,
+  expectedNetworkKey,
+  cid,
+  fetchImpl = fetch,
+) {
+  const listResponse = await fetchImpl(FILEBASE_NAMES_API, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  if (!listResponse.ok) {
+    throw new Error(`Filebase name list failed: ${listResponse.status}`);
+  }
+  const parsed = await listResponse.json();
+  if (!Array.isArray(parsed)) throw new Error("Filebase name list is not an array");
+  const existing = parsed.find(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "label" in entry &&
+      entry.label === label,
+  );
+  if (
+    existing === undefined ||
+    !("network_key" in existing) ||
+    existing.network_key !== expectedNetworkKey
+  ) {
+    throw new Error(
+      `Filebase IPNS label ${label} is missing or does not match expected network key ${expectedNetworkKey}`,
+    );
+  }
+  const response = await fetchImpl(
+    `${FILEBASE_NAMES_API}/${encodeURIComponent(label)}`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ cid }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Filebase IPNS update failed for ${label}: ${response.status}`);
+  }
+  const updated = await response.json();
+  if (
+    typeof updated !== "object" ||
+    updated === null ||
+    updated.label !== label ||
+    updated.network_key !== expectedNetworkKey
+  ) {
+    throw new Error(`Filebase returned an unexpected IPNS record for ${label}`);
+  }
+  return updated;
 }
 
 /**
@@ -251,6 +640,15 @@ export async function publishFilebase(artifacts, config) {
   });
   const parquetBody = await readFile(artifacts.parquetPath);
   const coverageBody = await readFile(artifacts.coveragePath);
+  const approval = JSON.parse(
+    await readFile(config.approvalManifestPath, "utf8"),
+  );
+  validateFilebaseApproval(
+    approval,
+    artifacts,
+    parquetBody,
+    coverageBody,
+  );
   const queryTableCid = await uploadFilebaseObject({
     client,
     bucket: artifacts.bucket,

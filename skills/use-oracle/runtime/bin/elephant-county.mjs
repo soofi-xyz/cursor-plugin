@@ -11,14 +11,67 @@
  * @module bin/elephant-county
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { promisify } from "node:util";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { parseCsvRecords } from "../src/core/csv.mjs";
-import { publishFilebase } from "../src/core/filebase.mjs";
+import {
+  loadEnvFile,
+  publishFilebase,
+  publishPermitFilebase,
+} from "../src/core/filebase.mjs";
 import { runReplay } from "../src/core/replay.mjs";
+import {
+  exportCoverageArtifact,
+  loadCoverageArtifact,
+  publishCoverageFilebase,
+  writeCoverageApproval,
+} from "../src/core/coverage-publication.mjs";
 import { pinellasAdapter } from "../src/counties/pinellas/adapter.mjs";
 import { duvalAdapter } from "../src/counties/duval/adapter.mjs";
+import { requireEnrichmentProfile } from "../src/counties/enrichment-profiles.mjs";
+import {
+  filterSunbizDirectory,
+  transformSunbizExtract,
+} from "../src/enrichment/sunbiz.mjs";
+import { prepareSunbizArchive } from "../src/enrichment/sunbiz-archive.mjs";
+import { enrichQueryTableWithSunbiz } from "../src/enrichment/query-table-sunbiz.mjs";
+import { enrichQueryTableWithHoa } from "../src/enrichment/query-table-hoa.mjs";
+import { enrichQueryTableWithAvm } from "../src/enrichment/query-table-avm.mjs";
+import { harvestBbbCategory } from "../src/enrichment/bbb.mjs";
+import { reconcileBbbHarvests } from "../src/enrichment/bbb-reconcile.mjs";
+import {
+  duvalBbbPermitSourceAdapter,
+  linkBbbContractorsToProperties,
+} from "../src/enrichment/query-table-bbb.mjs";
+import { finalizeEnrichmentArtifacts } from "../src/enrichment/enrichment-finalize.mjs";
+import { requirePermitProfile } from "../src/counties/permit-profiles.mjs";
+import { permitProfileDigest } from "../src/counties/permit-profile.mjs";
+import {
+  harvestPermitProperties,
+  probePermitSources,
+} from "../src/permits/harvest.mjs";
+import { readPermitPropertyInputs } from "../src/permits/inputs.mjs";
+import {
+  exportPermitArtifacts,
+  reconcilePermitHarvest,
+} from "../src/permits/artifacts.mjs";
+import { exportJaxPermitBulkArtifacts } from "../src/permits/bulk-export.mjs";
+import { writePermitRunRevision } from "../src/permits/orchestration.mjs";
+import {
+  atomicWriteJson,
+  fileIntegrity,
+  readJson,
+} from "../src/permits/storage.mjs";
+
+const execFileAsync = promisify(execFile);
+const RUNTIME_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 /** @type {Record<string, import("../src/core/replay.mjs").CountyAdapter>} */
 const ADAPTERS = {
@@ -66,6 +119,19 @@ export function parseFlags(argv, booleanFlags = []) {
     index += 1;
   }
   return flags;
+}
+
+/**
+ * @param {Record<string, string | boolean>} flags
+ * @param {string} name
+ * @returns {string}
+ */
+function requiredFlag(flags, name) {
+  const value = flags[name];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
 }
 
 /**
@@ -161,6 +227,105 @@ async function runPublish(argv) {
 }
 
 /**
+ * `elephant-county export-coverage --county <key> --evidence <json> --output <dir>`
+ *
+ * Builds only dataset-coverage.json from frozen, reconciled evidence. This
+ * command is adapter-independent, so already-published counties such as Lee
+ * do not need an ingest adapter registration.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runExportCoverage(argv) {
+  const flags = parseFlags(argv);
+  const result = await exportCoverageArtifact({
+    county: requiredFlag(flags, "county"),
+    evidencePath: requiredFlag(flags, "evidence"),
+    outputDir: requiredFlag(flags, "output"),
+  });
+  console.log(JSON.stringify({ event: "coverage_export_complete", result }, null, 2));
+}
+
+/**
+ * `elephant-county sign-coverage-approval ...`
+ *
+ * Human-run action that binds an Ed25519 signature to one exact coverage
+ * artifact, bucket, object key, existing IPNS label/network key, and time.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runSignCoverageApproval(argv) {
+  const flags = parseFlags(argv);
+  const county = requiredFlag(flags, "county");
+  const artifact = await loadCoverageArtifact({
+    county,
+    inputDir: requiredFlag(flags, "input"),
+  });
+  const outputPath = requiredFlag(flags, "output");
+  const approval = await writeCoverageApproval({
+    artifact,
+    bucket: requiredFlag(flags, "bucket"),
+    expectedIpnsName: requiredFlag(flags, "expected-ipns-name"),
+    approver: requiredFlag(flags, "approver"),
+    approvedAt:
+      typeof flags["approved-at"] === "string"
+        ? flags["approved-at"]
+        : new Date().toISOString(),
+    privateKeyPath: requiredFlag(flags, "private-key"),
+    outputPath,
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: "coverage_approval_signed",
+        outputPath,
+        payload: approval.payload,
+        keyId: approval.signature.keyId,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+/**
+ * `elephant-county publish-coverage --county <key> --input <dir>
+ *   --bucket <bucket> --expected-ipns-name <k51...> [--dry-run]
+ *   [--approve <json> --approval-public-key <pem>] [--env-file <dotenv>]`
+ *
+ * Uploads one coverage JSON object and updates only the existing
+ * oracle-dataset-coverage-<county> IPNS label.
+ *
+ * @param {readonly string[]} argv
+ * @returns {Promise<void>}
+ */
+async function runPublishCoverage(argv) {
+  const flags = parseFlags(argv, ["dry-run"]);
+  const county = requiredFlag(flags, "county");
+  const artifact = await loadCoverageArtifact({
+    county,
+    inputDir: requiredFlag(flags, "input"),
+  });
+  const env = { ...process.env };
+  if (typeof flags["env-file"] === "string") {
+    await loadEnvFile(flags["env-file"], env);
+  }
+  const result = await publishCoverageFilebase(artifact, {
+    dryRun: flags["dry-run"] === true,
+    bucket: requiredFlag(flags, "bucket"),
+    expectedIpnsName: requiredFlag(flags, "expected-ipns-name"),
+    approvalManifestPath: typeof flags.approve === "string" ? flags.approve : null,
+    approvalPublicKeyPath:
+      typeof flags["approval-public-key"] === "string"
+        ? flags["approval-public-key"]
+        : null,
+    env,
+  });
+  console.log(JSON.stringify({ event: "coverage_publish_complete", result }, null, 2));
+}
+
+/**
  * `elephant-county replay --county <key> --fixture <dir> --output <dir>`
  *
  * @param {readonly string[]} argv - Arguments after `replay`.
@@ -183,6 +348,615 @@ async function runReplayCommand(argv) {
   console.log(JSON.stringify({ event: "replay_complete", ...summary }, null, 2));
 }
 
+function optionalPositiveInteger(value, name, fallback = null) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`--${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function requireStringFlag(flags, name) {
+  const value = flags[name];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`--${name} is required`);
+  }
+  return value;
+}
+
+function optionalNonNegativeInteger(value, name, fallback) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`--${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+async function runSunbizFilterCommand(argv) {
+  const flags = parseFlags(argv);
+  const county = requireStringFlag(flags, "county");
+  const profile = requireEnrichmentProfile(county);
+  const quarter = requireStringFlag(flags, "quarter");
+  if (!/^\d{4}Q[1-4]$/.test(quarter)) {
+    throw new Error("--quarter must use YYYYQ1..YYYYQ4");
+  }
+  const manifest = await filterSunbizDirectory({
+    countyKey: profile.countyKey,
+    sourceDir: requireStringFlag(flags, "source-dir"),
+    outputDir: requireStringFlag(flags, "output"),
+    zipPrefixes: profile.sunbiz.zipPrefixes,
+    chunkRecordLimit: optionalPositiveInteger(
+      flags["chunk-record-limit"],
+      "chunk-record-limit",
+      5_000,
+    ),
+    maxRecords: optionalPositiveInteger(flags["max-records"], "max-records"),
+    maxSourceRecords: optionalPositiveInteger(
+      flags["max-source-records"],
+      "max-source-records",
+    ),
+    jobId:
+      typeof flags["job-id"] === "string"
+        ? flags["job-id"]
+        : `sunbiz-${county}-${quarter.toLowerCase()}`,
+    quarter,
+  });
+  console.log(JSON.stringify({ event: "sunbiz_filter_complete", manifest }, null, 2));
+}
+
+async function runSunbizPrepareCommand(argv) {
+  const flags = parseFlags(argv);
+  const receipt = await prepareSunbizArchive({
+    archivePath: requireStringFlag(flags, "archive"),
+    outputDir: requireStringFlag(flags, "output"),
+    expectedSha256: requireStringFlag(flags, "sha256"),
+  });
+  console.log(JSON.stringify({ event: "sunbiz_prepare_complete", receipt }, null, 2));
+}
+
+async function runSunbizTransformCommand(argv) {
+  const flags = parseFlags(argv, ["allow-incomplete"]);
+  const summary = await transformSunbizExtract({
+    inputDir: requireStringFlag(flags, "input"),
+    outputDir: requireStringFlag(flags, "output"),
+    partRecordLimit: optionalPositiveInteger(
+      flags["part-record-limit"],
+      "part-record-limit",
+      5_000,
+    ),
+    allowIncomplete: flags["allow-incomplete"] === true,
+  });
+  console.log(JSON.stringify({ event: "sunbiz_transform_complete", summary }, null, 2));
+}
+
+async function runSunbizEnrichCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const summary = await enrichQueryTableWithSunbiz({
+    countyKey: profile.countyKey,
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    sunbizExtractDir: requireStringFlag(flags, "sunbiz-extract"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    linksPath: path.join(outputDir, "sunbiz-property-links.jsonl"),
+    manifestPath: path.join(outputDir, "sunbiz-enrichment-manifest.json"),
+  });
+  console.log(JSON.stringify({ event: "sunbiz_enrich_complete", summary }, null, 2));
+}
+
+async function runHoaEnrichCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const summary = await enrichQueryTableWithHoa({
+    countyKey: profile.countyKey,
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    recordsPath: requireStringFlag(flags, "records"),
+    sourceManifestPath: requireStringFlag(flags, "source-manifest"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    manifestPath: path.join(outputDir, "hoa-enrichment-manifest.json"),
+  });
+  console.log(JSON.stringify({ event: "hoa_enrich_complete", summary }, null, 2));
+}
+
+async function runAvmEnrichCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const summary = await enrichQueryTableWithAvm({
+    countyKey: profile.countyKey,
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    recordsPath: requireStringFlag(flags, "records"),
+    sourceManifestPath: requireStringFlag(flags, "source-manifest"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    manifestPath: path.join(outputDir, "avm-enrichment-manifest.json"),
+  });
+  console.log(JSON.stringify({ event: "avm_enrich_complete", summary }, null, 2));
+}
+
+async function runBbbHarvestCommand(argv) {
+  const flags = parseFlags(argv, ["headful", "no-html", "resume"]);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const categoryKey = requireStringFlag(flags, "category");
+  const category = profile.bbb.categories.find(
+    (candidate) => candidate.key === categoryKey,
+  );
+  if (!category) {
+    throw new Error(
+      `Unknown --category "${categoryKey}" for ${profile.countyKey}. Expected one of: ${profile.bbb.categories.map((candidate) => candidate.key).join(", ")}`,
+    );
+  }
+  const maxPages = optionalPositiveInteger(flags["max-pages"], "max-pages");
+  const maxProfiles = optionalPositiveInteger(
+    flags["max-profiles"],
+    "max-profiles",
+  );
+  if (maxPages === null || maxProfiles === null) {
+    throw new Error("BBB harvest requires explicit --max-pages and --max-profiles bounds");
+  }
+  const subpages =
+    typeof flags["profile-subpages"] !== "string"
+      ? ["customer-reviews", "complaints", "more-info"]
+      : flags["profile-subpages"] === "none"
+        ? []
+        : flags["profile-subpages"]
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+  const allowedSubpages = new Set([
+    "customer-reviews",
+    "complaints",
+    "more-info",
+  ]);
+  for (const subpage of subpages) {
+    if (!allowedSubpages.has(subpage)) {
+      throw new Error(`Unsupported BBB profile subpage: ${subpage}`);
+    }
+  }
+  const executablePath =
+    typeof flags["chromium-executable-path"] === "string"
+      ? flags["chromium-executable-path"]
+      : process.env.CHROME_EXECUTABLE_PATH ??
+        (process.platform === "darwin"
+          ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          : "/usr/bin/chromium");
+  const summary = await harvestBbbCategory({
+    countyKey: profile.countyKey,
+    reviewedCategory: category,
+    reviewedCategories: profile.bbb.categories,
+    jobId: requireStringFlag(flags, "job-id"),
+    categoryKey,
+    categoryUrl: category.url,
+    outputDir: requireStringFlag(flags, "output"),
+    chromiumExecutablePath: executablePath,
+    headless: flags.headful !== true,
+    maxPages,
+    maxProfiles,
+    partRecordLimit: optionalPositiveInteger(
+      flags["part-record-limit"],
+      "part-record-limit",
+      25,
+    ),
+    pageDelayMs: optionalNonNegativeInteger(
+      flags["page-delay-ms"],
+      "page-delay-ms",
+      2_000,
+    ),
+    profileDelayMs: optionalNonNegativeInteger(
+      flags["profile-delay-ms"],
+      "profile-delay-ms",
+      1_500,
+    ),
+    navigationTimeoutMs: optionalPositiveInteger(
+      flags["navigation-timeout-ms"],
+      "navigation-timeout-ms",
+      90_000,
+    ),
+    challengeAttempts: optionalPositiveInteger(
+      flags["challenge-attempts"],
+      "challenge-attempts",
+      5,
+    ),
+    challengeCheckIntervalMs: optionalNonNegativeInteger(
+      flags["challenge-check-interval-ms"],
+      "challenge-check-interval-ms",
+      3_000,
+    ),
+    challengeChecksPerAttempt: optionalPositiveInteger(
+      flags["challenge-checks-per-attempt"],
+      "challenge-checks-per-attempt",
+      12,
+    ),
+    maxRequests: optionalPositiveInteger(
+      flags["max-requests"],
+      "max-requests",
+      250,
+    ),
+    maxDurationMs:
+      optionalPositiveInteger(
+        flags["max-duration-minutes"],
+        "max-duration-minutes",
+        30,
+      ) *
+      60 *
+      1_000,
+    includeHtml: flags["no-html"] !== true,
+    profileSubpages: subpages,
+    resume: flags.resume === true,
+  });
+  console.log(JSON.stringify({ event: "bbb_harvest_complete", summary }, null, 2));
+}
+
+async function runBbbReconcileCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const harvestRoot = requireStringFlag(flags, "harvest-root");
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const summary = await reconcileBbbHarvests({
+    countyKey: profile.countyKey,
+    categories: profile.bbb.categories,
+    harvestDirs: profile.bbb.categories.map((category) =>
+      path.join(harvestRoot, category.key),
+    ),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    outputProfiles: path.join(outputDir, "bbb-profiles.jsonl"),
+    outputFailures: path.join(outputDir, "bbb-failures.jsonl"),
+    outputManifest: path.join(outputDir, "bbb-reconciliation-manifest.json"),
+  });
+  console.log(JSON.stringify({ event: "bbb_reconcile_complete", summary }, null, 2));
+}
+
+async function runBbbLinkCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const permitSourceAdapter =
+    profile.countyKey === "duval" ? duvalBbbPermitSourceAdapter : null;
+  if (!permitSourceAdapter) {
+    throw new Error(
+      `No BBB permit-source adapter is registered for ${profile.countyKey}`,
+    );
+  }
+  const outputDir = requireStringFlag(flags, "output-dir");
+  const result = await linkBbbContractorsToProperties({
+    countyKey: profile.countyKey,
+    permitSourceAdapter,
+    expectedCategoryKeys: profile.bbb.categories.map(
+      (category) => category.key,
+    ),
+    schemaFields: profile.queryTable.schemaFields,
+    inputParquet: requireStringFlag(flags, "input-parquet"),
+    outputParquet: path.join(outputDir, "query-table.parquet"),
+    inputCoverage: requireStringFlag(flags, "input-coverage"),
+    outputCoverage: path.join(outputDir, "dataset-coverage.json"),
+    bbbProfilesPath: requireStringFlag(flags, "bbb-profiles"),
+    bbbReconciliationManifestPath: requireStringFlag(
+      flags,
+      "bbb-reconciliation-manifest",
+    ),
+    permitSourcePath: requireStringFlag(flags, "permit-source"),
+    permitArtifactManifestPath: requireStringFlag(
+      flags,
+      "permit-artifact-manifest",
+    ),
+    linksPath: path.join(
+      outputDir,
+      "private",
+      "bbb-property-links.jsonl",
+    ),
+    candidatesPath: path.join(
+      outputDir,
+      "private",
+      "bbb-contractor-link-candidates.jsonl",
+    ),
+    manifestPath: path.join(
+      outputDir,
+      "bbb-property-linkage-manifest.json",
+    ),
+    progress: (progress) =>
+      console.error(
+        JSON.stringify({ event: "bbb_property_linkage_progress", ...progress }),
+      ),
+  });
+  console.log(
+    JSON.stringify({ event: "bbb_property_linkage_complete", ...result }, null, 2),
+  );
+}
+
+async function runEnrichmentFinalizeCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requireEnrichmentProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const artifacts = await finalizeEnrichmentArtifacts({
+    inputDir: requireStringFlag(flags, "input"),
+    profile,
+  });
+  console.log(
+    JSON.stringify({ event: "enrichment_finalize_complete", artifacts }, null, 2),
+  );
+}
+
+async function gitValue(args, fallback) {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: RUNTIME_DIR,
+    });
+    return stdout.trim() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function permitRunContext({ profile, jobId }) {
+  const sourceCatalogPath = path.join(
+    RUNTIME_DIR,
+    "docs",
+    `${profile.countyKey}-sources.yaml`,
+  );
+  return {
+    runId: jobId,
+    countyKey: profile.countyKey,
+    branch: await gitValue(
+      ["branch", "--show-current"],
+      "unknown-branch",
+    ),
+    commitSha: await gitValue(
+      ["rev-parse", "HEAD"],
+      "0000000",
+    ),
+    profileSha256: permitProfileDigest(profile),
+    sourceCatalogPath,
+    sourceCatalogSha256: (await fileIntegrity(sourceCatalogPath)).sha256,
+  };
+}
+
+async function latestPermitRunManifest(runDir) {
+  const files = (await readdir(runDir))
+    .filter((name) => /^run-manifest-r\d{6}\.json$/.test(name))
+    .sort();
+  return files.length
+    ? readJson(path.join(runDir, files.at(-1)))
+    : null;
+}
+
+async function runPermitProbeCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requirePermitProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const results = await probePermitSources({ profile });
+  console.log(
+    JSON.stringify(
+      { event: "permit_probe_complete", county: profile.countyKey, results },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runPermitHarvestCommand(argv, resume) {
+  const flags = parseFlags(argv);
+  const profile = requirePermitProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const jobId = requireStringFlag(flags, "job-id");
+  const outputDir = requireStringFlag(flags, "output");
+  const limit = optionalPositiveInteger(flags.limit, "limit");
+  if (limit === null) {
+    throw new Error(
+      "Permit bounded harvest requires an explicit positive --limit",
+    );
+  }
+  const properties = await readPermitPropertyInputs(
+    requireStringFlag(flags, "input-parquet"),
+    {
+      offset: optionalNonNegativeInteger(flags.offset, "offset", 0),
+      limit,
+    },
+  );
+  await mkdir(outputDir, { recursive: true });
+  const previous = resume
+    ? await latestPermitRunManifest(outputDir)
+    : null;
+  const context = await permitRunContext({ profile, jobId });
+  const running = await writePermitRunRevision({
+    runDir: outputDir,
+    previous,
+    state: "RUNNING",
+    nextAction: "Process bounded permit parcel set",
+    context,
+  });
+  const harvest = await harvestPermitProperties({
+    properties,
+    profile,
+    outputDir,
+    jobId,
+    concurrency: optionalPositiveInteger(
+      flags.concurrency,
+      "concurrency",
+      1,
+    ),
+    resume,
+  });
+  const readinessBlocked =
+    harvest.summary.doneCount === 0 &&
+    harvest.summary.blockedCount > 0;
+  const terminal = await writePermitRunRevision({
+    runDir: outputDir,
+    previous: running,
+    state: readinessBlocked ? "READINESS_BLOCKED" : "WAITING_HUMAN",
+    nextAction: readinessBlocked
+      ? "Resolve documented source access and parcel-enumeration gaps"
+      : "Review bounded harvest evidence before scaling",
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: resume
+          ? "permit_resume_complete"
+          : "permit_bounded_harvest_complete",
+        summary: harvest.summary,
+        runManifest: terminal,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runPermitReconcileCommand(argv) {
+  const flags = parseFlags(argv);
+  const profile = requirePermitProfile(
+    requireStringFlag(flags, "county"),
+  );
+  const harvestDir = requireStringFlag(flags, "harvest");
+  const reconciled = await reconcilePermitHarvest({
+    harvestDir,
+    profile,
+  });
+  const summary = {
+    schemaVersion: "elephant.permit-reconciliation.v1",
+    countyKey: profile.countyKey,
+    reconciledAt: new Date().toISOString(),
+    permitCount: reconciled.records.length,
+    statusCount: reconciled.statuses.length,
+    linkedPropertyCount: new Set(
+      reconciled.records
+        .map((record) => record.property_id)
+        .filter(Boolean),
+    ).size,
+  };
+  await atomicWriteJson(
+    path.join(harvestDir, "permit-reconciliation.json"),
+    summary,
+  );
+  console.log(
+    JSON.stringify(
+      { event: "permit_reconcile_complete", summary },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runPermitExportCommand(argv) {
+  const flags = parseFlags(argv, ["allow-empty"]);
+  const county = requireStringFlag(flags, "county");
+  const profile = requirePermitProfile(county);
+  const enrichmentProfile = requireEnrichmentProfile(county);
+  const artifacts = await exportPermitArtifacts({
+    harvestDir: requireStringFlag(flags, "harvest"),
+    inputPropertyParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoveragePath: requireStringFlag(flags, "input-coverage"),
+    outputDir: requireStringFlag(flags, "output"),
+    profile,
+    propertySchemaFields: enrichmentProfile.queryTable.schemaFields,
+    jobId: requireStringFlag(flags, "job-id"),
+    allowEmpty: flags["allow-empty"] === true,
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: "permit_export_complete",
+        manifest: artifacts.manifest,
+        approval: artifacts.approval,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runPermitBulkExportCommand(argv) {
+  const flags = parseFlags(argv);
+  const county = requireStringFlag(flags, "county");
+  const profile = requirePermitProfile(county);
+  const enrichmentProfile = requireEnrichmentProfile(county);
+  const artifacts = await exportJaxPermitBulkArtifacts({
+    inputPropertyParquet: requireStringFlag(flags, "input-parquet"),
+    inputCoveragePath: requireStringFlag(flags, "input-coverage"),
+    outputDir: requireStringFlag(flags, "output"),
+    profile,
+    propertySchemaFields: enrichmentProfile.queryTable.schemaFields,
+    jobId: requireStringFlag(flags, "job-id"),
+    maxPages: optionalPositiveInteger(flags["max-pages"], "max-pages"),
+    progress: (progress) =>
+      console.log(
+        JSON.stringify({ event: "permit_bulk_progress", ...progress }),
+      ),
+  });
+  console.log(
+    JSON.stringify(
+      {
+        event: "permit_bulk_export_complete",
+        counters: artifacts.counters,
+        manifest: artifacts.manifest,
+        approval: artifacts.approval,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function runPermitPublishCommand(argv) {
+  const flags = parseFlags(argv);
+  const county = requireStringFlag(flags, "county");
+  const inputDir = requireStringFlag(flags, "input");
+  const profile = requirePermitProfile(county);
+  const receipt = await publishPermitFilebase(
+    {
+      county,
+      bucket: profile.publication.bucket,
+      permitTableIpnsLabel:
+        profile.publication.permitTableIpnsLabel,
+      queryTableIpnsLabel:
+        profile.publication.propertyQueryTableIpnsLabel,
+      coverageIpnsLabel: profile.publication.coverageIpnsLabel,
+      permitTablePath: path.join(inputDir, "permit-table.parquet"),
+      queryTablePath: path.join(inputDir, "query-table.parquet"),
+      coveragePath: path.join(inputDir, "dataset-coverage.json"),
+      permitCoveragePath: path.join(inputDir, "permit-coverage.json"),
+    },
+    {
+      approvalManifestPath: requireStringFlag(flags, "approve"),
+      receiptPath: requireStringFlag(flags, "receipt"),
+      env: process.env,
+    },
+  );
+  console.log(
+    JSON.stringify(
+      { event: "permit_publish_complete", receipt },
+      null,
+      2,
+    ),
+  );
+}
+
 /**
  * @returns {Promise<void>} Resolves once the requested subcommand finishes.
  */
@@ -191,13 +965,65 @@ async function main() {
   if (command === "ingest") return runIngest(rest);
   if (command === "export") return runExport(rest);
   if (command === "publish") return runPublish(rest);
+  if (command === "export-coverage") return runExportCoverage(rest);
+  if (command === "sign-coverage-approval") return runSignCoverageApproval(rest);
+  if (command === "publish-coverage") return runPublishCoverage(rest);
   if (command === "replay") return runReplayCommand(rest);
+  if (command === "sunbiz-prepare") return runSunbizPrepareCommand(rest);
+  if (command === "sunbiz-filter") return runSunbizFilterCommand(rest);
+  if (command === "sunbiz-transform") return runSunbizTransformCommand(rest);
+  if (command === "sunbiz-enrich") return runSunbizEnrichCommand(rest);
+  if (command === "hoa-enrich") return runHoaEnrichCommand(rest);
+  if (command === "avm-enrich") return runAvmEnrichCommand(rest);
+  if (command === "bbb-harvest") return runBbbHarvestCommand(rest);
+  if (command === "bbb-reconcile") return runBbbReconcileCommand(rest);
+  if (command === "bbb-link") return runBbbLinkCommand(rest);
+  if (command === "enrichment-finalize") {
+    return runEnrichmentFinalizeCommand(rest);
+  }
+  if (command === "permit-probe") return runPermitProbeCommand(rest);
+  if (command === "permit-bounded-harvest") {
+    return runPermitHarvestCommand(rest, false);
+  }
+  if (command === "permit-resume") {
+    return runPermitHarvestCommand(rest, true);
+  }
+  if (command === "permit-reconcile") {
+    return runPermitReconcileCommand(rest);
+  }
+  if (command === "permit-export") return runPermitExportCommand(rest);
+  if (command === "permit-bulk-export") {
+    return runPermitBulkExportCommand(rest);
+  }
+  if (command === "permit-publish") {
+    return runPermitPublishCommand(rest);
+  }
   console.error(
-    "Usage: elephant-county <ingest|export|publish|replay> --county <key> [...flags]\n" +
+    "Usage: elephant-county <ingest|export|publish|export-coverage|sign-coverage-approval|publish-coverage|replay|sunbiz-prepare|sunbiz-filter|sunbiz-transform|sunbiz-enrich|avm-enrich|hoa-enrich|bbb-harvest|bbb-reconcile|bbb-link|enrichment-finalize|permit-probe|permit-bounded-harvest|permit-resume|permit-reconcile|permit-export|permit-bulk-export|permit-publish> [...flags]\n" +
       "  ingest  --county <key> --seed <csv> --html-dir <dir> [--skip-validate] [--live-fetch] [--allow-empty] --output <run-dir>\n" +
       "  export  --county <key> --seed <csv> --run <run-dir> --output <publish-dir> [--allow-empty]\n" +
       "  publish --county <key> --input <publish-dir> [--dry-run] [--approve <manifest>]\n" +
-      "  replay  --county <key> --fixture <dir> --output <dir>",
+      "  export-coverage --county <key> --evidence <json> --output <publish-dir>\n" +
+      "  sign-coverage-approval --county <key> --input <publish-dir> --bucket <bucket> --expected-ipns-name <k51...> --approver <identity> --private-key <ed25519.pem> --output <approval.json> [--approved-at <ISO-8601>]\n" +
+      "  publish-coverage --county <key> --input <publish-dir> --bucket <bucket> --expected-ipns-name <k51...> [--dry-run] [--approve <approval.json> --approval-public-key <ed25519-public.pem>] [--env-file <dotenv>]\n" +
+      "  replay  --county <key> --fixture <dir> --output <dir>\n" +
+      "  sunbiz-prepare --archive <cordata.zip> --sha256 <digest> --output <expanded-dir>\n" +
+      "  sunbiz-filter --county <profile-key> --quarter <YYYYQn> --source-dir <expanded-dir> --output <dir> [--max-source-records N]\n" +
+      "  sunbiz-transform --input <extract-dir> --output <dir> [--part-record-limit N]\n" +
+      "  sunbiz-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --sunbiz-extract <dir> --output-dir <dir>\n" +
+      "  avm-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --records <avm-records.jsonl> --source-manifest <json> --output-dir <dir>\n" +
+      "  hoa-enrich --county <profile-key> --input-parquet <parquet> --input-coverage <json> --records <hoa-memberships.jsonl> --source-manifest <json> --output-dir <dir>\n" +
+      "  bbb-harvest --county <profile-key> --category <reviewed-key> --job-id <id> --max-pages N --max-profiles N --max-requests N --max-duration-minutes N --output <dir>\n" +
+      "  bbb-reconcile --county <profile-key> --harvest-root <category-dirs-root> --input-coverage <json> --output-dir <dir>\n" +
+      "  bbb-link --county duval --input-parquet <query-table.parquet> --input-coverage <dataset-coverage.json> --bbb-profiles <bbb-profiles.jsonl> --bbb-reconciliation-manifest <json> --permit-source <jaxepics-bid-map.jsonl.gz> --permit-artifact-manifest <json> --output-dir <dir>\n" +
+      "  enrichment-finalize --county <profile-key> --input <publish-dir>\n" +
+      "  permit-probe --county <profile-key>\n" +
+      "  permit-bounded-harvest --county <profile-key> --job-id <id> --input-parquet <parquet> --limit N --output <dir>\n" +
+      "  permit-resume --county <profile-key> --job-id <id> --input-parquet <parquet> --limit N --output <dir>\n" +
+      "  permit-reconcile --county <profile-key> --harvest <dir>\n" +
+      "  permit-export --county <profile-key> --job-id <id> --harvest <dir> --input-parquet <parquet> --input-coverage <json> --output <dir>\n" +
+      "  permit-bulk-export --county <profile-key> --job-id <id> --input-parquet <parquet> --input-coverage <json> --output <dir> [--max-pages N]\n" +
+      "  permit-publish --county <profile-key> --input <dir> --approve <manifest> --receipt <json>",
   );
   process.exitCode = 1;
 }
@@ -212,4 +1038,27 @@ if (isDirectRun) {
   });
 }
 
-export { main, requireAdapter, runIngest, runExport, runPublish, runReplayCommand };
+export {
+  main,
+  requireAdapter,
+  runIngest,
+  runExport,
+  runPublish,
+  runExportCoverage,
+  runSignCoverageApproval,
+  runPublishCoverage,
+  runReplayCommand,
+  runSunbizPrepareCommand,
+  runSunbizFilterCommand,
+  runSunbizTransformCommand,
+  runSunbizEnrichCommand,
+  runHoaEnrichCommand,
+  runAvmEnrichCommand,
+  runBbbHarvestCommand,
+  runBbbReconcileCommand,
+  runEnrichmentFinalizeCommand,
+  runPermitProbeCommand,
+  runPermitHarvestCommand,
+  runPermitReconcileCommand,
+  runPermitExportCommand,
+};

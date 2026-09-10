@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "elephant.permit-source-certification.v1",
+  "countyKey": "duval",
+  "observedAt": "2026-09-06T05:00:00.000Z",
+  "sources": [
+    {
+      "jurisdictionKey": "jacksonville",
+      "adapterKey": "jaxepics",
+      "status": "supported",
+      "searchUrl": "https://jaxepics.coj.net/Search/AdvancedSearch",
+      "observations": [
+        "The public Angular shell and indexed permit view routes are reachable from a web fetch service.",
+        "The Angular bundle certifies POST /api/Searches/Permits/RENumberSearch?searchTerm={RE} followed by GET /api/Permits/{PermitId}.",
+        "A bounded detail response includes parcel RE number, lifecycle dates, contractor, invoices, and inspections.",
+        "The implementation host times out on the Angular application and receives Akamai Access Denied from the API, so local execution cannot run the contract.",
+        "A bounded AWS Batch probe in us-east-1 returned HTTP 200 for metadata, parcel search, and permit detail in 550 ms, 709 ms, and 386 ms respectively.",
+        "The AWS parcel search for 044280-0505 returned linked permit identifiers, including a finalized residential roofing permit, without authentication.",
+        "The official daily BID ArcGIS All Permits layer returned 3,624,986 records and supports deterministic ordered pagination through the public city map proxy.",
+        "The bulk layer exposes parcel RE, full permit number, lifecycle timestamps, status and permit type codes, description, cost, company and contractor identifiers, and last inspection date.",
+        "A 100-parcel JaxEPICS soak completed without errors: 93 positive parcels, 7 permitless parcels, 655 references, 50 of 50 detail parcel matches, search p95 885 ms, and detail p95 1,366 ms."
+      ],
+      "recordsRequestUrl": "https://jacksonville.gov/public-records"
+    },
+    {
+      "jurisdictionKey": "jacksonville-beach",
+      "adapterKey": "click2gov",
+      "status": "blocked",
+      "searchUrl": "https://jakb-egov.aspgov.com/Click2GovBP/selectpermit.html",
+      "observations": [
+        "The official public page confirms anonymous historical search by permit, address, parcel RE number, or name.",
+        "The reusable Click2Gov session and CSRF form contract was confirmed against the same vendor family.",
+        "The implementation host received a CentralSquare support-ID error before a Jacksonville Beach session was issued.",
+        "No Jacksonville Beach permit detail was fetched from this egress, so full harvesting is disabled."
+      ],
+      "recordsRequestUrl": "https://jacksonvillebeach.justfoia.com/publicportal/home/newrequest"
+    },
+    {
+      "jurisdictionKey": "atlantic-beach",
+      "adapterKey": null,
+      "status": "manual_only",
+      "searchUrl": "https://bsaonline.com/SiteSearch/BuildingDepartmentRecordSearch?uid=3261",
+      "observations": [
+        "BS&A Online terms expressly prohibit scripts, bots, scraping, automated processes, and circumvention of service limits, so no live automated adapter is enabled.",
+        "Sanitized parser fixtures preserve the previously observed shape for record RES21-0037, permit key 54715, parcel 171190 0000, details, inspections, fees, and lifecycle dates.",
+        "The fixtures cover a terminal zero-result response and pagination without authorizing further automated access.",
+        "The predecessor eTRAKiT host returned HTTP 403/503 and is retained as a documented unavailable source.",
+        "Complete current BS&A and predecessor eTRAKiT history must be obtained directly from the City of Atlantic Beach."
+      ],
+      "recordsRequestUrl": "https://atlanticbeachfl.justfoia.com/publicportal/home/newrequest"
+    },
+    {
+      "jurisdictionKey": "neptune-beach",
+      "adapterKey": null,
+      "status": "no_public_historical_search",
+      "searchUrl": null,
+      "observations": [
+        "The official planning page is protected by browser verification and no public historical permit-search endpoint was identified."
+      ],
+      "recordsRequestUrl": "https://www.nbfl.gov/public-records"
+    },
+    {
+      "jurisdictionKey": "baldwin",
+      "adapterKey": null,
+      "status": "no_public_historical_search",
+      "searchUrl": null,
+      "observations": [
+        "The official site publishes permit forms but no public historical permit-search endpoint."
+      ],
+      "recordsRequestUrl": "https://baldwinfl.govoffice2.com/"
+    }
+  ]
+}

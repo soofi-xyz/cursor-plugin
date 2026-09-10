@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "elephant.county-enrichment-batch-request.v1",
+  "runId": "example-county-2026q3-replace-source-digest",
+  "county": "example-county",
+  "pipelineKey": "sunbiz-bbb-reconcile",
+  "quarter": "2026Q3",
+  "enrichmentProfileSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "inputs": {
+    "queryTable": {
+      "key": "inputs/query-table/example-county/0000000000000000000000000000000000000000000000000000000000000000/query-table.parquet",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": 104857600
+    },
+    "coverage": {
+      "key": "inputs/query-table/example-county/1111111111111111111111111111111111111111111111111111111111111111/dataset-coverage.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "bytes": 4096
+    }
+  },
+  "sunbiz": {
+    "archive": {
+      "key": "inputs/sunbiz/2026Q3/2222222222222222222222222222222222222222222222222222222222222222/cordata.zip",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "bytes": 1825361101
+    },
+    "zipPrefixes": [
+      "330"
+    ],
+    "bounds": {
+      "maxArchiveBytes": 3221225472,
+      "maxExpandedBytes": 26843545600,
+      "maxSourceRecords": null,
+      "chunkRecordLimit": 5000,
+      "partRecordLimit": 5000,
+      "maxDurationMinutes": 240
+    }
+  },
+  "bbb": {
+    "categories": [
+      {
+        "key": "plumbers",
+        "url": "https://www.bbb.org/us/fl/example-city/category/plumbers",
+        "reviewedPath": "/us/fl/example-city/category/plumbers"
+      },
+      {
+        "key": "electricians",
+        "url": "https://www.bbb.org/us/fl/example-city/category/electricians",
+        "reviewedPath": "/us/fl/example-city/category/electricians"
+      }
+    ],
+    "bounds": {
+      "maxPages": 2,
+      "maxProfiles": 5,
+      "maxRequests": 100,
+      "maxDurationMinutes": 30,
+      "partRecordLimit": 5,
+      "pageDelayMs": 2000,
+      "profileDelayMs": 1500,
+      "navigationTimeoutMs": 90000,
+      "challengeAttempts": 3,
+      "challengeCheckIntervalMs": 3000,
+      "challengeChecksPerAttempt": 6,
+      "includeHtml": true,
+      "profileSubpages": []
+    }
+  },
+  "execution": {
+    "bbbDependencyPolicy": "serial",
+    "recoveryBbbDependencyPolicy": "parallel"
+  },
+  "costCeilingUsd": 5,
+  "provenance": {
+    "gitCommit": "0000000000000000000000000000000000000000",
+    "treeDigest": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

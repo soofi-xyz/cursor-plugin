@@ -1,0 +1,68 @@
+{
+  "fixtureKind": "sanitized_live_api_extract",
+  "sourceUrl": "https://jaxepicsapi.coj.net/api/Permits/1173080",
+  "capturedAt": "2026-09-06T05:00:00.000Z",
+  "PermitId": 1173080,
+  "PermitTypeDescription": "Mechanical Permit",
+  "FullPermitNumber": "M-89-22897.004",
+  "StatusDescription": "Finalized",
+  "ProposedUseDescription": "Residential",
+  "StructureTypeDescription": "NOT SET",
+  "DateEntered": "1989-08-07T00:00:00",
+  "DateIssued": "1989-08-07T00:00:00",
+  "DateFinal": "1991-04-10T00:00:00",
+  "TotalCost": 0,
+  "WorkTypeDescription": "New Building",
+  "WorkDescription": "1 FP FC3880 SUPERIORWG/CB",
+  "Address": {
+    "FullAddress": "1802 KEY BISCAYNE WAY",
+    "City": "JACKSONVILLE",
+    "State": "FL",
+    "ZipCode": "32218",
+    "Re": "044280 0505"
+  },
+  "PermitCompanies": [
+    {
+      "IsPrimary": true,
+      "Company": {
+        "BusinessName": "Superior Stone & Fireplace Inc"
+      },
+      "Contractor": {
+        "DisplayName": "FRED HINSON"
+      },
+      "ContractorQaLicense": null
+    }
+  ],
+  "PermitInspections": [
+    {
+      "Label": "Final - Mechanical",
+      "InspectionSchedules": [
+        {
+          "InspectionStatusDescription": "Pass",
+          "DateRequested": "1991-04-10T00:00:00",
+          "DateCompleted": null
+        }
+      ]
+    },
+    {
+      "Label": "Rough - Mechanical",
+      "InspectionSchedules": [
+        {
+          "InspectionStatusDescription": "Pass",
+          "DateRequested": "1991-04-10T00:00:00",
+          "DateCompleted": null
+        }
+      ]
+    }
+  ],
+  "PermitInvoices": [
+    {
+      "Invoice": {
+        "InvoiceAmount": 14,
+        "InvoiceStatusDescription": "Paid"
+      }
+    }
+  ],
+  "SubPermits": [],
+  "AssociatedPermits": []
+}

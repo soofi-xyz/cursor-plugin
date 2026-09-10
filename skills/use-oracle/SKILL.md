@@ -35,7 +35,10 @@ stage map, and publish/coverage rules.
    install, offline replay, bounded live pilot, publish dry-run, approval-gated publish,
    catalog update, MCP smoke, and the clean-room verification gate. The team-facing test
    evidence template for changes to the bundled runtime.
-9. [`../county-readiness-preflight/SKILL.md`](../county-readiness-preflight/SKILL.md) — the
+9. [`reference/coverage-only-publication.md`](./reference/coverage-only-publication.md) —
+   adapter-independent repair/refresh of a county's coverage snapshot without touching
+   its property query table, including cryptographic approval and immutable readback.
+10. [`../county-readiness-preflight/SKILL.md`](../county-readiness-preflight/SKILL.md) — the
    deterministic validator. `onboard-county` must run it before seed, pilot, or full ingest.
 
 ## Choose the stack first
@@ -223,6 +226,10 @@ AWS URL:
 2. Load county data through the normal source tracks: appraisal, permits, Sunbiz, BBB.
 3. Keep `oracle_dataset_coverage` updated per `(county, source)`.
 4. After each load/index refresh window, run the query-table and coverage publish path.
+   For an already-published county whose coverage pointer alone needs repair, use the
+   coverage-only path in
+   [`reference/coverage-only-publication.md`](./reference/coverage-only-publication.md);
+   it cannot accept or mutate query-table artifacts or labels.
 5. Public consumers use IPFS/IPNS only. Donphan reads coverage through MCP
    `getOracleDatasetInfo`. Never point users at AWS S3.
 6. Wire MCP from the **canonical published-county catalog**, not from a hardcoded county

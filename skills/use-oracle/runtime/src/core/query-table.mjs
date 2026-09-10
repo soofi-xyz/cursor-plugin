@@ -153,7 +153,7 @@ export function toParquetRecord(row) {
  * @returns {Promise<number>} Rows written.
  */
 export async function writeQueryTableParquet({ parquetPath, schemaFields, rows }) {
-  const schema = new ParquetSchema(schemaFields);
+  const schema = new ParquetSchema(structuredClone(schemaFields));
   const writer = await ParquetWriter.openFile(schema, parquetPath);
   try {
     for (const row of rows) {

@@ -9,8 +9,8 @@ Use this skill when a Figma-driven UI change needs test coverage that verifies v
 
 Reference patterns:
 
-- Mocked design spec in `test/design`: `skills/ui-desing-tests/reference/frictionlessLandingPage.spec.js`
-- Breakpoint design browser spec in `test/browser`: `skills/ui-desing-tests/reference/landingPageBreakpoints.spec.js`
+- Mocked design spec in `test/design`: `skills/responsive-design-tests/reference/frictionlessLandingPage.spec.js`
+- Breakpoint design browser spec in `test/browser`: `skills/responsive-design-tests/reference/landingPageBreakpoints.spec.js`
 
 ## Goals
 
@@ -68,7 +68,7 @@ Rules:
 - put the spec in `test/design`
 - prefer mocked data for determinism whenever the page or state depends on controlled data
 - use exact breakpoint configs and strict CSS or geometry assertions when those values are intentional design decisions
-- follow `skills/ui-desing-tests/reference/frictionlessLandingPage.spec.js` as the primary mocked pattern
+- follow `skills/responsive-design-tests/reference/frictionlessLandingPage.spec.js` as the primary mocked pattern
 
 ### 2. Real-device design browser specs in `test/browser`
 
@@ -84,7 +84,7 @@ Rules:
 - do not mock the main app data flow unless the user explicitly asks for a hybrid approach
 - require the designer or requester to provide the entry route and the exact steps needed to reach the target state
 - use device-class or BrowserStack-project expectations instead of blindly copying exact local breakpoint numbers
-- follow `skills/ui-desing-tests/reference/landingPageBreakpoints.spec.js` as the primary browser pattern
+- follow `skills/responsive-design-tests/reference/landingPageBreakpoints.spec.js` as the primary browser pattern
 
 ## Scope Boundary
 
@@ -94,6 +94,7 @@ Use this skill only for visual and responsive design verification based on Figma
 - breakpoint behavior
 - spacing
 - typography
+- colors, control decoration geometry, and action-to-button-variant mapping
 - visibility
 - sizing
 - alignment
@@ -138,6 +139,7 @@ For each design update:
    - font size and line height
    - width and height
    - alignment and offsets
+   - computed colors, decoration geometry, and each action's visual variant
    - flex direction, wrapping, and ordering
    - visual states revealed by responsive controls such as menus or drawers
 3. If the test is a real-device/browser design test in `test/browser`, record device-class expectations:
@@ -207,12 +209,14 @@ Assert these first, in this order:
 1. Component visibility by breakpoint.
 2. Layout mode: flex direction, wrap, justify, align.
 3. No horizontal overflow or obvious clipping.
-4. Section spacing: padding, margin, gap.
-5. Typography: font size, line height, weight when important.
-6. Element dimensions: width, height, card size, media height.
-7. Alignment and placement: shared left edge, right offset, centered gap.
-8. Text overflow or single-line behavior when the design depends on it.
-9. Minimal UI actions needed to reveal breakpoint-specific visual states, such as opening a mobile menu.
+4. Component visual identity and control details: colors, indicators, and
+   underline/divider geometry by stable control/action identity.
+6. Section spacing: padding, margin, gap.
+7. Typography: font size, line height, weight when important.
+8. Element dimensions: width, height, card size, media height.
+9. Alignment and placement: shared left edge, right offset, centered gap.
+10. Text overflow or single-line behavior when the design depends on it.
+11. Minimal UI actions needed to reveal breakpoint-specific visual states, such as opening a mobile menu.
 
 Use the full exact-value priority mainly for mocked `test/design` specs. For real-device `test/browser` design tests, stop at visibility, layout mode, section structure, and overflow unless a tighter value is clearly stable and intentional.
 
@@ -222,6 +226,7 @@ Use CSS assertions first:
 
 - `toHaveCSS('padding-left', ...)`
 - `toHaveCSS('font-size', ...)`
+- Exact color/background/border CSS for each named action/control
 - `toBeVisible()` or `toBeHidden()`
 
 Use bounding boxes only when CSS is not enough:
@@ -439,7 +444,7 @@ test.describe('Real-device design browser test', () => {
 
 ## Reference Pattern To Follow
 
-For mocked `test/design` specs, mirror the style used in `skills/ui-desing-tests/reference/frictionlessLandingPage.spec.js`:
+For mocked `test/design` specs, mirror the style used in `skills/responsive-design-tests/reference/frictionlessLandingPage.spec.js`:
 
 - the spec lives in `test/design`
 - data-dependent UI is mocked for deterministic assertions
@@ -450,7 +455,7 @@ For mocked `test/design` specs, mirror the style used in `skills/ui-desing-tests
 - experiments are seeded with `addInitScript()` when the page uses them
 - exact layout assertions cover visibility, spacing, typography, sizing, and alignment
 
-For real-device design browser specs, mirror the style used in `skills/ui-desing-tests/reference/landingPageBreakpoints.spec.js`:
+For real-device design browser specs, mirror the style used in `skills/responsive-design-tests/reference/landingPageBreakpoints.spec.js`:
 
 - the spec lives in `test/browser`
 - the test runs against a real preview or deployed URL
@@ -473,6 +478,7 @@ Before finishing, confirm all of these are true:
 - [ ] Expectations live in config objects, not scattered magic numbers in the test body.
 - [ ] CSS assertions are used for explicit design values.
 - [ ] Bounding-box assertions are only used for geometry and alignment checks.
+- [ ] Control decoration and named button variants are asserted on the final route.
 - [ ] Selectors are stable and readable.
 - [ ] The test waits for fonts and critical content before asserting.
 - [ ] The assertions stay visual and responsive only, without behavior or business-logic checks.

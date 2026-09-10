@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  FILEBASE_APPROVAL_SCHEMA_VERSION,
   hasFilebaseCredentials,
   fillDerivedFilebaseToken,
   loadEnvFile,
   publishFilebase,
+  validateFilebaseApproval,
 } from "../src/core/filebase.mjs";
 
 const ARTIFACTS = {
@@ -18,6 +20,32 @@ const ARTIFACTS = {
   queryTableIpnsLabel: "oracle-query-table-pinellas",
   coverageIpnsLabel: "oracle-dataset-coverage-pinellas",
 };
+
+function approvalFor(parquetBody, coverageBody) {
+  return {
+    schemaVersion: FILEBASE_APPROVAL_SCHEMA_VERSION,
+    action: "publish-query-table-and-coverage",
+    county: ARTIFACTS.county,
+    bucket: ARTIFACTS.bucket,
+    queryTableIpnsLabel: ARTIFACTS.queryTableIpnsLabel,
+    coverageIpnsLabel: ARTIFACTS.coverageIpnsLabel,
+    artifacts: {
+      queryTable: {
+        bytes: parquetBody.length,
+        sha256:
+          "fbc62d3b511368ee275ddc74117d8689b430e1427220e25d30816201d89ca7b6",
+      },
+      coverage: {
+        bytes: coverageBody.length,
+        sha256:
+          "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      },
+    },
+    approved: true,
+    approvedBy: "Test Operator",
+    approvedAt: "2026-09-06T00:00:00.000Z",
+  };
+}
 
 describe("Filebase credential + dry-run gating", () => {
   it("reports no credentials for an empty environment", () => {
@@ -73,6 +101,46 @@ describe("Filebase credential + dry-run gating", () => {
       queryTableIpnsLabel: ARTIFACTS.queryTableIpnsLabel,
       coverageIpnsLabel: ARTIFACTS.coverageIpnsLabel,
     });
+  });
+
+  it("requires an explicit approval bound to the exact artifact bytes", () => {
+    const parquetBody = Buffer.from("PAR1");
+    const coverageBody = Buffer.from("{}");
+    const approval = approvalFor(parquetBody, coverageBody);
+
+    expect(
+      validateFilebaseApproval(
+        approval,
+        ARTIFACTS,
+        parquetBody,
+        coverageBody,
+      ),
+    ).toEqual(approval);
+    expect(() =>
+      validateFilebaseApproval(
+        {
+          ...approval,
+          artifacts: {
+            ...approval.artifacts,
+            queryTable: {
+              ...approval.artifacts.queryTable,
+              sha256: "0".repeat(64),
+            },
+          },
+        },
+        ARTIFACTS,
+        parquetBody,
+        coverageBody,
+      ),
+    ).toThrow(/queryTable integrity/);
+    expect(() =>
+      validateFilebaseApproval(
+        { ...approval, approved: false },
+        ARTIFACTS,
+        parquetBody,
+        coverageBody,
+      ),
+    ).toThrow();
   });
 
   it("fails closed on a live publish with no approval manifest, even with credentials present", async () => {
