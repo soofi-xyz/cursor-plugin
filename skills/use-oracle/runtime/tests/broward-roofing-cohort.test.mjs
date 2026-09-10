@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { permitRepairCandidateSchema } from "../src/permits/backfill-inputs.mjs";
+import { inspectContractorAssignmentPayload } from "../bin/broward-roofing-readonly-export.mjs";
 import {
   analyzeRoofingCohort,
   classifyRoofingPermit,
@@ -58,6 +59,7 @@ function permit(overrides = {}) {
       contactCollectionComplete: true,
       sourcePayloadChecked: true,
       sourceFieldsWithheld: false,
+      sourceFieldsUnavailable: false,
       observedContractorFields: ["sourcePayload.contractors"],
       assignedContractorFields: [],
       ownerBuilderFields: [],
@@ -140,7 +142,7 @@ function property(overrides = {}) {
 function manifest(overrides = {}) {
   return {
     recordType: "manifest",
-    schemaVersion: "elephant.roofing-cohort-input.v3",
+    schemaVersion: "elephant.roofing-cohort-input.v4",
     countyKey: "broward",
     generatedAt: "2026-09-10T12:00:00.000Z",
     asOfDate: "2026-09-10",
@@ -397,6 +399,39 @@ describe("work dates and source lifecycles", () => {
 });
 
 describe("prospective open-roofing lead qualification", () => {
+  it("handles null contractor result arrays and fails closed", () => {
+    const evidence = inspectContractorAssignmentPayload({
+      source_payload: {
+        permitDetail: {
+          contacts: [],
+          contractors: null,
+          licensedProfessionals: null,
+        },
+      },
+      more_details: null,
+      source_artifact_uri: "private://realistic-db-row",
+      contractor_company_id: null,
+    });
+    expect(evidence).toMatchObject({
+      detailCaptured: true,
+      contactCollectionComplete: true,
+      sourcePayloadChecked: true,
+      sourceFieldsUnavailable: true,
+      assignedContractorFields: [],
+      directContractorCompanyIdPresent: false,
+    });
+    expect(
+      evaluateContractorAssignment(
+        permit({
+          detailComplete: true,
+          contractorAssignmentEvidence: evidence,
+        }),
+      ),
+    ).toMatchObject({
+      classification: "contractor_unknown",
+    });
+  });
+
   it("confirms unassigned only from complete empty contractor evidence", () => {
     const result = evaluateContractorAssignment(permit());
     expect(result).toMatchObject({

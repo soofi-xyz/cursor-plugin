@@ -1120,6 +1120,7 @@ export function evaluateContractorAssignment(permit) {
     contactCollectionComplete: false,
     sourcePayloadChecked: false,
     sourceFieldsWithheld: false,
+    sourceFieldsUnavailable: false,
     observedContractorFields: [],
     assignedContractorFields: [],
     ownerBuilderFields: [],
@@ -1159,6 +1160,7 @@ export function evaluateContractorAssignment(permit) {
     contactCollectionComplete: coverage.contactCollectionComplete,
     sourcePayloadChecked: coverage.sourcePayloadChecked,
     sourceFieldsWithheld: coverage.sourceFieldsWithheld,
+    sourceFieldsUnavailable: coverage.sourceFieldsUnavailable,
     observedContractorFields: coverage.observedContractorFields,
     assignedContractorFields: coverage.assignedContractorFields,
     ownerBuilderFields: coverage.ownerBuilderFields,
@@ -1208,8 +1210,11 @@ export function evaluateContractorAssignment(permit) {
     ...(coverage.sourceFieldsWithheld
       ? ["contractor_fields_withheld"]
       : []),
-    ...(coverage.observedContractorFields.length === 0
+    ...(coverage.sourceFieldsUnavailable
       ? ["contractor_fields_unavailable"]
+      : []),
+    ...(coverage.observedContractorFields.length === 0
+      ? ["contractor_fields_not_observed"]
       : []),
   ];
   if (unknownReasons.length > 0) {

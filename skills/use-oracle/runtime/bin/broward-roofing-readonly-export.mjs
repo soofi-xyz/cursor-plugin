@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 import pg from "pg";
 
@@ -151,12 +152,13 @@ function meaningfulAssignmentValue(value) {
   return true;
 }
 
-function inspectContractorAssignmentPayload(row) {
+export function inspectContractorAssignmentPayload(row) {
   const observed = new Set();
   const assigned = new Set();
   const ownerBuilder = new Set();
   let contactCollectionComplete = false;
   let sourceFieldsWithheld = false;
+  let sourceFieldsUnavailable = false;
   const inspect = (value, path = []) => {
     if (value === null || value === undefined) return;
     if (Array.isArray(value)) {
@@ -169,10 +171,20 @@ function inspectContractorAssignmentPayload(row) {
     for (const [key, child] of Object.entries(value)) {
       const childPath = [...path, key];
       const fieldPath = childPath.join(".");
+      if (
+        (CONTACT_COLLECTION.test(key) || CONTRACTOR_FIELD.test(key)) &&
+        (child === null || child === undefined)
+      ) {
+        sourceFieldsUnavailable = true;
+      }
       if (CONTACT_COLLECTION.test(key)) {
         observed.add(fieldPath);
         if (Array.isArray(child)) contactCollectionComplete = true;
-        if (/contractors?|licensed/i.test(key) && child.length > 0) {
+        if (
+          /contractors?|licensed/i.test(key) &&
+          Array.isArray(child) &&
+          child.length > 0
+        ) {
           assigned.add(fieldPath);
         }
       }
@@ -223,6 +235,7 @@ function inspectContractorAssignmentPayload(row) {
     contactCollectionComplete,
     sourcePayloadChecked,
     sourceFieldsWithheld,
+    sourceFieldsUnavailable,
     observedContractorFields: [...observed].sort(),
     assignedContractorFields: [...assigned].sort(),
     ownerBuilderFields: [...ownerBuilder].sort(),
@@ -830,40 +843,40 @@ async function run(args) {
   try {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await assertSchema(client);
-    const [permits, contacts, events, inspections] = await Promise.all([
-      readPermits(
-        client,
-        args.folios,
-        args.licenses,
-        args.companyNames,
-        args.asOfDate,
-      ),
-      readContacts(
-        client,
-        args.folios,
-        args.licenses,
-        args.companyNames,
-        args.asOfDate,
-      ),
-      readEvents(
-        client,
-        args.folios,
-        args.licenses,
-        args.companyNames,
-        args.asOfDate,
-      ),
-      readInspections(
-        client,
-        args.folios,
-        args.licenses,
-        args.companyNames,
-        args.asOfDate,
-      ),
-    ]);
-    const [properties, matcherState] = await Promise.all([
-      readProperties(client, permits, args.folios),
-      readMatcherState(client, permits),
-    ]);
+    const permits = await readPermits(
+      client,
+      args.folios,
+      args.licenses,
+      args.companyNames,
+      args.asOfDate,
+    );
+    const contacts = await readContacts(
+      client,
+      args.folios,
+      args.licenses,
+      args.companyNames,
+      args.asOfDate,
+    );
+    const events = await readEvents(
+      client,
+      args.folios,
+      args.licenses,
+      args.companyNames,
+      args.asOfDate,
+    );
+    const inspections = await readInspections(
+      client,
+      args.folios,
+      args.licenses,
+      args.companyNames,
+      args.asOfDate,
+    );
+    const properties = await readProperties(
+      client,
+      permits,
+      args.folios,
+    );
+    const matcherState = await readMatcherState(client, permits);
     await client.query("COMMIT");
     const manifest = cohortInputRecordSchema.parse({
       recordType: "manifest",
@@ -925,11 +938,16 @@ async function run(args) {
   }
 }
 
-try {
-  const args = parseArguments(process.argv.slice(2));
-  if (args.help) process.stdout.write(`${usage()}\n`);
-  else await run(args);
-} catch (error) {
-  process.stderr.write(`${error.message}\n\n${usage()}\n`);
-  process.exitCode = 1;
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  try {
+    const args = parseArguments(process.argv.slice(2));
+    if (args.help) process.stdout.write(`${usage()}\n`);
+    else await run(args);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n\n${usage()}\n`);
+    process.exitCode = 1;
+  }
 }

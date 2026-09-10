@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const ROOFING_COHORT_INPUT_VERSION =
-  "elephant.roofing-cohort-input.v3";
+  "elephant.roofing-cohort-input.v4";
 export const ROOFING_COHORT_REPORT_VERSION =
   "elephant.roofing-cohort-report.v2";
 export const ROOFING_GAP_VERSION = "elephant.investigation-gap.v1";
@@ -82,6 +82,7 @@ const contractorAssignmentEvidenceSchema = z
     contactCollectionComplete: z.boolean(),
     sourcePayloadChecked: z.boolean(),
     sourceFieldsWithheld: z.boolean(),
+    sourceFieldsUnavailable: z.boolean(),
     observedContractorFields: z.array(z.string().trim().min(1)),
     assignedContractorFields: z.array(z.string().trim().min(1)),
     ownerBuilderFields: z.array(z.string().trim().min(1)),
