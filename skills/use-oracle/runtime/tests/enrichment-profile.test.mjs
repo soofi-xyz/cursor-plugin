@@ -46,6 +46,8 @@ function syntheticProfile() {
         property_id: { type: "UTF8" },
         address_street: { type: "UTF8", optional: true },
         address_zip: { type: "UTF8", optional: true },
+        elephant_uuid: { type: "UTF8", optional: true },
+        elephant_token: { type: "UTF8", optional: true },
         has_permits: { type: "BOOLEAN", optional: true },
         has_sunbiz_tenant: { type: "BOOLEAN", optional: true },
         has_bbb_contractor: { type: "BOOLEAN", optional: true },

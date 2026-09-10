@@ -18,6 +18,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { mintAddressIdentity } from "../../core/address-signature.mjs";
 import { parseUnnormalizedAddress, toInteger, toNumber, toText } from "../../core/query-table.mjs";
 
 export const SOURCE_SYSTEM = "pinellas_appraiser";
@@ -141,6 +142,16 @@ export function mapTransformedFilesToQueryTableRow({ strap, files, seedRow }) {
   const lotSizeAcre =
     toNumber(lot.lot_size_acre) ?? toNumber(seedRow?.acres) ?? (lotAreaSqft !== null ? lotAreaSqft / 43_560 : null);
 
+  const addressStreet = (situsHasContent ? parsed.street : null) ?? parsed.street;
+  const addressZip = (situsHasContent ? parsed.postalCode : null) ?? toText(seedRow?.zip) ?? parsed.postalCode;
+  const identity = mintAddressIdentity({
+    country: "us",
+    state: STATE_CODE,
+    postalCode: addressZip,
+    street: addressStreet,
+    unit: toText(address.unit_identifier),
+  });
+
   return {
     property_id: propertyIdForStrap(strap),
     property_cid: null,
@@ -149,9 +160,11 @@ export function mapTransformedFilesToQueryTableRow({ strap, files, seedRow }) {
     source_system: SOURCE_SYSTEM,
     county_name: COUNTY_NAME,
     state_code: STATE_CODE,
-    address_street: (situsHasContent ? parsed.street : null) ?? parsed.street,
+    address_street: addressStreet,
     address_city: (situsHasContent ? parsed.city : null) ?? toText(seedRow?.city) ?? parsed.city,
-    address_zip: (situsHasContent ? parsed.postalCode : null) ?? toText(seedRow?.zip) ?? parsed.postalCode,
+    address_zip: addressZip,
+    elephant_uuid: identity?.elephantUuid ?? null,
+    elephant_token: identity?.elephantToken ?? null,
     latitude: toNumber(seedRow?.latitude),
     longitude: toNumber(seedRow?.longitude),
     lot_size_acre: lotSizeAcre,
@@ -198,6 +211,8 @@ export const QUERY_TABLE_SCHEMA_FIELDS = Object.freeze({
   address_street: { type: "UTF8", optional: true },
   address_city: { type: "UTF8", optional: true },
   address_zip: { type: "UTF8", optional: true },
+  elephant_uuid: { type: "UTF8", optional: true },
+  elephant_token: { type: "UTF8", optional: true },
   latitude: { type: "DOUBLE", optional: true },
   longitude: { type: "DOUBLE", optional: true },
   lot_size_acre: { type: "DOUBLE", optional: true },

@@ -122,6 +122,19 @@ specialized descendants such as cafe or seafood restaurant.
 Group only `taxonomy_primary`. Do not merge alternates into counts and do not claim the grouped
 rows are a complete census of Lee businesses.
 
+## Pattern 7: Address identity (`elephant_uuid` / `elephant_token`)
+
+**Example:** "Does this situs match an OpenDoor / external address id?"
+
+1. `getPropertyQuerySchema` — confirm `elephant_uuid` and `elephant_token` exist and are populated.
+2. If those columns are NULL for the county, say they are not published yet. Do not hash locally
+   and do not use `normalizedAddressHash` as a substitute.
+3. `queryProperties` with `county` and a filter on `elephant_uuid` (UUIDv5) or
+   `elephant_token` (SHA-256 hex). The contract is `address:v1`: country `us`, Oracle
+   `state_code`, ZIP5, street, unit. No ROAD→RD expansion.
+4. Return: matching `parcel_identifier`, published street/ZIP, uuid, token, and whether the
+   column was present.
+
 ## Honest limitations
 
 - Overture place category/name/location/status/hosted/confidence filters are server-side through

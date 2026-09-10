@@ -40,6 +40,8 @@ export const duvalEnrichmentProfile = validateEnrichmentProfile({
       address_street: { type: "UTF8", optional: true },
       address_city: { type: "UTF8", optional: true },
       address_zip: { type: "UTF8", optional: true },
+      elephant_uuid: { type: "UTF8", optional: true },
+      elephant_token: { type: "UTF8", optional: true },
       latitude: { type: "DOUBLE", optional: true },
       longitude: { type: "DOUBLE", optional: true },
       lot_size_acre: { type: "DOUBLE", optional: true },

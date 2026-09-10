@@ -40,13 +40,14 @@ When invoked:
      is no authoritative denominator for all businesses; never describe it as 0% or 100%
      complete.
    - **Attribute / aggregate / "how many" / count / filter — by owner, by zip, by city, by
-     value, by acreage, by material → SQL path (PRIMARY):** call `getPropertyQuerySchema`
-     first to learn the ~37 columns, then write ONE read-only `SELECT` (or `WITH…SELECT`)
-     over the `properties` view and call `queryProperties`. Single statement, SELECT/CTE only
-     (mutations/multi-statement are rejected); a row cap auto-applies (default 100, max 1000).
-     Use `ILIKE '%…%'` for owner (`owners_text`), city (`address_city`), material
-     (`exterior_wall_material`). `county` defaults to **`lee`** and must match the MCP's
-     `PROPERTY_QUERY_TABLE_MAP`.
+     value, by acreage, by material, by address identity → SQL path (PRIMARY):** call
+     `getPropertyQuerySchema` first to learn the published columns, then write ONE read-only
+     `SELECT` (or `WITH…SELECT`) over the `properties` view and call `queryProperties`. Single
+     statement, SELECT/CTE only (mutations/multi-statement are rejected); a row cap auto-applies
+     (default 100, max 1000). Use `ILIKE '%…%'` for owner (`owners_text`), city (`address_city`),
+     material (`exterior_wall_material`). Use `elephant_uuid` / `elephant_token` for
+     `address:v1` matching — not `normalizedAddressHash`. `county` defaults to **`lee`** and must
+     match the MCP's `PROPERTY_QUERY_TABLE_MAP`.
    - Geo / bbox / polygon → `findPropertiesInArea` **with `county`** then `getOracleProperty`
      **with `county`** on hits; value sums in an area → `sumPropertyValueInArea` **with `county`**
    - Single full property record → `getOracleProperty` with `county` plus one of parcel /
@@ -60,7 +61,8 @@ When invoked:
      harvest only runs when the MCP has pipeline ingress configured; if it does not, report
      harvest unavailable instead of polling.
    - **Data coverage varies by county:** Lee has no acreage/material (those columns are NULL);
-     HOA (`hoa_flag`) is NULL in every county. Check `getPropertyQuerySchema` or a
+     HOA (`hoa_flag`) is NULL in every county; `elephant_uuid` / `elephant_token` are NULL until
+     a republish. Check `getPropertyQuerySchema` or a
      `SELECT count(col)` and say "not available for this county" instead of inventing. On Lee,
      owner / city / value / count questions work.
 5. Hand off when appropriate:
