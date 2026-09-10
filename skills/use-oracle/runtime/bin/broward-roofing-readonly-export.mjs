@@ -27,6 +27,8 @@ function usage() {
     "",
     "The database transaction is READ ONLY. The export excludes owners, applicants,",
     "contractor phone numbers, and contractor email addresses.",
+    "It also exports independent Broward open-roofing candidates filed in",
+    "2025-09-10..2026-09-10; contractor assignment is evaluated separately.",
   ].join("\n");
 }
 
@@ -128,6 +130,106 @@ function sha256(value) {
   return createHash("sha256")
     .update(typeof value === "string" ? value : JSON.stringify(value))
     .digest("hex");
+}
+
+const LEAD_WINDOW_START = "2025-09-10";
+const CONTRACTOR_FIELD =
+  /contractor|roofer|license|qualifier|licensed[\s_-]?professional|owner[\s_-]?builder/i;
+const CONTACT_COLLECTION =
+  /^(?:contacts?|contractors?|licensed[\s_-]?professionals?)$/i;
+const OWNER_BUILDER_VALUE = /\bowner[\s-]?builder\b/i;
+const CONTRACTOR_ROLE_VALUE =
+  /\b(?:contractor|roofer|qualif|licensed[\s-]?professional)\b/i;
+const WITHHELD_VALUE =
+  /\b(?:not\s+published|unavailable|withheld|redacted)\b/i;
+
+function meaningfulAssignmentValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function inspectContractorAssignmentPayload(row) {
+  const observed = new Set();
+  const assigned = new Set();
+  const ownerBuilder = new Set();
+  let contactCollectionComplete = false;
+  let sourceFieldsWithheld = false;
+  const inspect = (value, path = []) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        inspect(value[index], [...path, String(index)]);
+      }
+      return;
+    }
+    if (typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const childPath = [...path, key];
+      const fieldPath = childPath.join(".");
+      if (CONTACT_COLLECTION.test(key)) {
+        observed.add(fieldPath);
+        if (Array.isArray(child)) contactCollectionComplete = true;
+        if (/contractors?|licensed/i.test(key) && child.length > 0) {
+          assigned.add(fieldPath);
+        }
+      }
+      if (CONTRACTOR_FIELD.test(key)) {
+        observed.add(fieldPath);
+        if (
+          typeof child === "string" &&
+          WITHHELD_VALUE.test(child)
+        ) {
+          sourceFieldsWithheld = true;
+        } else if (
+          meaningfulAssignmentValue(child) &&
+          OWNER_BUILDER_VALUE.test(`${key} ${String(child)}`)
+        ) {
+          ownerBuilder.add(fieldPath);
+        } else if (meaningfulAssignmentValue(child)) {
+          assigned.add(fieldPath);
+        }
+      }
+      if (
+        /^(?:role|contactType|type)$/i.test(key) &&
+        typeof child === "string" &&
+        CONTRACTOR_ROLE_VALUE.test(child)
+      ) {
+        observed.add(fieldPath);
+        assigned.add(fieldPath);
+      }
+      if (
+        typeof child === "string" &&
+        OWNER_BUILDER_VALUE.test(child) &&
+        /contact|contractor|builder/i.test(fieldPath)
+      ) {
+        observed.add(fieldPath);
+        ownerBuilder.add(fieldPath);
+      }
+      inspect(child, childPath);
+    }
+  };
+  inspect(row.source_payload, ["sourcePayload"]);
+  inspect(row.more_details, ["moreDetails"]);
+  const sourcePayloadChecked =
+    row.source_payload !== null || row.more_details !== null;
+  const detailCaptured = Boolean(
+    row.source_artifact_uri || sourcePayloadChecked,
+  );
+  return {
+    detailCaptured,
+    contactCollectionComplete,
+    sourcePayloadChecked,
+    sourceFieldsWithheld,
+    observedContractorFields: [...observed].sort(),
+    assignedContractorFields: [...assigned].sort(),
+    ownerBuilderFields: [...ownerBuilder].sort(),
+    directContractorCompanyIdPresent: Boolean(
+      row.contractor_company_id,
+    ),
+  };
 }
 
 function sourceMaps() {
@@ -268,6 +370,7 @@ const REQUIRED_COLUMNS = Object.freeze({
   property_improvements: [
     "property_improvement_id",
     "property_id",
+    "contractor_company_id",
     "parcel_identifier",
     "permit_number",
     "improvement_type",
@@ -331,9 +434,53 @@ const SELECTED_PERMITS_CTE = `
              UPPER(COALESCE(c.name, '')),
              '[^A-Z0-9]+', '', 'g'
            ) = ANY($3::text[])
+        OR (
+             pi.source_system LIKE 'broward\\_%' ESCAPE '\\'
+         AND GREATEST(
+               pi.permit_issue_date,
+               pi.opened_date,
+               pi.application_received_date
+             )::date BETWEEN $4::date AND $5::date
+         AND CONCAT_WS(
+               ' ',
+               pi.improvement_status,
+               pi.source_status,
+               pi.record_status
+             ) ~* '\\m(active|applied|application submitted|approved|in process|in review|issued|on hold|open|pending|permit issued|ready for issuance|ready to issue)\\M'
+         AND CONCAT_WS(
+               ' ',
+               pi.improvement_type,
+               pi.improvement_action,
+               pi.project_description,
+               pi.description,
+               pi.more_details::text,
+               pi.source_payload::text
+             ) ~* '(roof|shingle|tile|membrane|bitumen)'
+           )
   )`;
 
-async function readPermits(client, folios, licenses, companyNames) {
+function selectedPermitParameters(
+  folios,
+  licenses,
+  companyNames,
+  asOfDate,
+) {
+  return [
+    folios,
+    licenses,
+    companyNames.map(normalizeCompanyName),
+    LEAD_WINDOW_START,
+    asOfDate,
+  ];
+}
+
+async function readPermits(
+  client,
+  folios,
+  licenses,
+  companyNames,
+  asOfDate,
+) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pi.*, a.city_name, a.unnormalized_address,
@@ -346,7 +493,7 @@ async function readPermits(client, folios, licenses, companyNames) {
          ON pc.property_improvement_id = pi.property_improvement_id
       GROUP BY pi.property_improvement_id, a.city_name, a.unnormalized_address
       ORDER BY pi.source_system, pi.source_record_key`,
-    [folios, licenses, companyNames.map(normalizeCompanyName)],
+    selectedPermitParameters(folios, licenses, companyNames, asOfDate),
   );
   return result.rows.map((row) => {
     const source = sourceIdentity(row.source_system, row.city_name);
@@ -354,6 +501,8 @@ async function readPermits(client, folios, licenses, companyNames) {
       /^[a-f0-9]{64}$/.test(row.source_record_hash ?? "")
         ? row.source_record_hash
         : sha256(row);
+    const contractorAssignmentEvidence =
+      inspectContractorAssignmentPayload(row);
     return cohortInputRecordSchema.parse({
       recordType: "permit",
       propertyImprovementId: row.property_improvement_id,
@@ -406,14 +555,24 @@ async function readPermits(client, folios, licenses, companyNames) {
         closed: isoDate(row.permit_close_date),
         expiration: isoDate(row.expiration_date),
       },
-      detailComplete: Number(row.contact_count) > 0,
+      detailComplete:
+        contractorAssignmentEvidence.detailCaptured &&
+        contractorAssignmentEvidence.contactCollectionComplete &&
+        !contractorAssignmentEvidence.sourceFieldsWithheld,
+      contractorAssignmentEvidence,
       sourceArtifactUri: row.source_artifact_uri,
       evidenceSha256,
     });
   });
 }
 
-async function readContacts(client, folios, licenses, companyNames) {
+async function readContacts(
+  client,
+  folios,
+  licenses,
+  companyNames,
+  asOfDate,
+) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pc.property_improvement_id, pc.contact_role, pc.raw_name,
@@ -425,7 +584,7 @@ async function readContacts(client, folios, licenses, companyNames) {
          ON pc.property_improvement_id = sp.property_improvement_id
        LEFT JOIN public.companies c ON c.company_id = pc.company_id
       ORDER BY pc.source_system, pc.source_record_key`,
-    [folios, licenses, companyNames.map(normalizeCompanyName)],
+    selectedPermitParameters(folios, licenses, companyNames, asOfDate),
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -452,7 +611,13 @@ async function readContacts(client, folios, licenses, companyNames) {
   );
 }
 
-async function readEvents(client, folios, licenses, companyNames) {
+async function readEvents(
+  client,
+  folios,
+  licenses,
+  companyNames,
+  asOfDate,
+) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT pe.property_improvement_id, pe.event_type, pe.event_status,
@@ -462,7 +627,7 @@ async function readEvents(client, folios, licenses, companyNames) {
        JOIN public.permit_events pe
          ON pe.property_improvement_id = sp.property_improvement_id
       ORDER BY pe.source_system, pe.source_record_key`,
-    [folios, licenses, companyNames.map(normalizeCompanyName)],
+    selectedPermitParameters(folios, licenses, companyNames, asOfDate),
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -485,7 +650,13 @@ async function readEvents(client, folios, licenses, companyNames) {
   );
 }
 
-async function readInspections(client, folios, licenses, companyNames) {
+async function readInspections(
+  client,
+  folios,
+  licenses,
+  companyNames,
+  asOfDate,
+) {
   const result = await client.query(
     `${SELECTED_PERMITS_CTE}
      SELECT i.property_improvement_id, i.inspection_type,
@@ -495,7 +666,7 @@ async function readInspections(client, folios, licenses, companyNames) {
        JOIN public.inspections i
          ON i.property_improvement_id = sp.property_improvement_id
       ORDER BY i.source_system, i.source_record_key`,
-    [folios, licenses, companyNames.map(normalizeCompanyName)],
+    selectedPermitParameters(folios, licenses, companyNames, asOfDate),
   );
   return result.rows.map((row) =>
     cohortInputRecordSchema.parse({
@@ -580,7 +751,8 @@ async function readMatcherState(client, permits) {
   const row = result.rows[0];
   return cohortInputRecordSchema.parse({
     recordType: "matcher_state",
-    scope: "seed-folios-and-exact-roofing-license-permits",
+    scope:
+      "seed-folios-exact-roofing-license-projects-and-independent-open-roofing-leads",
     permits: row.permits,
     contacts: row.contacts,
     permitCompanyLinked: row.permit_company_linked,
@@ -659,10 +831,34 @@ async function run(args) {
     await client.query("BEGIN TRANSACTION READ ONLY");
     await assertSchema(client);
     const [permits, contacts, events, inspections] = await Promise.all([
-      readPermits(client, args.folios, args.licenses, args.companyNames),
-      readContacts(client, args.folios, args.licenses, args.companyNames),
-      readEvents(client, args.folios, args.licenses, args.companyNames),
-      readInspections(client, args.folios, args.licenses, args.companyNames),
+      readPermits(
+        client,
+        args.folios,
+        args.licenses,
+        args.companyNames,
+        args.asOfDate,
+      ),
+      readContacts(
+        client,
+        args.folios,
+        args.licenses,
+        args.companyNames,
+        args.asOfDate,
+      ),
+      readEvents(
+        client,
+        args.folios,
+        args.licenses,
+        args.companyNames,
+        args.asOfDate,
+      ),
+      readInspections(
+        client,
+        args.folios,
+        args.licenses,
+        args.companyNames,
+        args.asOfDate,
+      ),
     ]);
     const [properties, matcherState] = await Promise.all([
       readProperties(client, permits, args.folios),

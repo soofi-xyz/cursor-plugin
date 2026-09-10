@@ -173,11 +173,11 @@ async function run(args) {
   await mkdir(args.outputPath, { recursive: true });
   const cohortRows = [
     ...result.openCohort.map((row) => ({
-      cohort: "open-roofing",
+      cohort: "recommended-unassigned-open-roofing-lead",
       ...row,
     })),
     ...result.oldRoofControls.map((row) => ({
-      cohort: "old-roof-control",
+      cohort: "proactive-estimated-old-roof-lead",
       ...row,
     })),
   ];
@@ -201,6 +201,10 @@ async function run(args) {
       oldRoof: BROWARD_ROOFING_WINDOWS.oldRoof,
     },
     privacy: "private",
+    reportPurpose:
+      "Prospective roofing leads for handoff; open permits are not Z Roofing projects and receive no Z Roofing license association.",
+    openLeadEligibility:
+      "Confirmed roofing, currently open, linked property, stable source identity, in-window filing date, and complete evidence that no contractor is assigned.",
     publicationPerformed: false,
     databaseWritesPerformed: false,
   };

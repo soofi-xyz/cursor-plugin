@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 export const ROOFING_COHORT_INPUT_VERSION =
-  "elephant.roofing-cohort-input.v2";
+  "elephant.roofing-cohort-input.v3";
 export const ROOFING_COHORT_REPORT_VERSION =
-  "elephant.roofing-cohort-report.v1";
+  "elephant.roofing-cohort-report.v2";
 export const ROOFING_GAP_VERSION = "elephant.investigation-gap.v1";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,6 +76,19 @@ const permitDatesSchema = z
   })
   .strict();
 
+const contractorAssignmentEvidenceSchema = z
+  .object({
+    detailCaptured: z.boolean(),
+    contactCollectionComplete: z.boolean(),
+    sourcePayloadChecked: z.boolean(),
+    sourceFieldsWithheld: z.boolean(),
+    observedContractorFields: z.array(z.string().trim().min(1)),
+    assignedContractorFields: z.array(z.string().trim().min(1)),
+    ownerBuilderFields: z.array(z.string().trim().min(1)),
+    directContractorCompanyIdPresent: z.boolean(),
+  })
+  .strict();
+
 export const cohortPermitRecordSchema = z
   .object({
     recordType: z.literal("permit"),
@@ -104,6 +117,7 @@ export const cohortPermitRecordSchema = z
     parentPermitNumber: nullableText,
     dates: permitDatesSchema,
     detailComplete: z.boolean(),
+    contractorAssignmentEvidence: contractorAssignmentEvidenceSchema,
     sourceArtifactUri: nullableText,
     evidenceSha256: z.string().regex(SHA256).nullable(),
   })

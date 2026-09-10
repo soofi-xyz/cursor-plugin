@@ -5,8 +5,11 @@ import {
   analyzeRoofingCohort,
   classifyRoofingPermit,
   chooseControls,
+  chooseOpenLeads,
   clusterSupplementalPermits,
   deduplicateSourcePermits,
+  evaluateContractorAssignment,
+  evaluateOpenRoofingLead,
   evaluatePermitLifecycle,
   evaluateWorkEvidence,
   inferOldRoofControl,
@@ -50,6 +53,16 @@ function permit(overrides = {}) {
       expiration: null,
     },
     detailComplete: true,
+    contractorAssignmentEvidence: {
+      detailCaptured: true,
+      contactCollectionComplete: true,
+      sourcePayloadChecked: true,
+      sourceFieldsWithheld: false,
+      observedContractorFields: ["sourcePayload.contractors"],
+      assignedContractorFields: [],
+      ownerBuilderFields: [],
+      directContractorCompanyIdPresent: false,
+    },
     sourceArtifactUri: "private://permit-1",
     evidenceSha256: SHA,
     contacts: [],
@@ -127,7 +140,7 @@ function property(overrides = {}) {
 function manifest(overrides = {}) {
   return {
     recordType: "manifest",
-    schemaVersion: "elephant.roofing-cohort-input.v2",
+    schemaVersion: "elephant.roofing-cohort-input.v3",
     countyKey: "broward",
     generatedAt: "2026-09-10T12:00:00.000Z",
     asOfDate: "2026-09-10",
@@ -335,6 +348,218 @@ describe("work dates and source lifecycles", () => {
       reasonCode: "superseding_terminal_event",
     });
   });
+
+  it("rejects conflicting current open and terminal statuses", () => {
+    expect(
+      evaluatePermitLifecycle(
+        permit({ status: "Issued", sourceStatus: "Closed" }),
+        "2026-09-10",
+      ),
+    ).toMatchObject({
+      state: "needs_review",
+      reasonCode: "conflicting_current_statuses",
+    });
+    expect(
+      evaluatePermitLifecycle(
+        permit({ status: "Issued", sourceStatus: "Mystery Status" }),
+        "2026-09-10",
+      ),
+    ).toMatchObject({
+      state: "needs_review",
+      reasonCode: "open_status_conflicts_with_unmapped_status",
+    });
+  });
+
+  it("excludes expired permits and open statuses with completion dates", () => {
+    expect(
+      evaluatePermitLifecycle(
+        permit({
+          dates: { ...permit().dates, expiration: "2026-08-01" },
+        }),
+        "2026-09-10",
+      ),
+    ).toMatchObject({
+      state: "terminal",
+      reasonCode: "expired_by_date",
+    });
+    expect(
+      evaluatePermitLifecycle(
+        permit({
+          dates: { ...permit().dates, completion: "2026-08-01" },
+        }),
+        "2026-09-10",
+      ),
+    ).toMatchObject({
+      state: "needs_review",
+      reasonCode: "open_status_conflicts_with_terminal_date",
+    });
+  });
+});
+
+describe("prospective open-roofing lead qualification", () => {
+  it("confirms unassigned only from complete empty contractor evidence", () => {
+    const result = evaluateContractorAssignment(permit());
+    expect(result).toMatchObject({
+      classification: "unassigned_confirmed",
+      reasonCode: "complete_contractor_fields_present_and_empty",
+      evidence: {
+        contactRecordCount: 0,
+        contractorRoleContactCount: 0,
+        contractorCompanyContactCount: 0,
+        roofingLicenseContactCount: 0,
+        sourcePayloadChecked: true,
+        contactCollectionComplete: true,
+        assignedContractorFields: [],
+      },
+    });
+  });
+
+  it("classifies any contractor-role or license contact as assigned", () => {
+    expect(
+      evaluateContractorAssignment(
+        permit({ contacts: [contact("permit-1")] }),
+      ),
+    ).toMatchObject({
+      classification: "assigned",
+      evidence: {
+        contractorRoleContactCount: 1,
+        roofingLicenseContactCount: 1,
+      },
+    });
+  });
+
+  it("classifies owner-builder evidence separately and excludes it", () => {
+    expect(
+      evaluateContractorAssignment(
+        permit({
+          contacts: [
+            contact("permit-1", {
+              role: "Owner-Builder",
+              name: "Owner Builder",
+              companyId: null,
+              companyName: null,
+              licenseNumber: null,
+              licenseType: null,
+              qualifierName: null,
+            }),
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      classification: "owner_builder",
+      reasonCode: "owner_builder_evidence_present",
+    });
+  });
+
+  it("keeps missing detail as contractor_unknown", () => {
+    expect(
+      evaluateContractorAssignment(
+        permit({
+          detailComplete: false,
+          contractorAssignmentEvidence: {
+            ...permit().contractorAssignmentEvidence,
+            detailCaptured: false,
+            contactCollectionComplete: false,
+            sourcePayloadChecked: false,
+            observedContractorFields: [],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      classification: "contractor_unknown",
+    });
+  });
+
+  it("keeps source-withheld contractor fields as contractor_unknown", () => {
+    const result = evaluateContractorAssignment(
+      permit({
+        detailComplete: false,
+        contractorAssignmentEvidence: {
+          ...permit().contractorAssignmentEvidence,
+          sourceFieldsWithheld: true,
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      classification: "contractor_unknown",
+    });
+    expect(result.reasonCode).toMatch(/contractor_fields_withheld/);
+  });
+
+  it("emits a privacy-safe lead with no Z Roofing association", () => {
+    const result = evaluateOpenRoofingLead(permit(), property());
+    expect(result).toMatchObject({
+      eligible: true,
+      label: "recommended-unassigned-open-roofing-lead",
+      assignedToZRoofing: false,
+      recommendedForHandoff: true,
+      contractorAssignment: {
+        classification: "unassigned_confirmed",
+        evidence: {
+          contactRecordCount: 0,
+          assignedContractorFields: [],
+        },
+      },
+      sourceIdentityEvidence: { stable: true },
+      propertyLinkEvidence: { linked: true },
+    });
+    expect(result).not.toHaveProperty("licenses");
+    expect(result).not.toHaveProperty("licenseNumber");
+  });
+
+  it("selects unassigned leads independently of Z Roofing identities", () => {
+    const unassigned = analyzeRoofingCohort({
+      manifest: manifest(),
+      records: [permit(), property(), identity(), source()],
+    });
+    expect(unassigned.trailingProjects).toHaveLength(0);
+    expect(unassigned.openCohort).toHaveLength(1);
+    expect(unassigned.openCohort[0]).toMatchObject({
+      recommendedForHandoff: true,
+      assignedToZRoofing: false,
+    });
+
+    const assigned = analyzeRoofingCohort({
+      manifest: manifest(),
+      records: [
+        permit(),
+        contact("permit-1"),
+        property(),
+        identity(),
+        source(),
+      ],
+    });
+    expect(assigned.openCohort).toHaveLength(0);
+    expect(assigned.currentOpenPermits[0].contractorAssignment).toMatchObject({
+      classification: "assigned",
+    });
+  });
+
+  it("ranks residential relevant-jurisdiction leads before recency ties", () => {
+    const residential = evaluateOpenRoofingLead(permit(), property());
+    const commercial = {
+      ...residential,
+      sourceRecordKey: "commercial",
+      authority: "sunrise",
+      usageType: "Commercial",
+      filingEvidence: {
+        ...residential.filingEvidence,
+        date: "2026-09-10",
+      },
+    };
+    const relevantResidential = {
+      ...residential,
+      sourceRecordKey: "relevant-residential",
+      authority: "hollywood",
+    };
+    expect(
+      chooseOpenLeads(
+        [commercial, relevantResidential],
+        [{ authority: "hollywood" }],
+        1,
+      )[0].sourceRecordKey,
+    ).toBe("relevant-residential");
+  });
 });
 
 describe("source identity and project clustering", () => {
@@ -373,7 +598,14 @@ describe("source identity and project clustering", () => {
   });
 
   it("preserves license time slices and refuses inactive expansion", () => {
-    const projectPermit = permit();
+    const projectPermit = permit({
+      status: "Complete",
+      dates: {
+        ...permit().dates,
+        completion: "2025-10-01",
+        closed: "2025-10-01",
+      },
+    });
     const records = [
       projectPermit,
       contact(projectPermit.propertyImprovementId),

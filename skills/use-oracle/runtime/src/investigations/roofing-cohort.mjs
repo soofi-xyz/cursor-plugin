@@ -292,6 +292,93 @@ export function evaluatePermitLifecycle(permit, asOfDate) {
       effectiveDate: latestEvent.date,
     };
   }
+  const terminalDates = [
+    permit.dates.finalInspection,
+    permit.dates.completion,
+    permit.dates.closed,
+  ].map((value) => dateState(value, asOfDate));
+  if (
+    terminalDates.some(
+      (candidate) =>
+        candidate.state === "invalid" || candidate.state === "future",
+    ) &&
+    !currentStates.includes("terminal")
+  ) {
+    return {
+      state: "needs_review",
+      reasonCode: "invalid_or_future_terminal_date",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses[0] ?? null,
+      effectiveDate:
+        terminalDates.find((candidate) => candidate.date)?.date ?? null,
+    };
+  }
+  const completedDate = terminalDates
+    .filter((candidate) => candidate.state === "valid")
+    .map((candidate) => candidate.date)
+    .sort()
+    .at(-1);
+  if (completedDate && currentStates.includes("open")) {
+    return {
+      state: "needs_review",
+      reasonCode: "open_status_conflicts_with_terminal_date",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses.join(" | "),
+      effectiveDate: completedDate,
+    };
+  }
+  if (completedDate) {
+    return {
+      state: "terminal",
+      reasonCode: "terminal_completion_date",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses[0] ?? null,
+      effectiveDate: completedDate,
+    };
+  }
+  if (
+    currentStates.includes("open") &&
+    currentStates.includes("terminal")
+  ) {
+    return {
+      state: "needs_review",
+      reasonCode: "conflicting_current_statuses",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses.join(" | "),
+      effectiveDate: null,
+    };
+  }
+  if (
+    currentStates.includes("open") &&
+    currentStates.includes("unknown")
+  ) {
+    return {
+      state: "needs_review",
+      reasonCode: "open_status_conflicts_with_unmapped_status",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses.join(" | "),
+      effectiveDate: null,
+    };
+  }
+  const expiration = dateState(permit.dates.expiration, asOfDate);
+  if (expiration.state === "invalid") {
+    return {
+      state: "needs_review",
+      reasonCode: "invalid_expiration_date",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: currentStatuses[0] ?? null,
+      effectiveDate: null,
+    };
+  }
+  if (expiration.state === "valid") {
+    return {
+      state: "terminal",
+      reasonCode: "expired_by_date",
+      sourceLifecycle: lifecycle.key,
+      effectiveStatus: "Expired",
+      effectiveDate: expiration.date,
+    };
+  }
   if (currentStates.includes("terminal")) {
     return {
       state: "terminal",
@@ -592,6 +679,7 @@ function projectResult(project, identities, window, asOfDate) {
         row.roofing.classification,
       ) &&
       row.work.state === "confirmed" &&
+      row.lifecycle.state === "terminal" &&
       row.verifiedLicenses.length > 0 &&
       !row.duplicateConflict,
   );
@@ -613,10 +701,15 @@ function createRepairCandidates(permits, sourceRecords) {
   const selectedScopes = new Set();
   for (const permit of permits) {
     const classification = classifyRoofingPermit(permit);
+    const assignment = evaluateContractorAssignment(permit);
     const missingDetail =
-      !permit.detailComplete ||
-      permit.contacts.length === 0 ||
+      assignment.classification === "contractor_unknown" ||
       (classification.classification !== "not_roofing" &&
+        permit.contacts.some((contact) =>
+          /\b(?:contractor|roofer|qualif|licensed[\s-]?professional)\b/i.test(
+            contact.role,
+          ),
+        ) &&
         !permit.contacts.some((contact) => contact.licenseNumber));
     if (
       !missingDetail ||
@@ -1017,40 +1110,268 @@ export function inferOldRoofControl(
   };
 }
 
-function chooseOpenCases(candidates, target = 5) {
-  const selected = [];
-  const contractorCounts = new Map();
-  const usedLicenses = new Set();
-  const usedAuthorities = new Set();
-  const remaining = [...candidates];
-  while (selected.length < target && remaining.length > 0) {
-    remaining.sort((left, right) => {
-      const leftNovel =
-        Number(!usedLicenses.has(left.licenseNumber)) * 2 +
-        Number(!usedAuthorities.has(left.authority));
-      const rightNovel =
-        Number(!usedLicenses.has(right.licenseNumber)) * 2 +
-        Number(!usedAuthorities.has(right.authority));
-      return (
-        rightNovel - leftNovel ||
-        left.projectId.localeCompare(right.projectId)
-      );
-    });
-    const index = remaining.findIndex(
-      (candidate) =>
-        (contractorCounts.get(candidate.licenseNumber) ?? 0) < 2,
-    );
-    if (index < 0) break;
-    const [candidate] = remaining.splice(index, 1);
-    selected.push(candidate);
-    usedLicenses.add(candidate.licenseNumber);
-    usedAuthorities.add(candidate.authority);
-    contractorCounts.set(
-      candidate.licenseNumber,
-      (contractorCounts.get(candidate.licenseNumber) ?? 0) + 1,
-    );
+const OWNER_BUILDER = /\bowner[\s-]?builder\b/i;
+const CONTRACTOR_ROLE =
+  /\b(?:contractor|roofer|qualif|licensed[\s-]?professional)\b/i;
+
+export function evaluateContractorAssignment(permit) {
+  const coverage = permit.contractorAssignmentEvidence ?? {
+    detailCaptured: false,
+    contactCollectionComplete: false,
+    sourcePayloadChecked: false,
+    sourceFieldsWithheld: false,
+    observedContractorFields: [],
+    assignedContractorFields: [],
+    ownerBuilderFields: [],
+    directContractorCompanyIdPresent: false,
+  };
+  const contacts = permit.contacts ?? [];
+  const ownerBuilderContacts = contacts.filter((contact) =>
+    OWNER_BUILDER.test(
+      `${contact.role ?? ""} ${contact.name ?? ""} ${contact.companyName ?? ""}`,
+    ),
+  );
+  const contractorRoleContacts = contacts.filter((contact) =>
+    CONTRACTOR_ROLE.test(contact.role ?? ""),
+  );
+  const licensedContacts = contacts.filter(
+    (contact) =>
+      normalizedText(contact.licenseNumber) ||
+      normalizedText(contact.licenseType),
+  );
+  const contractorCompanyContacts = contractorRoleContacts.filter(
+    (contact) =>
+      normalizedText(contact.companyId) ||
+      normalizedText(contact.companyName) ||
+      normalizedText(contact.name),
+  );
+  const contractorCompanyIdContacts = contractorRoleContacts.filter(
+    (contact) => normalizedText(contact.companyId),
+  );
+  const licensedProfessionalContacts = contacts.filter((contact) =>
+    /\blicensed[\s-]?professional\b/i.test(contact.role ?? ""),
+  );
+  const qualifierContacts = contacts.filter((contact) =>
+    normalizedText(contact.qualifierName),
+  );
+  const evidence = {
+    detailCaptured: coverage.detailCaptured,
+    contactCollectionComplete: coverage.contactCollectionComplete,
+    sourcePayloadChecked: coverage.sourcePayloadChecked,
+    sourceFieldsWithheld: coverage.sourceFieldsWithheld,
+    observedContractorFields: coverage.observedContractorFields,
+    assignedContractorFields: coverage.assignedContractorFields,
+    ownerBuilderFields: coverage.ownerBuilderFields,
+    directContractorCompanyIdPresent:
+      coverage.directContractorCompanyIdPresent,
+    contactRecordCount: contacts.length,
+    contractorRoleContactCount: contractorRoleContacts.length,
+    contractorCompanyContactCount: contractorCompanyContacts.length,
+    contractorCompanyIdContactCount: contractorCompanyIdContacts.length,
+    roofingLicenseContactCount: licensedContacts.length,
+    licensedProfessionalContactCount:
+      licensedProfessionalContacts.length,
+    qualifierContactCount: qualifierContacts.length,
+  };
+  if (
+    ownerBuilderContacts.length > 0 ||
+    coverage.ownerBuilderFields.length > 0
+  ) {
+    return {
+      classification: "owner_builder",
+      reasonCode: "owner_builder_evidence_present",
+      evidence,
+    };
   }
-  return selected;
+  if (
+    contractorRoleContacts.length > 0 ||
+    licensedContacts.length > 0 ||
+    qualifierContacts.length > 0 ||
+    coverage.directContractorCompanyIdPresent ||
+    coverage.assignedContractorFields.length > 0
+  ) {
+    return {
+      classification: "assigned",
+      reasonCode: "contractor_assignment_evidence_present",
+      evidence,
+    };
+  }
+  const unknownReasons = [
+    ...(!permit.detailComplete ? ["permit_detail_incomplete"] : []),
+    ...(!coverage.detailCaptured ? ["detail_not_captured"] : []),
+    ...(!coverage.contactCollectionComplete
+      ? ["contact_collection_incomplete"]
+      : []),
+    ...(!coverage.sourcePayloadChecked
+      ? ["source_payload_not_checked"]
+      : []),
+    ...(coverage.sourceFieldsWithheld
+      ? ["contractor_fields_withheld"]
+      : []),
+    ...(coverage.observedContractorFields.length === 0
+      ? ["contractor_fields_unavailable"]
+      : []),
+  ];
+  if (unknownReasons.length > 0) {
+    return {
+      classification: "contractor_unknown",
+      reasonCode: unknownReasons.join(","),
+      evidence,
+    };
+  }
+  return {
+    classification: "unassigned_confirmed",
+    reasonCode: "complete_contractor_fields_present_and_empty",
+    evidence,
+  };
+}
+
+function leadFilingEvidence(permit, window, asOfDate) {
+  const candidates = [
+    ["issued", permit.dates.issued],
+    ["opened", permit.dates.opened],
+    ["application", permit.dates.application],
+  ];
+  const valid = [];
+  for (const [kind, value] of candidates) {
+    const parsed = dateState(value, asOfDate);
+    if (parsed.state === "invalid" || parsed.state === "future") {
+      return {
+        state: "needs_review",
+        reasonCode: `${kind}_${parsed.state}`,
+        date: parsed.date,
+      };
+    }
+    if (
+      parsed.state === "valid" &&
+      inInclusiveWindow(parsed.date, window)
+    ) {
+      valid.push({ kind, date: parsed.date });
+    }
+  }
+  valid.sort((left, right) => left.date.localeCompare(right.date));
+  const latest = valid.at(-1);
+  return latest
+    ? { state: "confirmed", reasonCode: "filing_date_in_window", ...latest }
+    : {
+        state: "not_confirmed",
+        reasonCode: "no_filing_date_in_window",
+        date: null,
+      };
+}
+
+export function evaluateOpenRoofingLead(
+  permit,
+  property,
+  window = TRAILING_WINDOW,
+  asOfDate = window.throughDate,
+) {
+  const roofing = classifyRoofingPermit(permit);
+  const lifecycle = evaluatePermitLifecycle(permit, asOfDate);
+  const filing = leadFilingEvidence(permit, window, asOfDate);
+  const contractorAssignment = evaluateContractorAssignment(permit);
+  const stableSourceIdentity = Boolean(
+    normalizedText(permit.sourceSystem) &&
+      normalizedText(permit.sourceRecordKey) &&
+      permit.evidenceSha256 &&
+      !permit.duplicateConflict,
+  );
+  const linkedProperty = Boolean(
+    permit.propertyId &&
+      property?.propertyId === permit.propertyId &&
+      property.parcelIdentifier === permit.parcelIdentifier,
+  );
+  const privacySafeLocation = Boolean(
+    permit.parcelIdentifier && permit.workAddress,
+  );
+  let reasonCode = "recommended_unassigned_open_roofing_lead";
+  if (
+    !["confirmed_replacement", "confirmed_roofing"].includes(
+      roofing.classification,
+    )
+  ) {
+    reasonCode = "not_confirmed_roofing";
+  } else if (lifecycle.state !== "open") {
+    reasonCode =
+      lifecycle.state === "needs_review"
+        ? "conflicting_or_unknown_status"
+        : "not_currently_open";
+  } else if (filing.state !== "confirmed") {
+    reasonCode =
+      filing.state === "needs_review"
+        ? "conflicting_or_invalid_filing_date"
+        : "filing_date_outside_window";
+  } else if (!linkedProperty) {
+    reasonCode = "property_not_linked";
+  } else if (!stableSourceIdentity) {
+    reasonCode = "unstable_source_identity";
+  } else if (!privacySafeLocation) {
+    reasonCode = "missing_privacy_safe_location";
+  } else if (
+    contractorAssignment.classification !== "unassigned_confirmed"
+  ) {
+    reasonCode = contractorAssignment.classification;
+  }
+  const eligible =
+    reasonCode === "recommended_unassigned_open_roofing_lead";
+  return {
+    eligible,
+    reasonCode,
+    label: eligible
+      ? "recommended-unassigned-open-roofing-lead"
+      : "open-roofing-lead-review",
+    propertyImprovementId: permit.propertyImprovementId,
+    propertyId: permit.propertyId,
+    parcelIdentifier: permit.parcelIdentifier,
+    permitNumber: permit.permitNumber,
+    authority: permit.authority,
+    sourceSystem: permit.sourceSystem,
+    sourceRecordKey: permit.sourceRecordKey,
+    workAddress: permit.workAddress,
+    usageType: property?.usageType ?? null,
+    roofingEvidence: roofing,
+    lifecycleEvidence: lifecycle,
+    filingEvidence: filing,
+    contractorAssignment,
+    sourceIdentityEvidence: {
+      stable: stableSourceIdentity,
+      evidenceSha256: permit.evidenceSha256,
+      provenance: permit.sourceProvenance,
+    },
+    propertyLinkEvidence: {
+      linked: linkedProperty,
+      propertyId: property?.propertyId ?? null,
+      parcelIdentifier: property?.parcelIdentifier ?? null,
+    },
+    recommendedForHandoff: eligible,
+    assignedToZRoofing: false,
+  };
+}
+
+export function chooseOpenLeads(
+  candidates,
+  historicalProjects = [],
+  target = 5,
+) {
+  const historicalAuthorities = new Set(
+    historicalProjects.map((project) => project.authority),
+  );
+  const score = (candidate) =>
+    Number(/\bresidential\b/i.test(candidate.usageType ?? "")) * 4 +
+    Number(
+      candidate.roofingEvidence.classification ===
+        "confirmed_replacement",
+    ) *
+      2 +
+    Number(historicalAuthorities.has(candidate.authority));
+  return [...candidates]
+    .sort(
+      (left, right) =>
+        score(right) - score(left) ||
+        right.filingEvidence.date.localeCompare(left.filingEvidence.date) ||
+        left.sourceRecordKey.localeCompare(right.sourceRecordKey),
+    )
+    .slice(0, target);
 }
 
 export function chooseControls(candidates, openCases, target = 5) {
@@ -1142,6 +1463,9 @@ function completeGapLedger(gaps, result) {
       trailingProjectCount: result.trailingProjects.length,
       currentOpenPermitCount: result.currentOpenPermits.length,
       openCohortCount: result.openCohort.length,
+      recommendedOpenLeadCount: result.openCohort.length,
+      openLeadDefinition:
+        "confirmed currently open roofing permit with linked property and complete evidence that no contractor is assigned",
       oldRoofControlCount: result.oldRoofControls.length,
     },
     status: statusById.get(gap.gapId) ?? gap.status,
@@ -1208,65 +1532,33 @@ export function analyzeRoofingCohort({
         (row) => row.work.evidence,
       ),
       sourceProvenance: project.sourceProvenance,
+      evidencePurpose:
+        "completed-historical-contractor-capability-profile",
     }));
-
-  const currentOpenPermits = projects.flatMap((project) =>
-    project.permitRows
-      .filter(
-        (row) =>
-          row.lifecycle.state === "open" &&
-          [
-            "confirmed_replacement",
-            "confirmed_roofing",
-            "roofing_nonreplacement",
-          ].includes(
-            row.roofing.classification,
-          ) &&
-          row.verifiedLicenses.length > 0,
-      )
-      .map((row) => ({
-        projectId: project.projectId,
-        propertyImprovementId: row.propertyImprovementId,
-        propertyId: row.propertyId,
-        parcelIdentifier: row.parcelIdentifier,
-        permitNumber: row.permitNumber,
-        authority: row.authority,
-        sourceSystem: row.sourceSystem,
-        workAddress: row.workAddress,
-        classification: row.roofing,
-        lifecycle: row.lifecycle,
-        licenses: row.verifiedLicenses.map((match) => ({
-          licenseNumber: match.licenseNumber,
-          identityId: match.identity.identityId,
-          companyId: match.contact.companyId,
-          companyName:
-            match.contact.companyName ??
-            match.identity.qualifyingBusinessName,
-        })),
-        detailComplete:
-          row.detailComplete &&
-          row.contacts.length > 0 &&
-          row.verifiedLicenses.length > 0,
-        sourceProvenance: row.sourceProvenance,
-      })),
-  );
 
   const propertyById = new Map(
     properties.map((property) => [property.propertyId, property]),
   );
-  const openCandidates = currentOpenPermits
+  const currentOpenPermits = deduplicated
+    .filter((permit) => !seedFolios.has(permit.parcelIdentifier))
+    .map((permit) =>
+      evaluateOpenRoofingLead(
+        permit,
+        propertyById.get(permit.propertyId),
+        trailingWindow,
+        manifest.asOfDate,
+      ),
+    )
     .filter(
       (permit) =>
-        !seedFolios.has(permit.parcelIdentifier) &&
-        permit.propertyId &&
-        permit.detailComplete,
-    )
-    .map((permit) => ({
-      ...permit,
-      licenseNumber: permit.licenses[0].licenseNumber,
-      usageType: propertyById.get(permit.propertyId)?.usageType ?? null,
-    }));
-  const openCohort = chooseOpenCases(openCandidates);
+        ["confirmed_replacement", "confirmed_roofing"].includes(
+          permit.roofingEvidence.classification,
+        ) && permit.lifecycleEvidence.state === "open",
+    );
+  const openCohort = chooseOpenLeads(
+    currentOpenPermits.filter((permit) => permit.eligible),
+    trailingProjects,
+  );
 
   const permitsByParcel = new Map();
   for (const permit of deduplicated) {
@@ -1291,6 +1583,25 @@ export function analyzeRoofingCohort({
     .filter(({ inference }) => inference.eligible)
     .map(({ property, inference }) => ({ ...property, ...inference }));
   const oldRoofControls = chooseControls(oldRoofCandidates, openCohort);
+  const contractorAssignmentCounts = {
+    unassigned_confirmed: currentOpenPermits.filter(
+      (permit) =>
+        permit.contractorAssignment.classification ===
+        "unassigned_confirmed",
+    ).length,
+    assigned: currentOpenPermits.filter(
+      (permit) => permit.contractorAssignment.classification === "assigned",
+    ).length,
+    owner_builder: currentOpenPermits.filter(
+      (permit) =>
+        permit.contractorAssignment.classification === "owner_builder",
+    ).length,
+    contractor_unknown: currentOpenPermits.filter(
+      (permit) =>
+        permit.contractorAssignment.classification ===
+        "contractor_unknown",
+    ).length,
+  };
   const oldRoofControlConfidenceCounts = {
     high: oldRoofControls.filter((control) => control.confidence === "high")
       .length,
@@ -1394,7 +1705,7 @@ export function analyzeRoofingCohort({
     ...result,
     gapLedger: completeGapLedger(gapLedger, result),
     summary: {
-      schemaVersion: "elephant.roofing-cohort-summary.v1",
+      schemaVersion: "elephant.roofing-cohort-summary.v2",
       countyKey: "broward",
       asOfDate: manifest.asOfDate,
       trailingWindow,
@@ -1411,6 +1722,10 @@ export function analyzeRoofingCohort({
       trailingProjectCount: trailingProjects.length,
       currentOpenPermitCount: currentOpenPermits.length,
       openCohortCount: openCohort.length,
+      recommendedOpenLeadCount: openCohort.length,
+      openLeadDefinition:
+        "confirmed currently open roofing permit with linked property and complete evidence that no contractor is assigned",
+      contractorAssignmentCounts,
       oldRoofControlCount: oldRoofControls.length,
       oldRoofControlConfidenceCounts,
       repairCandidateCount: result.repairCandidates.length,
