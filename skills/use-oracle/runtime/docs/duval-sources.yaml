@@ -217,7 +217,7 @@ publication:
   bucket: elephant-oracle-query-table
   property_query_table_ipns_label: oracle-query-table-duval
   property_query_table_ipns_name: k51qzi5uqu5dle7swd06u9ebrgw375b5vhhhtiiz7un7udfsar0rci53x2w5y4
-  property_query_table_cid: QmTfaoKg7yUfHKLcsor1yc7cTZnBcW3CdkjG8je7JQwfSS
+  property_query_table_cid: QmVHFSRuitqRWpiLBJY5Mnor1PRiWHnFDHkkwSaytoeTCD
   permit_table_ipns_label: oracle-permit-table-duval
   permit_table_ipns_name: k51qzi5uqu5dll7nwe1o7s1htngeoxrou8k593xieuziw9521444vh3pd7v4y1
   permit_table_cid: QmTKvaWBmwaVGQheEAWSw59EXZqifPxNxaXx5AMpsSqM62
