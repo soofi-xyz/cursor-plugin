@@ -27,18 +27,22 @@ stage map, and publish/coverage rules.
 5. [`reference/failure-modes.md`](./reference/failure-modes.md) — ingest and enrichment
    traps (caps, sessions, BBB page vs advertised totals, AWS-remote browser vs operator
    laptop, secrets inject only at process start, S3 staging ≠ Filebase)
-6. [`reference/request-routing.md`](./reference/request-routing.md) — name **who** receives
+6. [`reference/permit-evidence-preflight.md`](./reference/permit-evidence-preflight.md) —
+   per-source capability/coverage matrix, field evidence states, decision gates, bounded
+   detail repair, permit-to-company/license resolution, supported edge vocabulary, gap
+   ledger, and acceptance rules for permit-backed conclusions
+7. [`reference/request-routing.md`](./reference/request-routing.md) — name **who** receives
    a records or API request; catalog `records_request` fields
-7. [`reference/source-provenance.md`](./reference/source-provenance.md) — upstream SHAs and
+8. [`reference/source-provenance.md`](./reference/source-provenance.md) — upstream SHAs and
    bundled skill import provenance
-8. [`reference/self-contained-ingestion.md`](./reference/self-contained-ingestion.md) —
+9. [`reference/self-contained-ingestion.md`](./reference/self-contained-ingestion.md) —
    install, offline replay, bounded live pilot, publish dry-run, approval-gated publish,
    catalog update, MCP smoke, and the clean-room verification gate. The team-facing test
    evidence template for changes to the bundled runtime.
-9. [`reference/coverage-only-publication.md`](./reference/coverage-only-publication.md) —
+10. [`reference/coverage-only-publication.md`](./reference/coverage-only-publication.md) —
    adapter-independent repair/refresh of a county's coverage snapshot without touching
    its property query table, including cryptographic approval and immutable readback.
-10. [`../county-readiness-preflight/SKILL.md`](../county-readiness-preflight/SKILL.md) — the
+11. [`../county-readiness-preflight/SKILL.md`](../county-readiness-preflight/SKILL.md) — the
    deterministic validator. `onboard-county` must run it before seed, pilot, or full ingest.
 
 ## Choose the stack first
@@ -135,7 +139,9 @@ discovery or scaffolding:
    bulk/list/API discovery and custodian-route research immediately.
 2. **Determine adapter work:** fingerprint each portal/vendor, map it to an existing
    reusable adapter, and start missing adapter scaffolds, fixtures, and bounded tests as
-   soon as the vendor is known. Do not wait for parcel ingestion to finish.
+   soon as the vendor is known. Open the permit capability/coverage matrix and run the
+   permit evidence preflight before using sampled fields for decisions. Do not wait for
+   parcel ingestion to finish.
 3. **Prove execution and destinations:** verify the chosen ingestion stack, the AWS remote
    BBB execution path, Neon destination identity, Filebase credential availability,
    publication bucket, and IPNS ownership. If access is missing, request it immediately
@@ -143,6 +149,11 @@ discovery or scaffolding:
 4. **Open blocker routes:** for CAPTCHA, login, prohibited automation, custodian-only
    access, or unavailable exports, classify the state and prepare the named API or records
    request from `reference/request-routing.md` immediately.
+5. **Prepare identity registries:** when permit contractor resolution is in scope, start
+   the official corporate-registry load (`sunbiz-corporate-ingest` for Florida) and prove
+   the official licensing/qualified-business snapshot, adapter, schema, and freshness.
+   Permit capture may continue, but automatic identity edges wait for both prerequisites.
+   Record an explicit capability gap when the licensing entity or edge is unsupported.
 
 The readiness gate blocks seed, pilots, adapter scale-out, and full ingestion. It does not
 block source enumeration, bounded probes, adapter implementation/fixtures, access setup,
@@ -169,9 +180,9 @@ bounded discovery; never implement against an assumed source.
 | 1 | Operator intake + launch the independent startup work queue | `onboard-county` intake |
 | 2 | Review prior findings, transforms, adapters, manifests, and checkpoints | `skills/use-oracle/runtime/docs/` plus `Counties-trasform-scripts/<county>/` |
 | 3 | Bounded source discovery + full jurisdiction/source enumeration | `county-discovery` |
-| 4 | Build the catalog; start required adapter fixtures/scaffolds; prove Neon, AWS BBB execution, and Filebase readiness | `docs/<county>-sources.yaml`, `county-permit-adapter`, `bootstrap-oracle-infra` |
+| 4 | Build the catalog and per-source permit capability/coverage matrix; start required adapter fixtures/scaffolds and identity-registry prerequisites; prove Neon, AWS BBB execution, and Filebase readiness | `docs/<county>-sources.yaml`, `reference/permit-evidence-preflight.md`, `sunbiz-corporate-ingest` when applicable, `county-permit-adapter`, `bootstrap-oracle-infra` |
 | 5–6 | County Readiness Preflight + exceptions | `county-readiness-preflight` validator; **STOP** before seed, pilots, or scale-out if any gate is `BLOCKED` |
-| 7–8 | Complete adapters + pilots | `county-permit-adapter`, `county-appraisal-onboarding`, `validate-county-transform` |
+| 7–8 | Complete adapters; load/reconcile required identity registries; run the per-source permit evidence preflight and supported identity resolver; then run eligible pilots | `reference/permit-evidence-preflight.md`, `sunbiz-corporate-ingest` when applicable, `county-permit-adapter`, `county-appraisal-onboarding`, `validate-county-transform` |
 | 9–10 | Checkpointed ingest + load | `county-ingest-run`, `query-db-loading-matching` |
 | 11–12 | Privacy derivatives + publish | `county-query-table-publish`, `county-open-data-publish` |
 | 13 | Verify through Donphan | MCP smoke after publish (`listPublishedCounties`, `getOracleDatasetInfo`) |
@@ -187,6 +198,12 @@ python3 skills/use-oracle/scripts/validate-county-readiness.py \
 Non-zero exit = STOP. Do not call `county-seed-data`, do not start a pilot, and do not
 start a full `county-ingest-run`. A passing report (`overall: PASS`, `seed_allowed: true`)
 is required before pilot or full ingestion.
+
+After readiness passes, run
+[`reference/permit-evidence-preflight.md`](./reference/permit-evidence-preflight.md)
+for every permit source used by a pilot, repair, analysis, or publication. An unresolved
+field does not justify a guess: retain it as unknown/unavailable/quarantined and make only
+the affected downstream conclusion ineligible.
 
 Unreadiness, CAPTCHA, login, and custodian-only access are genuine blockers. When one
 source is blocked, continue every independent safe workstream. Name the records
@@ -266,6 +283,13 @@ changes.
 - Drive the skills; never improvise ingestion commands a skill does not define.
 - Never hardcode or print AWS account ids, secrets, or `DATABASE_URL`.
 - Never skip `validate-county-readiness.py` before seed, pilot, or full ingest.
+- Run the permit evidence preflight before every permit-backed decision or publication.
+  Preserve indexed vs live evidence, distinguish confirmed empty from unavailable, and
+  drive only immutable, bounded, source-specific repairs.
+- Before permit identity resolution, load and reconcile the official corporate and
+  licensing/qualified-business snapshots. Use only supported company foreign-key edges;
+  report missing canonical license entities, license edges, or resolver provenance as
+  schema/capability gaps instead of inventing IDs.
 - Run until the requested scope reaches a terminal state in `continuous-ingestion.md`.
   Automatically advance successful stages, supervise durable workers, consume exact handoff
   manifests, and recover compatible stale work within its retry budget.
